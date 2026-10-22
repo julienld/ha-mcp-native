@@ -31,11 +31,11 @@ class EntryRemovalTools(StorageRemovalTools):
     async def _entry_entities(
         self, entry_id: str, warnings: list[str]
     ) -> list[dict[str, Any]]:
-        result = await self.backend.execute(
-            "helpers.entities.for_entry", {"config_entry_id": entry_id}, self.context
+        from .flows.registry import _get_entities_for_config_entry
+
+        return await _get_entities_for_config_entry(
+            FlowSession(self.backend, self.context), entry_id, warnings
         )
-        warnings.extend(result.get("warnings", []))
-        return cast(list[dict[str, Any]], result["entities"])
 
     async def _read_remove_entry(self, entry_id: str) -> dict[str, Any]:
         return cast(

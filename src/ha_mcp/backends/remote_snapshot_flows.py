@@ -2,13 +2,8 @@
 
 from typing import Any
 
+from ha_mcp.backup_entity_ids import _manager
 from ha_mcp.runtime.snapshot_flow_restore import _flow_recreation_preflight
-
-
-def _manager() -> Any:
-    from ha_mcp import backup_manager
-
-    return backup_manager
 
 
 class RemoteSnapshotFlowPorts:

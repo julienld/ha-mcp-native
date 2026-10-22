@@ -2,14 +2,9 @@
 
 from typing import Any, cast
 
+from ha_mcp.backup_entity_ids import _manager
 from ha_mcp.errors import HomeAssistantCommandError
 from ha_mcp.runtime.snapshot_storage_restore import StoredZoneMissing
-
-
-def _manager() -> Any:
-    from ha_mcp import backup_manager
-
-    return backup_manager
 
 
 class RemoteStoredRestorePorts:
