@@ -387,6 +387,35 @@ async def test_device_restore_keeps_cas_and_does_not_recapture(
     assert len(devices.calls) == 1
 
 
+@pytest.mark.parametrize("change", ["revoke", "replace", "feature"])
+async def test_device_owned_callback_rechecks_admission_after_task_scheduling(
+    native: Any, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    engine, _, devices, component, entry, user, *_ = _setup(native, monkeypatch)
+    owner = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.devices"
+    )
+    owned = owner.await_owned_io
+
+    async def changed(awaitable: Any) -> Any:
+        if change == "revoke":
+            user.is_admin = False
+        elif change == "replace":
+            devices.rows["main"] = devices.new("main")
+            devices.rows["main"].created_at = 5.0
+        else:
+            entry.supports_remove_device = False
+        return await owned(awaitable)
+
+    monkeypatch.setattr(owner, "await_owned_io", changed)
+    result = await engine.call(
+        "ha_remove_device", {"device_id": "main"}, CallContext("actor")
+    )
+    assert result.is_error and result.status == "not_started", result.data
+    component.async_remove_config_entry_device.assert_not_awaited()
+    assert not devices.calls and "main" in devices.rows
+
+
 async def test_device_cancellation_keeps_registry_lock_until_integration_callback_finishes(
     native: Any,
     monkeypatch: pytest.MonkeyPatch,

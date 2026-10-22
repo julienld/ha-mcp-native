@@ -15,13 +15,16 @@ import time
 from pathlib import Path
 
 import httpx
+from calendar_checks import exercise_calendars
 from configuration_checks import (
     exercise_configuration,
     exercise_flow_helpers,
     exercise_todo,
 )
+from device_checks import exercise_devices
 from interop_checks import exercise_llm
 from registry_checks import exercise_registries
+from resource_checks import exercise_resources
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -388,6 +391,9 @@ async def exercise(checks: Checks) -> dict:
     await exercise_registries(checks, BASE)
     await exercise_flow_helpers(checks, receipt)
     await exercise_todo(checks, BASE)
+    await exercise_calendars(checks, BASE)
+    await exercise_devices(checks, BASE)
+    await exercise_resources(checks, BASE)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -425,6 +431,29 @@ async def exercise(checks: Checks) -> dict:
     return final
 
 
+def prepare_lovelace_fixture() -> None:
+    storage = CONFIG / ".storage"
+    storage.mkdir(exist_ok=True)
+    (storage / "lovelace").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 1,
+                "key": "lovelace",
+                "data": {
+                    "config": {
+                        "views": [],
+                        "resources": [
+                            {"url": "/local/native-legacy.js", "type": "module"}
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 async def main() -> None:
     CONFIG.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -451,9 +480,10 @@ async def main() -> None:
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
         "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
-        "native_fixture:\n",
+        "lovelace:\n  mode: storage\nnative_fixture:\n",
         encoding="utf-8",
     )
+    prepare_lovelace_fixture()
     for filename, empty in (
         ("scripts.yaml", "{}\n"),
         ("scenes.yaml", "[]\n"),

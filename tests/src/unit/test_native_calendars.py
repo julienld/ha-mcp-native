@@ -27,6 +27,8 @@ class _Event:
     end: str = "2026-06-15T11:00:00+00:00"
     recurrence_id: str | None = None
     rrule: str | None = None
+    description: str | None = None
+    location: str | None = None
     future_core_field: str = "retained"
 
 
@@ -276,3 +278,23 @@ async def test_calendar_catalog_binds_the_direct_owner_and_engine_write_policy(
     assert not created.is_error, created.data
     entity.async_create_event.assert_awaited_once()
     backend.execute.assert_not_awaited()
+
+
+async def test_calendar_worker_rechecks_credentials_before_entering_provider(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, entity, _, _, authorize = _setup(native, monkeypatch)
+    module = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.calendar_events"
+    )
+    owned_io = module.await_owned_io
+
+    async def revoked_before_worker(operation: Any) -> Any:
+        authorize.side_effect = PermissionError("revoked at scheduling boundary")
+        return await owned_io(operation)
+
+    monkeypatch.setattr(module, "await_owned_io", revoked_before_worker)
+    with pytest.raises(ToolFailure) as error:
+        await service.set("calendar.family", "Meeting", "2026-06-15", "2026-06-16")
+    assert error.value.code == "AUTH_FORBIDDEN"
+    entity.async_create_event.assert_not_awaited()

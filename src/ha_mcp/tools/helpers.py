@@ -319,16 +319,14 @@ async def safe_progress(
     Context object missing the expected method), not a flaky client.
     ``ctx is None`` short-circuits without I/O.
     """
-    if ctx is None:
-        return
-    try:
-        await ctx.report_progress(progress=progress, total=total, message=message)
-    except (TypeError, AttributeError) as e:
-        logger.warning(
-            "ctx.report_progress signature error (%s): %s", type(e).__name__, e
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("ctx.report_progress failed (%s): %s", type(e).__name__, e)
+    from ha_mcp.runtime.progress import report_progress
+
+    await report_progress(
+        (lambda **kwargs: ctx.report_progress(**kwargs)) if ctx is not None else None,  # noqa: PLW0108 - resolve attribute inside the common error boundary
+        progress=progress,
+        total=total,
+        message=message,
+    )
 
 
 def clear_or_keep(value: str | None, param_name: str) -> str | None:

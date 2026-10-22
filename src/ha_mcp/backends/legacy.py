@@ -89,6 +89,12 @@ def _preserve_resolved_signature(
     """Future annotations must resolve in the source module, not this adapter."""
     hints = get_type_hints(source, include_extras=True)
     signature = inspect.signature(source)
+    if "ctx" in signature.parameters:
+        from ha_mcp._vendor.fastmcp import Context
+
+        # A neutral facade's progress parameter is transport-injected, never a
+        # public tool argument. Only the legacy MCP adapter needs this SDK type.
+        hints["ctx"] = Context | None
     metadata = cast(Any, wrapper)
     metadata.__signature__ = signature.replace(
         parameters=[

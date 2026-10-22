@@ -5,15 +5,39 @@ This module provides tools for retrieving execution traces from Home Assistant
 to help debug automation and script issues.
 """
 
-import json
 import logging
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any, Literal
 
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
+from ha_mcp.runtime.trace_results import _categorize_step_path as _categorize_step_path
+from ha_mcp.runtime.trace_results import _classify_trace_steps as _classify_trace_steps
+from ha_mcp.runtime.trace_results import (
+    _diagnostic_suggestion as _diagnostic_suggestion,
+)
+from ha_mcp.runtime.trace_results import (
+    _filter_trace_sections as _filter_trace_sections,
+)
+from ha_mcp.runtime.trace_results import (
+    _format_detailed_trace as _format_detailed_trace,
+)
+from ha_mcp.runtime.trace_results import _format_trace_list as _format_trace_list
+from ha_mcp.runtime.trace_results import (
+    _populate_action_trace as _populate_action_trace,
+)
+from ha_mcp.runtime.trace_results import (
+    _populate_condition_results as _populate_condition_results,
+)
+from ha_mcp.runtime.trace_results import (
+    _populate_trigger_info as _populate_trigger_info,
+)
+from ha_mcp.runtime.trace_results import (
+    _select_action_variables as _select_action_variables,
+)
+from ha_mcp.runtime.trace_results import trace_target as _pure_trace_target
+from ha_mcp.runtime.trace_tools import TraceFacade
 
 from ..errors import ErrorCode, create_error_response
 from .helpers import (
@@ -27,131 +51,36 @@ from .tool_hints import read_only_hints
 from .util_helpers import is_connection_error_message
 
 logger = logging.getLogger(__name__)
+_trace_target = legacy_errors_sync(_pure_trace_target)
 
 
-class TraceTools:
+class TraceTools(TraceFacade):
     """Trace retrieval tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        super().__init__(self._get_traces)
 
-    @tool(
+    ha_get_automation_traces = tool(
         name="ha_get_automation_traces",
         tags={"History & Statistics"},
         annotations=read_only_hints("Get Automation Traces", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_automation_traces(
+    )(log_tool_usage(legacy_errors(TraceFacade.ha_get_automation_traces)))
+
+    async def _get_traces(
         self,
-        automation_id: Annotated[
-            str,
-            Field(
-                description="Automation or script entity_id (e.g., 'automation.motion_light' or 'script.morning_routine')"
-            ),
-        ],
-        run_id: Annotated[
-            str | None,
-            Field(
-                description="Specific trace run_id to retrieve detailed trace.",
-                default=None,
-            ),
-        ] = None,
-        limit: Annotated[
-            int,
-            Field(
-                description="Maximum number of traces to return when listing (default: 10, max: 50).",
-                default=10,
-                ge=1,
-                le=50,
-            ),
-        ] = 10,
-        deduplicate: Annotated[
-            bool,
-            Field(
-                description="Deduplicate variables across action steps. Set to False to record the "
-                "variables at every step; steps whose variables carry 'trigger', and "
-                "null-valued entries, are omitted either way.",
-                default=True,
-            ),
-        ] = True,
-        detailed: Annotated[
-            bool,
-            Field(
-                description="Include extra diagnostic data: logbook entries and context metadata.",
-                default=False,
-            ),
-        ] = False,
-        sections: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Comma-separated list of trace sections to return. "
-                    "Valid values: trigger, conditions, actions, config, error, logbook, context. "
-                    "Omit to return all sections. Example: 'actions' or 'trigger,conditions'."
-                ),
-                default=None,
-            ),
-        ] = None,
-        offset: Annotated[
-            int,
-            Field(
-                description="Number of traces to skip from the start of the requested order. Use with `limit` to page through stored traces when `total_available > limit`.",
-                default=0,
-                ge=0,
-            ),
-        ] = 0,
-        order: Annotated[
-            Literal["newest", "oldest"],
-            Field(
-                description="Order traces are returned in. 'newest' returns most-recent first; "
-                "'oldest' returns chronological-first.",
-                default="newest",
-            ),
-        ] = "newest",
-        ctx: Context | None = None,
+        automation_id: str,
+        run_id: str | None,
+        limit: int,
+        deduplicate: bool,
+        detailed: bool,
+        sections: str | None,
+        offset: int,
+        order: Literal["newest", "oldest"],
+        ctx: Context | None,
     ) -> dict[str, Any]:
-        """Get execution traces for automations and scripts to debug issues.
-
-        Traces show what triggered a run, which conditions passed or failed,
-        which actions executed (for 'choose', which branch was taken), any
-        errors, and variable values during execution. Home Assistant keeps
-        only the most recent runs of each automation or script (its
-        stored_traces setting), so older runs are not available. The 'state'
-        field shows 'stopped' (completed), 'running', or an error state.
-
-        USAGE MODES:
-        1. List recent traces (omit run_id): returns a summary of recent runs
-           with timestamps, triggers, and status. Use `offset` to page deeper
-           when `has_more` is true.
-           ha_get_automation_traces("automation.motion_light")
-        2. Get a detailed trace (provide run_id): full execution details
-           including trigger info, condition results, action trace with timing,
-           and context variables.
-           ha_get_automation_traces("automation.motion_light", run_id="1705312800.123456")
-        3. Add logbook entries and context metadata: detailed=True. Script-style
-           action paths (sequence/, numeric) are always matched regardless of
-           this flag.
-        4. Variables at every step (trigger sets and null entries are still
-           omitted): deduplicate=False.
-        """
         try:
-            # Determine domain from entity_id
-            if automation_id.startswith("automation."):
-                domain = "automation"
-            elif automation_id.startswith("script."):
-                domain = "script"
-            else:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"Invalid entity_id format: {automation_id}",
-                        details="Entity ID must start with 'automation.' or 'script.'",
-                        context={"automation_id": automation_id},
-                    )
-                )
-
-            # Extract the object_id (part after the domain) as fallback
-            object_id = automation_id.split(".", 1)[1]
+            domain, object_id = _trace_target(automation_id)
 
             logger.debug(
                 f"ha_get_automation_traces starting: id={automation_id} "
@@ -500,357 +429,3 @@ async def _is_trace_storage_enabled(
     except Exception as e:  # noqa: BLE001
         logger.debug(f"Could not get automation config: {e}")
     return True
-
-
-def _diagnostic_suggestion(diagnostics: dict[str, Any], domain: str) -> str:
-    """Build a helpful hint explaining why no traces are available."""
-    if not diagnostics["automation_enabled"]:
-        return (
-            f"The {domain} is currently disabled (state: off). "
-            "Enable it to start recording traces."
-        )
-    if diagnostics["last_triggered"] is None:
-        return (
-            f"The {domain} has never been triggered. "
-            "Wait for it to trigger or manually trigger it to generate traces."
-        )
-    if not diagnostics["trace_storage_enabled"]:
-        return (
-            "Trace storage is disabled for this automation. "
-            "Set 'stored_traces' to a positive number in the automation config."
-        )
-    return (
-        "Traces may have been cleared or expired. "
-        "Home Assistant only keeps a limited number of recent traces."
-    )
-
-
-def _format_trace_list(
-    automation_id: str,
-    traces: list[dict[str, Any]],
-    limit: int,
-    diagnostics: dict[str, Any] | None = None,
-    *,
-    offset: int = 0,
-    order: Literal["newest", "oldest"] = "newest",
-) -> dict[str, Any]:
-    """Format trace list for AI consumption.
-
-    Args:
-        automation_id: The automation or script entity_id
-        traces: List of trace data from Home Assistant (oldest-first)
-        limit: Maximum number of traces to include
-        diagnostics: Optional diagnostic information when traces are empty
-        offset: Number of traces to skip from the start of the requested order
-        order: 'newest' (default) returns most-recent first; 'oldest' chronological
-    """
-    # HA's trace/list returns traces oldest-first. Pick a window from the end
-    # for newest-first, or from the start for oldest-first, with offset for
-    # pagination through stored traces beyond `limit`.
-    if order == "newest":
-        end = len(traces) - offset
-        start = max(end - limit, 0)
-        window = list(reversed(traces[start:end])) if end > 0 else []
-    else:
-        window = traces[offset : offset + limit]
-
-    formatted_traces = []
-    for trace in window:
-        # Extract key information from trace
-        trace_info: dict[str, Any] = {
-            "run_id": trace.get("run_id"),
-            "timestamp": trace.get("timestamp"),
-            "state": trace.get("state"),
-        }
-
-        # Extract trigger description if available
-        trigger_str = trace.get("trigger")
-        if trigger_str:
-            trace_info["trigger"] = trigger_str
-
-        # Check for errors
-        error = trace.get("error")
-        if error:
-            trace_info["error"] = error
-
-        # Add script-specific execution duration
-        if "script_execution" in trace:
-            trace_info["execution"] = trace.get("script_execution")
-
-        formatted_traces.append(trace_info)
-
-    result: dict[str, Any] = {
-        "success": True,
-        "automation_id": automation_id,
-        "trace_count": len(formatted_traces),
-        "total_available": len(traces),
-        "offset": offset,
-        "order": order,
-        "has_more": offset + len(formatted_traces) < len(traces),
-        "traces": formatted_traces,
-        "hint": "Use run_id with this tool to get detailed trace information",
-    }
-
-    # Include diagnostics when traces are empty
-    if diagnostics is not None and len(traces) == 0:
-        result["diagnostics"] = diagnostics
-
-    return result
-
-
-def _format_detailed_trace(
-    automation_id: str,
-    run_id: str,
-    trace: dict[str, Any],
-    *,
-    deduplicate: bool = True,
-    detailed: bool = False,
-    sections: str | None = None,
-) -> dict[str, Any]:
-    """Format detailed trace for AI consumption."""
-    domain = "automation" if automation_id.startswith("automation.") else "script"
-    result: dict[str, Any] = {
-        "success": True,
-        "automation_id": automation_id,
-        "run_id": run_id,
-        "timestamp": trace.get("timestamp"),
-        "state": trace.get("state"),
-    }
-
-    raw_trace = trace.get("trace", {})
-    triggers, conditions, actions = _classify_trace_steps(raw_trace, domain)
-
-    _populate_trigger_info(result, triggers, trace)
-    _populate_condition_results(result, conditions)
-    _populate_action_trace(result, actions, deduplicate)
-
-    # Add context with trigger variables for template debugging
-    config = trace.get("config", {})
-    if config:
-        # Include config summary for context
-        result["config_summary"] = {
-            "alias": config.get("alias"),
-            "mode": config.get("mode", "single"),
-        }
-
-    # Check for overall error
-    if trace.get("error"):
-        result["error"] = trace["error"]
-
-    # Add script execution info if present
-    if trace.get("script_execution"):
-        result["script_execution"] = trace["script_execution"]
-
-    # In detailed mode, include logbook entries and context metadata
-    # that are essential for debugging but omitted by default to save context.
-    if detailed:
-        if "logbook_entries" in trace:
-            result["logbook_entries"] = trace["logbook_entries"]
-        if trace.get("context"):
-            result["context"] = trace["context"]
-
-    if sections:
-        result = _filter_trace_sections(result, sections)
-
-    return result
-
-
-def _classify_trace_steps(
-    raw_trace: dict[str, Any], domain: str
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Group flat trace path entries into sorted trigger/condition/action lists."""
-    buckets: dict[str, list[dict[str, Any]]] = {
-        "trigger": [],
-        "condition": [],
-        "action": [],
-    }
-
-    # Home Assistant trace data is stored as a flat dict with path keys
-    # e.g. "trigger/0": [...], "action/0": [...], "action/0/1": [...]
-    for path, steps in raw_trace.items():
-        if not isinstance(steps, list):
-            continue
-
-        for step in steps:
-            category = _categorize_step_path(path, domain)
-            if category is None:
-                continue
-            # Create a copy to avoid modifying original
-            step_info = step.copy()
-            step_info["path"] = path
-            buckets[category].append(step_info)
-
-    # Sort by timestamp (if available) or path to maintain execution order
-    def sort_key(item: dict[str, Any]) -> tuple[str, str]:
-        return (item.get("timestamp", ""), item.get("path", ""))
-
-    for steps_list in buckets.values():
-        steps_list.sort(key=sort_key)
-
-    return buckets["trigger"], buckets["condition"], buckets["action"]
-
-
-def _categorize_step_path(path: str, domain: str) -> str | None:
-    """Map a trace path key to 'trigger', 'condition', 'action', or None."""
-    if path == "trigger" or path.startswith("trigger/"):
-        return "trigger"
-    if path == "condition" or path.startswith("condition/"):
-        return "condition"
-    if path == "action" or path.startswith(("action/", "sequence/")):
-        return "action"
-    if domain == "script" and path.split("/", maxsplit=1)[0].isdigit():
-        return "action"
-    return None
-
-
-def _filter_trace_sections(result: dict[str, Any], sections: str) -> dict[str, Any]:
-    """Filter a formatted trace down to the requested sections plus metadata."""
-    # Maps user-facing section names to result dict keys.
-    section_key_map = {
-        "trigger": "trigger",
-        "conditions": "condition_results",
-        "actions": "action_trace",
-        "config": "config_summary",
-        "error": "error",
-        "logbook": "logbook_entries",
-        "context": "context",
-    }
-    requested = {s.strip().lower() for s in sections.split(",")}
-    keep_keys = {section_key_map[s] for s in requested if s in section_key_map}
-    # Always keep metadata keys
-    keep_keys |= {
-        "success",
-        "automation_id",
-        "run_id",
-        "timestamp",
-        "state",
-        "script_execution",
-    }
-    return {k: v for k, v in result.items() if k in keep_keys}
-
-
-def _populate_trigger_info(
-    result: dict[str, Any],
-    triggers: list[dict[str, Any]],
-    trace: dict[str, Any],
-) -> None:
-    """Extract trigger information and add to result dict."""
-    if triggers:
-        trigger_step = triggers[0]
-        trigger_vars = trigger_step.get("changed_variables", {}).get("trigger", {})
-        if not trigger_vars:
-            trigger_vars = trigger_step.get("variables", {}).get("trigger", {})
-
-        result["trigger"] = {
-            "platform": trigger_vars.get("platform"),
-            "description": trigger_vars.get("description"),
-        }
-        if "to_state" in trigger_vars:
-            result["trigger"]["to_state"] = (trigger_vars.get("to_state") or {}).get(
-                "state"
-            )
-        if "from_state" in trigger_vars:
-            result["trigger"]["from_state"] = (
-                trigger_vars.get("from_state") or {}
-            ).get("state")
-        if "entity_id" in trigger_vars:
-            result["trigger"]["entity_id"] = trigger_vars["entity_id"]
-        if "error" in trigger_step:
-            result["trigger"]["error"] = trigger_step["error"]
-
-    if "trigger" not in result and "trigger" in trace:
-        result["trigger"] = {"description": trace["trigger"]}
-
-
-def _populate_condition_results(
-    result: dict[str, Any],
-    conditions: list[dict[str, Any]],
-) -> None:
-    """Extract condition results and add to result dict."""
-    if conditions:
-        condition_results = []
-        for cond in conditions:
-            cond_result = {
-                "result": cond.get("result", {}).get("result"),
-                "path": cond.get("path"),
-            }
-            if "timestamp" in cond:
-                cond_result["timestamp"] = cond["timestamp"]
-            # HA 2026.7+ always records template errors on the failing step
-            # (core #172917) — dropping this field would hide the reason a
-            # condition evaluated to None.
-            if "error" in cond:
-                cond_result["error"] = cond["error"]
-            condition_results.append(cond_result)
-        result["condition_results"] = condition_results
-
-
-def _populate_action_trace(
-    result: dict[str, Any],
-    actions: list[dict[str, Any]],
-    deduplicate: bool,
-) -> None:
-    """Extract action trace with optional variable deduplication."""
-    if not actions:
-        return
-
-    action_results = []
-    last_vars_fingerprint: str | None = None
-    for action in actions:
-        action_info: dict[str, Any] = {
-            "path": action.get("path"),
-        }
-
-        if "timestamp" in action:
-            action_info["timestamp"] = action["timestamp"]
-
-        action_result = action.get("result", {})
-        if action_result:
-            action_info["result"] = action_result
-
-        if "error" in action:
-            action_info["error"] = action["error"]
-
-        variables = action.get("variables") or action.get("changed_variables", {})
-        useful_vars, last_vars_fingerprint = _select_action_variables(
-            variables, deduplicate, last_vars_fingerprint
-        )
-        if useful_vars is not None:
-            action_info["variables"] = useful_vars
-
-        if "child_id" in action:
-            action_info["child_id"] = action["child_id"]
-
-        action_results.append(action_info)
-
-    result["action_trace"] = action_results
-
-
-def _select_action_variables(
-    variables: dict[str, Any],
-    deduplicate: bool,
-    last_fingerprint: str | None,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Pick the variables to record for an action step, deduplicating if enabled.
-
-    Returns the variables to include (or None to omit) alongside the fingerprint
-    to carry into the next step.
-    """
-    if not variables or "trigger" in variables:
-        return None, last_fingerprint
-
-    useful_vars = {k: v for k, v in variables.items() if v is not None}
-    if not useful_vars:
-        return None, last_fingerprint
-
-    if not deduplicate:
-        return useful_vars, last_fingerprint
-
-    try:
-        fingerprint = json.dumps(useful_vars, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        fingerprint = str(useful_vars)
-
-    if fingerprint == last_fingerprint:
-        return None, last_fingerprint
-    return useful_vars, fingerprint

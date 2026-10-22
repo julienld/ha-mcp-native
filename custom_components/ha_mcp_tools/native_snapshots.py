@@ -201,6 +201,45 @@ class NativeSnapshots:
             domain, payload["backup_id"], payload["current_config"], source
         )
 
+    async def resource_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        from .native_operations.lovelace_resources import NativeResources
+
+        source = payload.get("source_tool")
+        if source not in {
+            "ha_config_set_dashboard_resource",
+            "ha_config_delete_dashboard_resource",
+        }:
+            raise ValueError("Unsupported native dashboard resource snapshot source")
+        if not self.manager.policy.flag("enable_auto_backup"):
+            return None
+        identifier, config = payload["resource_id"], payload["current_resource"]
+        NativeResources._snapshot_identity(identifier, config)
+        return await self._capture_value(
+            "dashboard_resource", identifier, config, source
+        )
+
+    async def calendar_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        from .native_operations.calendar_restore import _identity
+
+        if payload.get("domain") != "calendar_event" or payload.get(
+            "source_tool"
+        ) not in {
+            "ha_config_set_calendar_event",
+            "ha_config_remove_calendar_event",
+        }:
+            raise ValueError("Unsupported native calendar snapshot source")
+        if not self.manager.policy.flag("enable_auto_backup"):
+            return None
+        identifier, config = payload["backup_id"], payload["current_config"]
+        _identity(identifier, config)
+        return await self._capture_value(
+            "calendar_event", identifier, config, payload["source_tool"]
+        )
+
     async def todo_backup(
         self, payload: dict[str, Any], context: CallContext
     ) -> dict[str, Any] | None:
@@ -332,10 +371,10 @@ class NativeSnapshots:
                     lock_domain, data["entity_id"], config
                 )
                 target = identity[f"{lock_domain}_id"]
-            if lock_domain == "label":
-                # The Core label service owns its mutation lock; it rechecks the
+            if lock_domain in {"label", "device", "dashboard_resource"}:
+                # The Core service owns its mutation lock; it rechecks the
                 # captured before-image after acquiring it, so no lock is reentered.
-                lock_domain = "snapshot_restore:label"
+                lock_domain = f"snapshot_restore:{lock_domain}"
             async with registry_update_lock(lock_domain, target):
                 return await restore_snapshot_data(
                     store,

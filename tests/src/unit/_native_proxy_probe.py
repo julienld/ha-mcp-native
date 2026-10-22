@@ -84,6 +84,11 @@ class Probe:
 
     @staticmethod
     async def read(args: dict, actor: CallContext) -> dict:
+        from ha_mcp.runtime.progress import report_progress
+
+        await report_progress(
+            actor.progress, progress=1, total=1, message="read complete"
+        )
         return {"value": args["value"], "actor": actor.user_id}
 
     async def write(self, args: dict, actor: CallContext) -> dict:
@@ -152,7 +157,17 @@ class Probe:
         assert tools["native_read"].annotations.read_only_hint is True
         assert tools["native_write"].annotations.read_only_hint is False
         assert tools["native_write"].annotations.idempotent_hint is False
-        result = await client.call_tool("native_read", {"value": "exact"})
+        notifications = []
+
+        async def progressed(
+            value: float, total: float | None, message: str | None
+        ) -> None:
+            notifications.append((value, total, message))
+
+        result = await client.call_tool(
+            "native_read", {"value": "exact"}, progress_handler=progressed
+        )
+        assert notifications == [(1, 1, "read complete")]
         assert result.data == {"value": "exact", "actor": "administrator"}
         assert result.meta["ha_mcp"]["status"] == "confirmed"
         assert result.meta["ha_mcp"]["operation_id"]

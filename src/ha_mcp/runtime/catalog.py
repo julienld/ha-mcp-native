@@ -80,7 +80,7 @@ def define_tool(
             ... if parameter.default is inspect.Parameter.empty else parameter.default,
         )
         for name, parameter in signature.parameters.items()
-        if name != "self"
+        if name not in {"self", "ctx"}
     }
     model = create_model(method_name, __config__=ConfigDict(extra="forbid"), **fields)
 

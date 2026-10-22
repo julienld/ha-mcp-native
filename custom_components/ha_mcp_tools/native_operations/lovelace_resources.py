@@ -27,6 +27,7 @@ from ha_mcp.runtime.resource_write_values import (
     validate_choice,
     validate_inline,
 )
+from ha_mcp.runtime.snapshot_payloads import InvalidBackupSnapshotError
 from ha_mcp.runtime.validation import validate_identifier_not_empty
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 from ha_mcp.utils.config_hash import json_values_equal
@@ -59,6 +60,17 @@ class NativeResources:
     _load_started: bool = field(default=False, init=False)
     _write_started: bool = field(default=False, init=False)
     _write_completed: bool = field(default=False, init=False)
+    _snapshot_owner: Any = field(default=None, init=False, repr=False)
+
+    @property
+    def initialization_started(self) -> bool:
+        return self._load_started
+
+    @staticmethod
+    def snapshot_matches(current: Any, config: dict[str, Any]) -> bool:
+        return isinstance(current, dict) and all(
+            current.get(key) == config.get(key) for key in ("url", "type")
+        )
 
     async def _authorize(self) -> None:
         try:
@@ -188,6 +200,7 @@ class NativeResources:
                     resource_list_result, rows, include_content, limit, offset, mode
                 )
             )
+            await self._authorize()
             return result
         except Exception as error:
             raise self._failure(error) from error
@@ -248,6 +261,97 @@ class NativeResources:
             return result
         except Exception as error:
             raise self._failure(error) from error
+
+    @staticmethod
+    def _snapshot_identity(identifier: str, config: Any) -> None:
+        if not isinstance(config, dict) or config.get("id") != identifier:
+            raise InvalidBackupSnapshotError(
+                "Dashboard resource snapshot does not match its identity"
+            )
+
+    def _snapshot_current(
+        self, owner: Any, identifier: str, config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        current = self._row(owner, identifier)
+        if current is not None:
+            return current
+        # Core generates fresh IDs on recreation. Repeated restores reuse an
+        # exact content/type match instead of adding another copy of the script.
+        return next(
+            (
+                self._plain(row)
+                for row in owner.async_items()
+                if row.get("url") == config.get("url")
+                and row.get("type") == config.get("type")
+            ),
+            None,
+        )
+
+    async def read_snapshot(
+        self, identifier: str, config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        self._snapshot_identity(identifier, config)
+        try:
+            owner, _mode = await self._loaded()
+            self._snapshot_owner = owner
+            return self._snapshot_current(owner, identifier, config)
+        except Exception as error:
+            raise self._failure(error) from error
+
+    async def restore_snapshot(
+        self, identifier: str, config: dict[str, Any], expected: Any
+    ) -> dict[str, Any]:
+        self._snapshot_identity(identifier, config)
+        try:
+            return await self._restore(identifier, config, expected)
+        except Exception as error:
+            raise self._failure(error) from error
+
+    async def _restore(
+        self, identifier: str, config: dict[str, Any], expected: Any
+    ) -> dict[str, Any]:
+        async with registry_update_lock("lovelace_resources", "write"):
+            await self._admit()
+            owner, _mode = self._owner()
+            self._storage(owner)
+            if owner is not self._snapshot_owner or not owner.loaded:
+                raise ToolFailure(
+                    "CONFIG_CONFLICT",
+                    "Resource ownership changed after its safety image",
+                    status="not_started",
+                )
+            before = self._snapshot_current(owner, identifier, config)
+            if not json_values_equal(before, expected):
+                raise ToolFailure(
+                    "CONFIG_CONFLICT",
+                    "The resource changed after its safety image",
+                    status="not_started",
+                )
+            if self.snapshot_matches(before, config):
+                return {"restore_mode": "already_matches", "resource": before}
+            fields = {"url": config.get("url")}
+            if "type" in config:
+                fields["res_type"] = config["type"]
+            action = "create" if before is None else "update"
+            fields = self._validated_fields(owner, action, fields)
+            collection = (
+                self._plain(owner.async_items()) if before is None else _CURRENT
+            )
+            row = await await_owned_io(
+                self._commit(
+                    owner,
+                    before,
+                    action,
+                    str(before["id"]) if before else None,
+                    fields,
+                    expected_resources=collection,
+                )
+            )
+            return {
+                "restore_mode": "recreated" if before is None else "updated",
+                "original_resource_id": identifier,
+                "resource": row,
+            }
 
     async def _change(
         self,
@@ -343,12 +447,20 @@ class NativeResources:
         action: str,
         identifier: str | None,
         fields: dict[str, Any],
+        *,
+        expected_resources: Any = _CURRENT,
     ) -> dict[str, Any] | None:
         await self._admit()
         if (
             self._owner()[0] is not owner
             or not owner.loaded
             or not json_values_equal(self._row(owner, identifier), before)
+            or (
+                expected_resources is not _CURRENT
+                and not json_values_equal(
+                    self._plain(owner.async_items()), expected_resources
+                )
+            )
         ):
             raise ToolFailure(
                 "CONFIG_CONFLICT",

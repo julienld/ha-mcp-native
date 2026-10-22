@@ -65,6 +65,10 @@
     "missing_registration": "explicit unsupported recreation; restoring history does not recreate an integration-owned entity"
   },
   "native_annotation_overrides": {
+    "ha_config_list_dashboard_resources": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "The first Core resource-storage read can migrate and persist dashboard/resource data. Native list discovery discloses that effect and requires write admission while the collection is not loaded; subsequent loaded reads and YAML mode remain read-only. The standalone catalog retains its original annotations."
+    },
     "ha_get_integration": {
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
       "reason": "Options/subentry schema inspection and password-field redaction initialize actual Core flows, which can mutate immediately. Native argument policy permits persisted metadata/options reads without flows when redaction is disabled. Native parameter descriptions disclose these effects instead of claiming subentry introspection cannot create anything; legacy signatures and metadata remain unchanged."
@@ -73,6 +77,11 @@
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
       "reason": "Describing a flow-backed helper can call Core async_init, which may immediately create a config entry. Native discovery must disclose that effect; argument-specific policy still permits storage listing/description in read-only mode. The standalone catalog remains unchanged."
     }
+  },
+  "native_trace_diagnostics": {
+    "script_off": "idle, not disabled",
+    "trace_storage_enabled": "derived from the actual Core owner's _trace_config; null when unavailable",
+    "legacy_diagnostics": "unchanged; these native corrections do not alter tool signatures or safety annotations"
   },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
@@ -84,6 +93,7 @@
     {"name": "FastMCP code-mode transforms", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "conditional discovery/execution transform"}
   ],
   "explicit_exceptions": [
+    {"surface": "automatic restore of a missing calendar UID", "native_compatibility": "Core exposes bounded occurrences, not authoritative UID absence. Restore updates a located occurrence; an unlocated UID returns calendar_identity_unavailable and saved manual creation arguments. No recreation follows an empty query or a failed provider update."},
     {"surface": "direct server_port/secret_path URL", "native_compatibility": "requires client URL migration when HA listens on another port; cannot retain exact URL with HA as the sole HTTP listener"},
     {"surface": "enable_webhook=False", "native_compatibility": "must not silently enable public webhook; preserve legacy runtime or migrate to an explicitly local/authenticated HA route"},
     {"surface": "ha_call_service.ws_command", "native_compatibility": "bounded semantic map only; unknown operations fail before side effects; remote backend retains transport capability"},

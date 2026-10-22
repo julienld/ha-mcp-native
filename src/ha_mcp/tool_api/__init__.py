@@ -17,6 +17,9 @@ class CallContext:
     credential: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     read_only: bool = False
     allowed_tools: frozenset[str] | None = None
+    progress: Callable[..., Awaitable[None]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)

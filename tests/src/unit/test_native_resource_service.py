@@ -279,3 +279,27 @@ async def test_resource_reload_after_read_classification_cannot_start_a_migratio
     assert result.is_error and result.status == "not_started"
     assert result.data["error"]["code"] == "READ_ONLY"
     assert owner.loads == 0 and not owner.calls
+
+
+async def test_inline_resources_are_not_returned_after_revocation_during_projection(
+    resources,
+):
+    manager, engine, owner, user, _capture, _module = resources
+    original = manager.hass.async_add_executor_job
+    owner.data["existing"]["url"] = (
+        "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHggPSAxOw=="
+    )
+
+    def revoked(function, *args):
+        user.active = False
+        return original(function, *args)
+
+    manager.hass.async_add_executor_job = revoked
+    result = await engine.call(
+        "ha_config_list_dashboard_resources",
+        {"include_content": True},
+        CallContext("owner"),
+    )
+    assert result.is_error and result.status == "not_started"
+    assert result.data["error"]["code"] == "AUTH_FORBIDDEN"
+    assert "resources" not in result.data and owner.loads == 0

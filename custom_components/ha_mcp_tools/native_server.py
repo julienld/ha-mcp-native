@@ -144,8 +144,13 @@ def _project_tool(manager: NativeServerManager, definition: Any) -> Any:
             self._manager = manager
 
         async def run(self, arguments: dict[str, Any]) -> Any:
+            from dataclasses import replace
+
+            from ha_mcp._vendor.fastmcp.server.dependencies import get_context
+
+            actor = replace(current_context(), progress=get_context().report_progress)
             return mcp_result(
-                await self._manager.engine.call(self.name, arguments, current_context())
+                await self._manager.engine.call(self.name, arguments, actor)
             )
 
     return RuntimeTool()

@@ -93,6 +93,14 @@ class FixtureView(HomeAssistantView):
     async def get(self, request, operation):
         if not request["hass_user"].is_admin:
             return web.json_response({"error": "admin_required"}, status=403)
+        if operation == "device":
+            data = self.hass.data[DOMAIN]
+            return web.json_response(
+                {
+                    "device_id": data.get("device_id"),
+                    "device_removals": data.get("device_removals", 0),
+                }
+            )
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         connections = await self.hass.async_add_executor_job(
             lambda: psutil.Process().net_connections(kind="inet")
@@ -269,4 +277,22 @@ async def async_setup(hass, config):
         json.dumps(users),
         "utf-8",
     )
+    return True
+
+
+async def async_setup_entry(hass: Any, entry: Any) -> bool:
+    from homeassistant.helpers import device_registry as dr
+
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "native-device")},
+        name=entry.title,
+    )
+    hass.data[DOMAIN]["device_id"] = device.id
+    return True
+
+
+async def async_remove_config_entry_device(hass: Any, entry: Any, device: Any) -> bool:
+    data = hass.data[DOMAIN]
+    data["device_removals"] = data.get("device_removals", 0) + 1
     return True

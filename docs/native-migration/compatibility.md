@@ -32,6 +32,17 @@ the calling human administrator is a separately authenticated principal.
 attribution from the historical server account to the calling account is an
 observable behavior change and must be documented and tested.
 
+## Calendar recovery limits
+
+Calendar history retains the saved UID and occurrence scope. Core's calendar
+owner exposes bounded event queries, so an unlocated UID is not proof that an
+event was deleted. Native automatic restore updates a located occurrence. If
+it cannot locate the identity, it reports `calendar_identity_unavailable` with
+the saved arguments for an explicit creation; it does not create a possible
+duplicate. A provider exception after update is an unknown outcome, with no
+creation fallback. Ranged and series-rule writes do not claim a complete,
+restorable series snapshot.
+
 ## Preserve the HA-hosted MCP URLs
 
 Keep `/api/webhook/{webhook_id}` and its `/readonly` alias. Preserve the webhook
@@ -139,6 +150,11 @@ Single and bulk removals capture each existing target. An uncertain Core
 removal stops a native bulk call, returning its confirmed progress and explicit
 `not_attempted` targets without replaying a removal.
 
+Native trace diagnostics distinguish an idle script (`off`) from a disabled
+automation. They read trace storage settings from the actual Core owner's
+configuration and return an unknown value when that configuration is unavailable.
+Legacy diagnostics, public arguments and safety annotations remain unchanged.
+
 The native catalog deliberately corrects three safety hints for
 `ha_config_list_helpers`: `readOnlyHint=false`, `destructiveHint=true` and
 `idempotentHint=false`. Describing a flow-backed helper may initialize a Core
@@ -147,6 +163,12 @@ still permits storage listing and storage schema descriptions in read-only mode.
 Native clients must treat flow discovery as a possible write. The standalone
 catalog and the immutable baseline retain their original annotations; the exact
 native exception is recorded in `compatibility.json` and checked separately.
+
+`ha_config_list_dashboard_resources` also uses those conservative native hints.
+Core's first storage read may migrate and save dashboard/resource data. Native
+policy therefore requires write admission while the collection is unloaded;
+loaded collections and YAML mode permit read-only listing. Its original
+`openWorldHint=true` and the standalone annotations remain unchanged.
 
 `ha_get_integration` has the same conservative native safety hints. Its explicit
 options/subentry schema requests initialize real Core flows; password-field

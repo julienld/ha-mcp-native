@@ -53,9 +53,25 @@ class NativeRestoreOperations:
     before: Any = field(default=None, init=False)
     revision: float | None = field(default=None, init=False)
     storage: StorageBefore | None = field(default=None, init=False)
+    calendar_owner: Any = field(default=None, init=False)
+    resource_owner: Any = field(default=None, init=False)
 
     async def needs_safety(self) -> bool:
         domain = self.data["domain"]
+        if domain == "dashboard_resource":
+            self.resource_owner = self.snapshots.domains.resources(self.actor)
+            self.before = await self.resource_owner.read_snapshot(
+                self.data["entity_id"], self.data["config"]
+            )
+            return self.before is not None and not self.resource_owner.snapshot_matches(
+                self.before, self.data["config"]
+            )
+        if domain == "calendar_event":
+            self.calendar_owner = self.snapshots.domains.calendar_restore(
+                self.data, self.actor
+            )
+            self.before = await self.calendar_owner.current()
+            return self.before is not None
         if _is_flow_helper_domain(domain) or domain == "helper_config_subentry":
             self.before = await self.snapshots.domains.current(self.data, self.actor)
             self.revision = self.snapshots.domains.entry_revision(self.data)
@@ -68,6 +84,7 @@ class NativeRestoreOperations:
             "category",
             "area_or_floor",
             "label",
+            "device",
         }:
             self.before = await self.snapshots.domains.current(self.data, self.actor)
             return self.before is not None
@@ -143,6 +160,14 @@ class NativeRestoreOperations:
 
     async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
         self.snapshots._require_restore_access(self.actor)
+        if self.data["domain"] == "dashboard_resource":
+            assert self.resource_owner is not None
+            return await self.resource_owner.restore_snapshot(
+                self.data["entity_id"], self.data["config"], self.before
+            )
+        if self.data["domain"] == "calendar_event":
+            assert self.calendar_owner is not None
+            return await self.calendar_owner.apply(self.before)
         if (
             _is_flow_helper_domain(self.data["domain"])
             or self.data["domain"] == "helper_config_subentry"
@@ -160,6 +185,10 @@ class NativeRestoreOperations:
             )
         if self.data["domain"] == "label":
             return await self.snapshots.domains.restore_label(
+                self.data, self.before, self.actor
+            )
+        if self.data["domain"] == "device":
+            return await self.snapshots.domains.restore_device(
                 self.data, self.before, self.actor
             )
         if self.data["domain"] in {"category", "area_or_floor"}:
@@ -205,13 +234,28 @@ class NativeRestoreOperations:
             and error.data.get("config_applied") is True
         ):
             status = "applied"
+        elif (isinstance(error, ToolFailure) and error.status == "outcome_unknown") or (
+            self.resource_owner is not None
+            and self.resource_owner.initialization_started
+        ):
+            status = "unknown"
         elif (
             isinstance(error, (ToolFailure, UnsupportedOperation))
             and error.status == "not_started"
         ):
             status = "not_applied"
+        message = (
+            str(error)
+            if isinstance(error, ToolFailure) and error.status == "not_started"
+            else "The snapshot could not be restored; inspect the recorded outcome before retrying"
+        )
+        if (
+            self.resource_owner is not None
+            and self.resource_owner.initialization_started
+        ):
+            outcome = {**outcome, "resource_initialization_started": True}
         raise BackupRestoreError(
-            "The snapshot could not be restored; inspect the recorded outcome before retrying",
+            message,
             apply_status=status,
             reason="backup_capture_failed"
             if isinstance(error, MandatoryBackupError)

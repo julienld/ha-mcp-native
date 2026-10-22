@@ -28,9 +28,15 @@ async def exercise_configuration(
 ) -> None:
     sequence = [
         {
+            "variables": {
+                "native_duration": "{{ timedelta(seconds=3) }}",
+                "native_date": "{{ now().date() }}",
+            }
+        },
+        {
             "action": "input_boolean.turn_on",
             "target": {"entity_id": "input_boolean.native_light"},
-        }
+        },
     ]
     created = await checks.call(
         "ha_config_set_script",
@@ -71,6 +77,7 @@ async def exercise_configuration(
     )
     await expect_state(checks, "input_boolean.native_light", "on")
     checks.passed("native_script_authoring_hash_transform_and_real_execution")
+    await exercise_traces(checks)
 
     scene = await checks.call(
         "ha_config_set_scene",
@@ -121,6 +128,27 @@ async def exercise_configuration(
         deleted = await checks.call(tool, arguments)
         assert deleted["success"], deleted
     checks.passed("native_configuration_deletions_through_Core_owners")
+
+
+async def exercise_traces(checks: Any) -> None:
+    deadline = time.monotonic() + 6
+    while True:
+        traces = await checks.call(
+            "ha_get_automation_traces", {"automation_id": "script.native_contract"}
+        )
+        if traces["traces"]:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(traces)
+        await asyncio.sleep(0.1)
+    run_id = traces["traces"][0]["run_id"]
+    detail = await checks.call(
+        "ha_get_automation_traces",
+        {"automation_id": "script.native_contract", "run_id": run_id, "detailed": True},
+    )
+    assert detail["success"] and detail["run_id"] == run_id, detail
+    assert detail.get("action_trace"), detail
+    checks.passed("native_trace_list_and_detail_use_Core_serialization_and_live_script")
 
 
 async def exercise_snapshot_panel(

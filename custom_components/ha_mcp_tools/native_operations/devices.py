@@ -229,16 +229,7 @@ class NativeDevices:
         warnings = await capture_registry_before(
             self.backup, self.actor, "device", device_id, before, "ha_remove_device"
         )
-        await admit_registry_write(self.actor, self.authorize)
-        device = self._check_current(registry, device_id, before)
-        if self.hass.config_entries.async_get_entry(entry.entry_id) is not entry:
-            raise ToolFailure(
-                "CONFIG_CONFLICT",
-                "The owning config entry changed during capture.",
-                status="not_started",
-            )
-        check_mutation_admission(self.actor)
-        await self._dispatch_remove(component, registry, entry, device)
+        await self._dispatch_remove(component, registry, entry, device, before)
         result = {
             "success": True,
             "device_id": device_id,
@@ -250,19 +241,59 @@ class NativeDevices:
             result["warnings"] = warnings
         return result
 
+    def _remove_target(
+        self, registry: Any, entry: Any, device: Any, before: dict[str, Any]
+    ) -> Any:
+        device = self._check_current(registry, device.id, before)
+        if self.hass.config_entries.async_get_entry(entry.entry_id) is not entry:
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                "The owning config entry changed before dispatch.",
+                status="not_started",
+            )
+        if not entry.supports_remove_device:
+            raise ToolFailure(
+                "SERVICE_CALL_FAILED",
+                "Config entry no longer supports device removal",
+                status="not_started",
+            )
+        return device
+
+    async def _invoke_remove(
+        self,
+        component: Any,
+        registry: Any,
+        entry: Any,
+        device: Any,
+        before: dict[str, Any],
+    ) -> bool:
+        # This runs inside the owned task. Its scheduling must precede the final
+        # actor/identity checks, otherwise revocation can race callback startup.
+        await admit_registry_write(self.actor, self.authorize)
+        device = self._remove_target(registry, entry, device, before)
+        check_mutation_admission(self.actor)
+        try:
+            accepted: bool = await component.async_remove_config_entry_device(
+                self.hass, entry, device
+            )
+            return accepted
+        except Exception as error:  # noqa: BLE001 - the integration callback has started
+            registry_outcome_unknown("device", "remove", error)
+
     async def _dispatch_remove(
         self,
         component: Any,
         registry: Any,
         entry: Any,
         device: Any,
+        before: dict[str, Any],
     ) -> None:
         device_id = device.id
         anchor = self._removal_anchor(device)
+        accepted = await await_owned_io(
+            self._invoke_remove(component, registry, entry, device, before)
+        )
         try:
-            accepted = await await_owned_io(
-                component.async_remove_config_entry_device(self.hass, entry, device)
-            )
             if not accepted:
                 failure = ToolFailure(
                     "OUTCOME_UNKNOWN",

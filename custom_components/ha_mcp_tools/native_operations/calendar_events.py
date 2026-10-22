@@ -384,6 +384,16 @@ class NativeCalendars:
         event: dict[str, Any] | None,
         values: dict[str, Any],
     ) -> None:
+        await await_owned_io(self._invoke_provider(target, action, event, values))
+
+    async def _invoke_provider(
+        self,
+        target: CalendarTarget,
+        action: str,
+        event: dict[str, Any] | None,
+        values: dict[str, Any],
+    ) -> None:
+        # Admission runs inside the owned task, after its scheduling boundary.
         await admit_registry_write(self.actor, self.authorize)
         self.check_target(target)
         self.check_feature(target, action)
@@ -402,7 +412,7 @@ class NativeCalendars:
                     if action == "update"
                     else target.entity.async_delete_event(values["uid"], **targeting)
                 )
-            await await_owned_io(operation)
+            await operation
         except Exception as error:  # Provider may raise after storing the event.
             raise ToolFailure(
                 "OUTCOME_UNKNOWN",

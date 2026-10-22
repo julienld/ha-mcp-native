@@ -71,6 +71,15 @@ class NativeSnapshotDomains:
         validate_snapshot_identity(data)
         await self.manager.backend.authorize(actor)
         domain = data["domain"]
+        if domain == "calendar_event":
+            return await self.calendar_restore(data, actor).current()
+        if domain == "dashboard_resource":
+            row = await self.resources(actor).read_snapshot(
+                data["entity_id"], data["config"]
+            )
+            # Recreated resources get a Core-generated ID; diff the values this
+            # snapshot can restore, matching the established resource comparison.
+            return {**row, "id": data["entity_id"]} if row is not None else None
         if domain in {"automation", "script", "scene"}:
             from homeassistant.helpers.json import json_bytes
 
@@ -82,16 +91,8 @@ class NativeSnapshotDomains:
             # Core's YAML owner returns annotated nodes. Cross the same public
             # value boundary as NativeBackend before diffing or writing a snapshot.
             return json.loads(json_bytes(current))
-        if domain == "label":
-            config = data["config"]
-            if (
-                not isinstance(config, dict)
-                or config.get("label_id") != data["entity_id"]
-            ):
-                raise InvalidBackupSnapshotError(
-                    "Label snapshot does not match its identity"
-                )
-            return await self.labels(actor).read_snapshot(data["entity_id"])
+        if domain in {"label", "device"}:
+            return await self._registry_current(data, actor)
         if domain in {"category", "area_or_floor"}:
             from ha_mcp.runtime.snapshot_registry_restore import current_registry
 
@@ -110,12 +111,69 @@ class NativeSnapshotDomains:
             return await self._flow(data)
         return (await self.storage_before(data, actor)).snapshot
 
+    async def _registry_current(self, data: dict[str, Any], actor: CallContext) -> Any:
+        key, service = {
+            "label": ("label_id", self.labels),
+            "device": ("id", self.devices),
+        }[data["domain"]]
+        config = data["config"]
+        if not isinstance(config, dict) or config.get(key) != data["entity_id"]:
+            raise InvalidBackupSnapshotError(
+                f"{data['domain'].capitalize()} snapshot does not match its identity"
+            )
+        return await service(actor).read_snapshot(data["entity_id"])
+
+    def calendar_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
+        from .native_operations.calendar_events import NativeCalendars
+        from .native_operations.calendar_restore import NativeCalendarRestore
+
+        service = NativeCalendars(
+            self.manager.hass,
+            actor,
+            authorize=self.manager.backend.authorize,
+            lookahead_days=int(
+                self.manager.snapshots._value("auto_backup_calendar_lookahead_days")
+            ),
+        )
+        return NativeCalendarRestore(service, data["entity_id"], data["config"])
+
     def labels(self, actor: CallContext) -> Any:
         from .native_operations.labels import NativeLabels
 
         return NativeLabels(
             self.manager.hass, actor, authorize=self.manager.backend.authorize
         )
+
+    def resources(self, actor: CallContext) -> Any:
+        from .native_operations.lovelace_resources import NativeResources
+
+        return NativeResources(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    def devices(self, actor: CallContext) -> Any:
+        from .native_operations.devices import NativeDevices
+
+        return NativeDevices(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    async def restore_device(
+        self, data: dict[str, Any], before: Any, actor: CallContext
+    ) -> dict[str, Any]:
+        try:
+            result: dict[str, Any] = await self.devices(actor).restore_snapshot(
+                data["entity_id"], data["config"], before
+            )
+            return result
+        except ToolFailure as error:
+            if error.code != "RESOURCE_NOT_FOUND":
+                raise
+            raise BackupRestoreError(
+                "The saved device no longer exists. Its integration owns device creation; "
+                "this restore cannot recreate the original device identity.",
+                reason="entry_deleted",
+            ) from error
 
     async def restore_label(
         self, data: dict[str, Any], before: Any, actor: CallContext
