@@ -36,7 +36,7 @@
         },
         "abort": {
             "already_configured": "This entry is already set up.",
-            "unsupported_home_assistant": "The in-process HA-MCP Server requires Home Assistant {required} or newer, but this instance is running {installed}. You can still use this component's HA-MCP File & YAML Tools entry with an external ha-mcp server running as an app (add-on) or Docker container."
+            "unsupported_home_assistant": "Native HA-MCP requires Home Assistant {required} or newer, but this instance is running {installed}. Existing Legacy entries and the HA-MCP File & YAML Tools entry remain available."
         },
         "error": {
             "invalid_token": "Home Assistant does not recognise this token. Copy the whole token, or create a new one.",
@@ -48,6 +48,7 @@
     },
     "options": {
         "error": {
+            "unsupported_home_assistant": "Native requires Home Assistant {required} or newer; this instance runs {installed}. Keep Legacy selected or upgrade Home Assistant.",
             "invalid_connect_path": "Must not contain #, ?, %, or whitespace.",
             "invalid_webhook_id": "Webhook IDs must not contain a slash (/).",
             "invalid_oauth_callback": "Each callback must be an https:// URL, or an http:// URL on 127.0.0.1, [::1] or localhost, without a user name, password or #fragment, and at most 2048 characters long. Fix: {invalid_callbacks}",

@@ -44,6 +44,9 @@ SERVER_ENTRY_TITLE = "HA-MCP Server"
 # that requirement gates the whole integration before any entry's config flow
 # runs, so a lower runtime floor here would promise what the load cannot keep.
 MIN_EMBEDDED_HOME_ASSISTANT_VERSION = "2026.8.0"
+# Native Core-owner contracts are qualified separately from the shared
+# component/legacy installation floor; dependency alignment alone is not parity.
+MIN_NATIVE_HOME_ASSISTANT_VERSION = "2026.10.2"
 
 # Allowed directories for file operations (relative to config dir).
 # "blueprints" is read-only BY DEFAULT — in ALLOWED_READ_DIRS but not

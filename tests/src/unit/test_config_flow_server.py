@@ -20,12 +20,23 @@ class TestServerBranch:
 
     OWNER = "selected-owner"
 
+    @pytest.fixture(autouse=True)
+    def qualified_native_core(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(cf, "HA_VERSION", "2026.10.2")
+
     def _flow(self):
         flow = _make_flow()
-        flow.hass.auth.async_get_users = AsyncMock(return_value=[SimpleNamespace(
-            id=self.OWNER, name="Selected owner", is_active=True,
-            is_admin=True, system_generated=False,
-        )])
+        flow.hass.auth.async_get_users = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    id=self.OWNER,
+                    name="Selected owner",
+                    is_active=True,
+                    is_admin=True,
+                    system_generated=False,
+                )
+            ]
+        )
         return flow
 
     def _defaults(self, form) -> dict:

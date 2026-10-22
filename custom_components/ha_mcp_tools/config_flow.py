@@ -44,7 +44,6 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 from homeassistant.loader import async_get_integration
-from packaging.version import InvalidVersion, Version
 
 from . import server_credentials
 from .config_flow_text import (
@@ -80,7 +79,7 @@ from .const import (
     EXPOSURE_TOOL_SEARCH,
     LLM_API_DOCS_URL,
     MAX_OAUTH_CALLBACKS,
-    MIN_EMBEDDED_HOME_ASSISTANT_VERSION,
+    MIN_NATIVE_HOME_ASSISTANT_VERSION,
     OPT_ADMIN_TOKEN_REPLACEMENT,
     OPT_BIND_HOST,
     OPT_ENABLE_LLM_API,
@@ -117,6 +116,7 @@ from .oauth_redirect_allowlist import (
     normalize_allowlist,
     stored_allowlist,
 )
+from .runtime_version import runtime_version_errors, version_supported
 
 # The single-instance server entry's unique id — distinct from the tools entry's
 # unique id (``DOMAIN``) so both entry types coexist under the one domain.
@@ -254,18 +254,12 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose an owner and optional remote access for a native server."""
-        try:
-            supported = Version(HA_VERSION) >= Version(
-                MIN_EMBEDDED_HOME_ASSISTANT_VERSION
-            )
-        except InvalidVersion:
-            supported = False
-        if not supported:
+        if not version_supported(HA_VERSION, MIN_NATIVE_HOME_ASSISTANT_VERSION):
             return self.async_abort(
                 reason="unsupported_home_assistant",
                 description_placeholders={
                     "installed": HA_VERSION,
-                    "required": MIN_EMBEDDED_HOME_ASSISTANT_VERSION,
+                    "required": MIN_NATIVE_HOME_ASSISTANT_VERSION,
                 },
             )
 
@@ -424,6 +418,7 @@ class HaMcpServerOptionsFlow(OptionsFlow):
         invalid: list[str] = []
         if user_input is not None:
             errors = self._connect_path_override_errors(user_input)
+            errors.update(runtime_version_errors(user_input, opts, HA_VERSION))
             entries, invalid = normalize_allowlist(
                 user_input.get(OPT_OAUTH_REDIRECT_ALLOWLIST) or []
             )
@@ -661,6 +656,8 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 "panel_hint": panel_hint,
                 "invalid_callbacks": ", ".join(invalid),
                 "max_callbacks": str(MAX_OAUTH_CALLBACKS),
+                "installed": HA_VERSION,
+                "required": MIN_NATIVE_HOME_ASSISTANT_VERSION,
             },
         )
 

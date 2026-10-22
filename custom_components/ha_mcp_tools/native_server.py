@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HassJob
 from homeassistant.util.aiohttp import MockRequest
 
@@ -35,6 +36,7 @@ from .native_server_policy import (
     catalogue_transform,
     load_policy,
 )
+from .runtime_version import require_native_version
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -254,6 +256,7 @@ class NativeServerManager:
 
     async def async_start(self) -> None:
         """Start on HA's loop; enter and exit lifespan from one supervisor task."""
+        require_native_version(HA_VERSION)
         self.skill_available = await self.hass.async_add_executor_job(_prewarm)
         from ha_mcp._vendor.fastmcp import FastMCP
         from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity

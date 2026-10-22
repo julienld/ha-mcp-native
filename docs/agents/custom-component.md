@@ -5,11 +5,34 @@ server feature that depends on the component. The HACS component and the
 `ha-mcp` server ship through separate installation paths, so compatibility
 must hold in both update directions.
 
+## Native and legacy runtimes
+
+The native custom component is the canonical implementation. New server
+entries select `runtime_mode=native`; an existing entry without that option
+keeps the legacy runtime until the administrator changes it. Runtime selection
+is separate from the webhook authentication modes `none`, `ha_auth` and
+`legacy`. Legacy compatibility has not been deprecated.
+
+Native MCP runs its FastMCP lifespan on Home Assistant's event loop and serves
+ASGI requests through HA's existing HTTP listener. It creates no server thread
+or server subprocess, opens no additional HTTP listener and makes no HA
+REST/WebSocket loopback calls. Tools use Core owners directly or small domain
+services, through the shared Engine. Follow the
+[native porting guide](../native-migration/porting.md)
+for these bindings; the earlier finite semantic dispatcher remains in use for
+the first migrated tools and is not a requirement for new tools.
+
+The legacy embedded runtime retains its separate listener, worker thread and
+HA client. External app, Docker and standalone servers also retain their
+REST/WebSocket compatibility paths. Keep these transports separate from native
+tool logic; an uncertain mutation must never fall back to another transport.
+
 ## Version cycle
 
-The component shares the server's version and pins the server build it runs
-(#2427). `manifest.json`'s `version`, its `ha-mcp==` requirement and
-`COMPONENT_VERSION` in `const.py` always equal `pyproject.toml`'s version.
+In the regular release channels, the component shares the server's version and
+pins the server build it runs (#2427). `manifest.json`'s `version`, its `ha-mcp==`
+requirement and `COMPONENT_VERSION` in `const.py` always equal `pyproject.toml`'s
+version.
 Never edit them by hand: semantic-release stamps all four in each release
 commit (`version_variables` in `pyproject.toml`), and the PR **Component
 Version Gate** fails a pull request that moves any of them.
@@ -44,6 +67,13 @@ service from an earlier one that lacks it. Only an external server (app,
 Docker, pip) is affected; the in-process server runs the build its component
 release pins. This gap is accepted: pre-release users update the component
 from HACS.
+
+Native migration candidates use `scripts/native_release.py` to build a paired
+component archive and library wheel from one immutable Git revision, including
+the pinned skills submodule. The script stamps the staged artifacts and their
+exact dependency URL; it does not change the working tree's release versions.
+The candidate's native dependency profile keeps CLI-only dependencies in the
+optional `standalone` extra.
 
 ## Compatibility
 
@@ -90,7 +120,7 @@ upgrading its shared packages.
 
 Fast Checks verifies direct dependency alignment against both the current
 Core image and the `hacs.json` minimum, without adding E2E lanes. Existing
-current-Core embedded E2E on x64/ARM64 covers transitive installation and
+legacy current-Core embedded E2E on x64/ARM64 covers transitive installation and
 preinstall/runtime replacement of HA-governed packages; nightly beta E2E
 provides advance notice of upcoming Core regressions.
 
@@ -99,6 +129,25 @@ behavior there. These checks also do not cover every intervening release,
 every installed third-party integration, or future API compatibility.
 Keep the HACS minimum honest; passing current-Core E2E alone does not justify
 raising a dependency floor past versions older supported Core releases need.
+
+Native FastMCP and MCP SDKs live under `ha_mcp._vendor`; they do not replace
+Core's shared `mcp` package. The native wheel also uses a private Rich copy.
+Its Container build checks the installed versions of the shared SDK and key
+libraries before and after installation under Core's constraints, and rejects
+new `pip check` conflicts. This evidence does not cover every optional
+integration's dependencies.
+
+As of 22 October 2026, the native qualification target and admission floor are
+Core **2026.10.2**. Creation, selection in options and startup check the native
+floor before loading modern owners, including for an imported entry or a Core
+downgrade. They refuse an unsupported native selection without changing its
+runtime or webhook automatically. The HACS installation floor remains
+**2026.8.0**, retained for legacy and shared-component compatibility. Direct
+dependency alignment passes against
+both versions; that does not qualify native execution on 2026.8. Native runtime
+support and the component installation floor are distinct claims. Candidate
+qualification records belong in
+[native migration evidence](../native-migration/README.md).
 
 ## Two entries, one command surface
 
@@ -112,6 +161,8 @@ Both entries register the shared `ha_mcp_tools/*` WebSocket command surface.
 An external server therefore reaches in-process capabilities through the tools
 entry alone. Every shared handler must read live Home Assistant state rather
 than tools-entry `hass.data`, or a server-entry-only installation breaks.
+Native tools call the underlying owners without making WebSocket requests to
+this surface.
 
 `async_register_command` is idempotent, and Home Assistant provides no
 unregister operation. Commands remain registered after an entry unload until
@@ -122,8 +173,11 @@ Privileged filesystem and YAML services remain tools-entry-only. The
 `ha_mcp_tools/info` command answers for either entry, so the server gates
 those services on the additive `tools_services` handshake field—not the
 general capability list.
+Native File/YAML tools require the live tools entry and use the same local file
+owners, permissions and opt-ins as those services; direct calls do not bypass
+the tools-entry boundary.
 
-When changing component-backed behavior:
+When changing shared command or service behavior:
 
 - Update the component producer, server consumer, capability gate, and legacy
   fallback in the same pull request.
@@ -134,8 +188,32 @@ When changing component-backed behavior:
 
 ## Embedded server security
 
-The in-process server accepts active human Home Assistant administrators and
-makes upstream calls with an administrator's long-lived access token
+The native Engine accepts only identified, active human Home Assistant
+administrators. In `ha_auth` mode, Core validates the caller's Bearer and that
+caller's user/client identity becomes the execution context. Secret-URL and
+legacy-OAuth modes instead use the entry's selected administrator owner, whose
+active/admin status is checked on calls. `Context(user_id=...)` supplies
+attribution; the authorization checks remain explicit. The native runtime
+neither creates nor uses an internal administrator LLAT for Core operations.
+
+MCP, Assist and nested custom-code `call_tool` enter the same Engine. Actor,
+credential, enabled-tool and read-only checks apply there; native mutation
+owners recheck admission at dispatch after their preparatory awaits. Assist
+exposure adds a live per-tool guard, including child calls. Approval state is
+bound to the caller/client and arguments. The transport-neutral
+[`tool_api` projection](../../src/ha_mcp/tool_api/llm_projection.py) keeps rich
+descriptions, schemas and results separate from FastMCP and Core; the
+[`Core adapter`](../../custom_components/ha_mcp_tools/llm_projection.py) supplies
+schema conversion and full/search presentation. Exported API IDs and exposure
+settings remain stable, and anonymous Assist calls receive no owner fallback.
+
+Core remains the `ha_auth` OAuth authority. Authorization redirects into Core;
+translated code/refresh forms call its registered TokenView's grant methods with
+the real incoming request. Revocation uses Core's token registry. The native
+path preserves the existing DCR/CIMD translation and signed refresh envelope
+without an HTTP relay, fabricated request or copied grant validator.
+
+The legacy embedded runtime makes upstream calls with an administrator's LLAT
 (`server_credentials.py`): one the user pastes, or one issued at setup from the
 login of an account the user chose, which the component revokes on a switch or
 removal. The component never creates an account: entries from older releases
@@ -144,12 +222,17 @@ and a missing or refused credential files the fixable `server_token_needed`
 repair instead. The token is passed in memory, not through the Home Assistant
 process environment; disabling the entry stops the server. Removing the entry
 deletes only an account an older release created, never the user's.
+Retaining those credential fields for rollback does not make them native
+execution credentials. Existing entries and HA-hosted webhook/OAuth URLs are
+preserved; a legacy direct-port URL has no native listener equivalent. Changing
+runtime does not automatically enable a disabled webhook.
 
-The settings panel reverse-proxies the web UI through Home Assistant. Browser
+The settings panel is served through Home Assistant. Browser
 access uses a short-lived HttpOnly session cookie issued to an authenticated
 administrator. Every request revalidates that the session still maps to an
-active administrator. Never expose the loopback secret path or place a token or
-secret in a URL.
+active administrator. Native requests call the settings handlers directly;
+legacy requests proxy to the separate listener. The panel never exposes that
+listener's secret path or puts session credentials in URLs.
 
 The full threat model and route-ownership rules are in
 [`SECURITY.md`](../../SECURITY.md).

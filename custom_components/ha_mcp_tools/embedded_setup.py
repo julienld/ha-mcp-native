@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.components import persistent_notification
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.loader import async_get_integration
@@ -63,6 +64,7 @@ from .embedded_server import EmbeddedServerError, EmbeddedServerManager
 from .llm_api import async_register_llm_api, async_unregister_llm_api
 from .mcp_webhook import async_register_webhook, async_unregister_webhook
 from .oauth_legacy import legacy_credentials_active
+from .runtime_version import require_native_version
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -198,6 +200,7 @@ def _server_manager(hass: HomeAssistant, entry: ConfigEntry) -> tuple[Any, bool]
     if mode not in (RUNTIME_NATIVE, RUNTIME_LEGACY):
         raise ValueError("Unknown HA-MCP runtime mode")
     if mode == RUNTIME_NATIVE:
+        require_native_version(HA_VERSION)
         from .native_server import NativeServerManager
 
         return NativeServerManager(hass, entry), True
