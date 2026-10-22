@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -13,7 +14,7 @@ from ha_mcp.runtime.code_registry import SavedToolsRegistry
 from ha_mcp.runtime.code_runner import run_sandboxed_code
 from ha_mcp.runtime.code_session import CodeSession
 from ha_mcp.runtime.code_validation import BLOCKED_TOOLS, _sandbox_error
-from ha_mcp.runtime.mutation_guard import check_mutation_admission
+from ha_mcp.runtime.mutation_guard import check_mutation_admission, current_admission
 from ha_mcp.tool_api import (
     CallContext,
     ToolDefinition,
@@ -125,14 +126,17 @@ class NativeCode:
                 self.manager.settings_ui._io(getattr(self.registry, method), *args)
             )
 
-    async def _authorize(self, actor: CallContext, *, writes: bool = False) -> None:
-        await self.manager.backend.authorize(actor)
+    def _check_enabled(self) -> None:
         if not self.manager.policy.flag(
             "enable_beta_features"
         ) or not self.manager.policy.flag("enable_code_mode"):
             raise ToolFailure(
                 "FEATURE_DISABLED", "Native code mode is disabled", status="not_started"
             )
+
+    async def _authorize(self, actor: CallContext, *, writes: bool = False) -> None:
+        await self.manager.backend.authorize(actor)
+        self._check_enabled()
         if writes:
             check_mutation_admission(actor)
             if actor.read_only or self.manager.policy.read_only:
@@ -231,9 +235,20 @@ class NativeCode:
 class _NativeBridge:
     def __init__(self, owner: NativeCode, actor: CallContext) -> None:
         self.owner, self.actor = owner, actor
+        self._parent_admission = current_admission.get()
+        self._child_actor = replace(actor, tool_guard=self._guard_child)
         self.count = 0
         self.outcomes: list[dict[str, Any]] = []
         self.registry_changed = False
+
+    def _guard_child(self, name: str) -> None:
+        # Child admission replaces the active ContextVar, so retain the
+        # script's live guard through child authorization/approval waits too.
+        self.owner._check_enabled()
+        if self._parent_admission is not None:
+            self._parent_admission.check_policy()
+        if self.actor.tool_guard is not None:
+            self.actor.tool_guard(name)
 
     def _limit(self) -> dict[str, Any] | None:
         from ha_mcp.errors import ErrorCode
@@ -268,7 +283,11 @@ class _NativeBridge:
         # continuation: earlier script calls may already have changed HA.
         token = MCP_APPROVAL_CONTEXT.set(None)
         try:
-            result = await self.owner.manager.engine.call(name, arguments, self.actor)
+            await self.owner.manager.refresh_policy()
+            await self.owner._authorize(self.actor, writes=True)
+            result = await self.owner.manager.engine.call(
+                name, arguments, self._child_actor
+            )
         except ToolFailure as failure:
             return failure.data
         finally:
