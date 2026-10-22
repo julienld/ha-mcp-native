@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -201,6 +202,56 @@ async def create_entry(checks: Checks, owner: str) -> None:
     await checks.ready()
 
 
+async def exercise_helpers(checks: Checks) -> None:
+    guide = await checks.call("ha_get_skill_guide")
+    acknowledgment = re.search(r"Acknowledgment key: ([^\s]+)", guide["content"])
+    assert acknowledgment, "The real skill guide must provide the write receipt"
+    common = {"BestPracticeKey": acknowledgment[1], "MandatoryBPS": False}
+    created = await checks.call(
+        "ha_config_set_helper",
+        {
+            **common,
+            "helper_type": "input_boolean",
+            "name": "Native storage helper",
+            "config": {"initial": False},
+        },
+    )
+    assert created["success"] and created["entity_id"], created
+    entity_id = created["entity_id"]
+    updated = await checks.call(
+        "ha_config_set_helper",
+        {
+            **common,
+            "helper_type": "input_boolean",
+            "helper_id": entity_id,
+            "name": "Native storage helper updated",
+        },
+    )
+    assert updated["success"] and updated["data"]["initial"] is False, updated
+    assert updated["data"]["id"] == created["data"]["id"], updated
+    assert list((CONFIG / ".ha_mcp/backups").glob("helper_input_boolean.*.yaml"))
+    checks.passed("native_storage_helper_create_update_with_prewrite_snapshot")
+    action = await checks.call(
+        "ha_call_service",
+        {"domain": "input_boolean", "service": "turn_on", "entity_id": entity_id},
+    )
+    assert action.get("success"), action
+    state = await checks.call("ha_get_state", {"entity_id": entity_id})
+    assert '"on"' in json.dumps(state), state
+    checks.passed("shared_service_action_changes_real_Core_entity")
+    flow = await checks.call(
+        "ha_config_set_helper",
+        {
+            **common,
+            "helper_type": "utility_meter",
+            "name": "Native utility meter",
+            "config": {"source": "sensor.native_energy", "cycle": "daily"},
+        },
+    )
+    assert flow["success"] and flow["entry_id"] and flow["entity_ids"], flow
+    checks.passed("native_helper_config_flow_on_real_Core")
+
+
 async def exercise(checks: Checks) -> dict:
     probe = await checks.ready()
     assert probe["manager_type"] == "NativeServerManager", probe
@@ -217,6 +268,7 @@ async def exercise(checks: Checks) -> dict:
     services = await checks.call("ha_list_services", {"domain": "input_boolean"})
     assert "input_boolean" in json.dumps(services), services
     checks.passed("shared_state_and_service_tools_on_Core")
+    await exercise_helpers(checks)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -280,6 +332,21 @@ async def exercise(checks: Checks) -> dict:
 async def main() -> None:
     CONFIG.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
+    preferences = CONFIG / ".ha_mcp"
+    preferences.mkdir(exist_ok=True)
+    (preferences / "feature_flags.json").write_text(
+        json.dumps(
+            {
+                "enable_tool_search": False,
+                "enable_mandatory_bps": True,
+                "enable_strict_mandatory_bps": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (preferences / "backup_settings.json").write_text(
+        json.dumps({"enable_auto_backup": True}), encoding="utf-8"
+    )
     (CONFIG / "configuration.yaml").write_text(
         "homeassistant:\n  name: Native migration CI\n  latitude: 0\n  longitude: 0\n"
         "  elevation: 0\n  unit_system: metric\n  time_zone: UTC\n  auth_providers:\n"

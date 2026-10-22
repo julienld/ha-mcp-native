@@ -199,6 +199,16 @@ async def async_setup(hass, config):
     hass.states.async_set(
         "sensor.native_fixture", "ready", {"friendly_name": "Native fixture"}
     )
+    hass.states.async_set(
+        "sensor.native_energy",
+        "100",
+        {
+            "friendly_name": "Native energy source",
+            "device_class": "energy",
+            "state_class": "total_increasing",
+            "unit_of_measurement": "kWh",
+        },
+    )
 
     async def heartbeat():
         while True:
