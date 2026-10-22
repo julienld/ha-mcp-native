@@ -83,6 +83,7 @@ from .dependency_diagnostics import (
     requirement_forces_conflict,
     root_import_failure,
 )
+from .paired_wheel import paired_wheel_matches
 from .pip_compat import pip_kwargs
 from .runtime_generation import RESTART_REQUIRED, native_bound_version
 from .server_credentials import (
@@ -725,28 +726,14 @@ class EmbeddedServerManager:
     ) -> str | None:
         """Ensure ``ha-mcp`` is importable at the effective spec, installing if needed.
 
-        Returns the installed version that the worker is about to run, for the
-        caller's warm-cache purge decision.
+        Returns the installed version for the caller's warm-cache purge decision.
 
-        Without an override the spec is the manifest pin, which Home Assistant
-        installed before setup like any integration requirement — so the
-        normal start installs nothing. An install happens only when:
-
-        * an override is set (a URL is always reinstalled; an index pin when
-          the installed version does not match it — Home Assistant puts the
-          manifest pin back on every restart),
-        * the spec changed since the last install in a way the installed
-          version cannot prove (a cleared override that installed the same
-          version string, issue #1914 — see _async_remove_replaced_source),
-        * the other server distribution is installed beside the target (a
-          component 2.x dev-channel install, a HACS pre-release swapping
-          ``ha-mcp`` for ``ha-mcp-dev`` or back, or an override on the other
-          one). It is removed first, and because both distributions own the
-          same ``ha_mcp`` files, that removal deletes the target's files too,
-          so the target is then REINSTALLED rather than upgraded,
-        * the package repair asked for a reinstall (``DATA_REINSTALL_REQUESTED``):
-          even a satisfied pin is reinstalled, and the flag is cleared only
-          once that install succeeds.
+        The manifest's paired wheel can reuse installed PEP 610 evidence:
+        URL, SHA-256 and runtime/distribution versions must agree. Overrides
+        and requested reinstalls never use this exemption. Index pins retain
+        their version check; source changes follow _async_remove_replaced_source
+        (#1914). A conflicting distribution is removed then the target is
+        reinstalled, since both distributions own the same ha_mcp files.
 
         ``defer_mutations=True`` (a previous bring-up's worker is still
         importing) downgrades any would-be uninstall/install to the
@@ -788,6 +775,17 @@ class EmbeddedServerManager:
                 installed_version=installed_version,
                 target_version=target_version,
                 conflicting=conflicting if conflict_present else None,
+                paired_wheel=(
+                    not self._pip_spec_override
+                    and self._paired_spec == self._pip_spec
+                    and await self._hass.async_add_executor_job(
+                        paired_wheel_matches,
+                        self._pip_spec,
+                        installed_version,
+                        target_version,
+                    )
+                    and native_bound_version() in (None, installed_version)
+                ),
             )
         )
         self._check_package_generation(reason)
@@ -2443,6 +2441,7 @@ def _install_reason(
     installed_version: str | None,
     target_version: str | None,
     conflicting: str | None,
+    paired_wheel: bool = False,
 ) -> str | None:
     """Name the first reason ``_async_ensure_managed_package`` installs, or None.
 
@@ -2459,7 +2458,9 @@ def _install_reason(
     if conflicting is not None:
         return f"{conflicting} is installed beside {target_dist}"
     if _spec_is_url_requirement(spec):
-        return f"{spec!r} is a direct URL, which always installs"
+        if paired_wheel and _is_compatible_embedded_version(target_version):
+            return None
+        return f"{spec!r} is a direct URL without matching paired-wheel evidence"
     if not _spec_satisfied_by(spec, target_version):
         return f"installed {target_dist} {target_version} does not satisfy {spec!r}"
     if not _is_compatible_embedded_version(target_version):

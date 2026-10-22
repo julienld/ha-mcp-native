@@ -34,6 +34,11 @@
 
 ## 🚀 Get Started
 
+For this fork's native migration candidate, see the [installation and rollback guide](docs/native-migration/installation.md), including artifact preparation and the checks required before a public release.
+
+**Upstream releases:** the links and access-token setup below describe the
+existing distribution and its legacy embedded runtime.
+
 The recommended way to run ha-mcp is the **HA-MCP Custom Component**. It installs into Home Assistant through HACS, runs the full server **in-process**, and works on **every** Home Assistant installation type — Home Assistant OS, Supervised, Container, and Core — with full feature parity. It is the easiest setup in every case: setup asks for an administrator access token and how clients may connect.
 
 **Add it to Home Assistant via HACS (the preferred install):**
