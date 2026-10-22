@@ -211,15 +211,33 @@ async def _capture_backup(client: Any, arguments: dict[str, Any]) -> dict[str, A
     settings = get_global_settings()
     if not settings.enable_auto_backup:
         return {}
+    domain = arguments.get("backup_domain", f"helper_{arguments['helper_type']}")
+    source = arguments.get("source_tool", "ha_config_set_helper")
+    function = HelperConfigTools.ha_config_set_helper
+    id_param = "helper_id"
+    if (domain, source) != (f"helper_{arguments['helper_type']}", function.__name__):
+        if (domain, source, arguments["helper_type"]) not in {
+            ("zone", "ha_set_zone", "zone"),
+            ("zone", "ha_remove_zone", "zone"),
+        }:
+            raise ToolFailure(
+                "INVALID_ARGUMENTS",
+                "Unsupported backup identity.",
+                status="not_started",
+            )
+        from ha_mcp.runtime.zone_writes import ZoneWriteTools
+
+        function = getattr(ZoneWriteTools, source)
+        id_param = "zone_id"
     warning = await _capture_pre_write_snapshot(
-        HelperConfigTools.ha_config_set_helper,
+        function,
         (),
-        {"helper_id": arguments["backup_id"]},
+        {id_param: arguments["backup_id"]},
         settings=settings,
         explicit_client=client,
-        domain=f"helper_{arguments['helper_type']}",
+        domain=domain,
         domain_fn=None,
-        id_param="helper_id",
+        id_param=id_param,
         id_fn=None,
         mandatory=False,
         domain_resolver=None,

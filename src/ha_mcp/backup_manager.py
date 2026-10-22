@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import cached_property, partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 import yaml  # type: ignore[import-untyped]
 
@@ -158,9 +158,11 @@ from .runtime.snapshot_files import (
 from .runtime.snapshot_files import (
     _snapshot_order as _snapshot_order,
 )
+from .runtime.snapshot_payloads import BackupRestoreError as BackupRestoreError
 from .runtime.snapshot_payloads import (
     InvalidBackupSnapshotError as InvalidBackupSnapshotError,
 )
+from .runtime.snapshot_payloads import MandatoryBackupError as MandatoryBackupError
 from .runtime.snapshot_payloads import (
     _contains_redacted_leaf as _contains_redacted_leaf,
 )
@@ -173,6 +175,7 @@ from .runtime.snapshot_payloads import (
 from .runtime.snapshot_payloads import _subentry_data as _subentry_data
 from .runtime.snapshot_payloads import _subentry_row as _subentry_row
 from .runtime.snapshot_payloads import _subentry_target as _subentry_target
+from .runtime.snapshot_restore import ApplyStatus, restore_snapshot_data
 from .utils.data_paths import get_data_dir
 from .utils.registry_update_lock import registry_update_lock
 
@@ -202,60 +205,6 @@ _CAPTURE_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
     yaml.YAMLError,
     ToolError,
 )
-
-
-class MandatoryBackupError(Exception):
-    """A required pre-write snapshot could not be captured.
-
-    Raised by ``maybe_snapshot(..., mandatory=True)`` when capture genuinely
-    fails (fetch error, snapshot-write failure such as disk-full, or an
-    unusable backup directory) — as opposed to a legitimate skip (nothing to
-    snapshot for a new file/key). Deliberately a plain ``Exception`` and NOT a
-    member of ``_CAPTURE_TRANSIENT_ERRORS`` so the ``@with_auto_backup``
-    decorator's best-effort handler can't swallow it; the decorator maps it to
-    a structured ``BACKUP_CAPTURE_FAILED`` error that fails the write closed.
-
-    ``suggestions`` carries remediation surfaced in that structured error.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        suggestions: list[str] | None = None,
-        safe_detail: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.suggestions = suggestions or []
-        # Only locally authored diagnostics may opt in. Fetch/YAML exceptions
-        # can include configuration values even when wrapped by this class.
-        self.safe_detail = safe_detail
-
-    @property
-    def safe_cause(self) -> str:
-        """The safe detail, else only the failing exception's class name."""
-        return self.safe_detail or type(self.__cause__ or self).__name__
-
-
-class BackupRestoreError(HomeAssistantError):
-    """A restore outcome whose apply knowledge must survive caller mapping."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        apply_status: Literal["not_applied", "unknown", "applied"] = "not_applied",
-        verification_status: Literal[
-            "not_run", "matched", "mismatched", "unavailable"
-        ] = "not_run",
-        **outcome: Any,
-    ) -> None:
-        super().__init__(message)
-        self.outcome = {
-            **outcome,
-            "apply_status": apply_status,
-            "verification_status": verification_status,
-        }
 
 
 def _validate_snapshot_envelope(data: dict[str, Any]) -> None:
@@ -1042,88 +991,26 @@ class BackupManager(SnapshotFilesMixin):
     async def _restore_snapshot_data(
         self, name: str, data: dict[str, Any], *, take_safety_backup: bool
     ) -> dict[str, Any]:
-        domain = data["domain"]
-        entity_id = data["entity_id"]
-        config = _handler_config(data)
-        handler = self.handler_for(domain)
+        handler = self.handler_for(data["domain"])
         if handler is None:
             raise BackupRestoreError(
-                f"No restore handler registered for domain {domain!r}",
+                f"No restore handler registered for domain {data['domain']!r}",
                 reason="unsupported_domain",
                 restored_from=name,
-                domain=domain,
-                entity_id=entity_id,
+                domain=data["domain"],
+                entity_id=data["entity_id"],
                 safety_backup=None,
             )
-
-        safety_path: Path | None = None
-        outcome: dict[str, Any] = {
-            "restored_from": name,
-            "domain": domain,
-            "entity_id": entity_id,
-            "safety_backup": None,
-        }
-        apply_status: Literal["not_applied", "unknown", "applied"] = "not_applied"
-        step = "safety_preflight"
-        try:
-            needs_safety = await self._restore_needs_safety(handler, entity_id, config)
-            # Existing flow helpers and subentries always require a fresh
-            # recovery point: their flows can apply a restore partly.
-            is_flow = _is_flow_helper_domain(domain)
-            flow_driven = is_flow or domain == "helper_config_subentry"
-            if needs_safety and (flow_driven or take_safety_backup):
-                step = "safety_backup"
-                safety_path = await self._capture_restore_safety(
-                    domain, entity_id, outcome, config
-                )
-                if safety_path is not None:
-                    self._protect_snapshot(safety_path.name)
-                    await _await_backup_io(_require_restore_safety, safety_path)
-                    outcome["safety_backup"] = safety_path.name
-            apply_status = "unknown"
-            step = "apply"
-            # Commit to the absent-target branch: if an entry reappeared since
-            # preflight, recreation refuses instead of editing it without safety.
-            restore = (
-                functools.partial(_restore_config_subentry, recreate_only=True)
-                if domain == "helper_config_subentry" and safety_path is None
-                else handler.restore
-                if needs_safety
-                else functools.partial(
-                    _recreate_flow_helper, helper_type=_flow_type(domain)
-                )
-            )
-            result = await restore(self._client, entity_id, config)
-        except BackupRestoreError as err:
-            if _is_flow_helper_domain(domain) and step != "apply":
-                _log_flow_helper_failure(step, err)
-            err.outcome = {**outcome, **err.outcome}
-            raise
-        except _RESTORE_ERRORS as err:
-            if _is_flow_helper_domain(domain):
-                label = _flow_label(_flow_type(domain))
-                _log_flow_helper_failure(step, err)
-                message = _flow_safe_failure_detail(step, err) or (
-                    f"{label} helper restore was not attempted; inspect the target and backup storage"
-                    if apply_status == "not_applied"
-                    else f"{label} helper restore outcome is unknown; inspect current options before retrying"
-                )
-                raise BackupRestoreError(
-                    message,
-                    apply_status=apply_status,
-                    reason=_flow_failure_reason(step, err),
-                    **outcome,
-                ) from err
-            # The error keeps its own type and code; the safety backup to revert
-            # with and any warnings ride along for the caller.
-            _raise_with_restore_outcome(err, {**outcome, "apply_status": apply_status})
-        finally:
-            if safety_path is not None:
-                self._unprotect_snapshot(safety_path.name)
-        if _is_flow_helper_domain(domain):
-            outcome.update(apply_status="applied", verification_status="matched")
-            outcome.update(_flow_recreated_outcome(result, entity_id))
-        return {**outcome, "result": result}
+        return await restore_snapshot_data(
+            self,
+            name,
+            data,
+            _LegacyRestoreOperations(
+                self, data["domain"], data["entity_id"], _handler_config(data), handler
+            ),
+            take_safety_backup=take_safety_backup,
+            restore_errors=_RESTORE_ERRORS,
+        )
 
     async def _restore_needs_safety(
         self, handler: DomainHandler, entity_id: str, config: Any
@@ -3352,3 +3239,75 @@ def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
             "helper_config_subentry", _fetch_config_subentry, _restore_config_subentry
         )
     )
+
+
+@dataclass
+class _LegacyRestoreOperations:
+    manager: BackupManager
+    domain: str
+    entity_id: str
+    config: Any
+    handler: DomainHandler
+
+    async def needs_safety(self) -> bool:
+        return await self.manager._restore_needs_safety(
+            self.handler, self.entity_id, self.config
+        )
+
+    async def capture_safety(self, outcome: dict[str, Any]) -> Path | None:
+        return await self.manager._capture_restore_safety(
+            self.domain, self.entity_id, outcome, self.config
+        )
+
+    async def require_safety(self, path: Path) -> None:
+        await _await_backup_io(_require_restore_safety, path)
+
+    async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
+        # Absence commits to recreation; a target reappearing cannot be edited
+        # without the recovery point that an existing target requires.
+        restore = (
+            functools.partial(_restore_config_subentry, recreate_only=True)
+            if self.domain == "helper_config_subentry" and not has_safety
+            else self.handler.restore
+            if needs_safety
+            else functools.partial(
+                _recreate_flow_helper, helper_type=_flow_type(self.domain)
+            )
+        )
+        return await restore(self.manager._client, self.entity_id, self.config)
+
+    def log_failure(self, step: str, error: BaseException) -> None:
+        if _is_flow_helper_domain(self.domain):
+            _log_flow_helper_failure(step, error)
+
+    def failed(
+        self,
+        error: BaseException,
+        step: str,
+        status: ApplyStatus,
+        outcome: dict[str, Any],
+    ) -> NoReturn:
+        if _is_flow_helper_domain(self.domain):
+            label = _flow_label(_flow_type(self.domain))
+            _log_flow_helper_failure(step, error)
+            message = _flow_safe_failure_detail(step, error) or (
+                f"{label} helper restore was not attempted; inspect the target and backup storage"
+                if status == "not_applied"
+                else f"{label} helper restore outcome is unknown; inspect current options before retrying"
+            )
+            raise BackupRestoreError(
+                message,
+                apply_status=status,
+                reason=_flow_failure_reason(step, error),
+                **outcome,
+            ) from error
+        _raise_with_restore_outcome(error, {**outcome, "apply_status": status})
+
+    def completed(self, result: Any) -> dict[str, Any]:
+        if not _is_flow_helper_domain(self.domain):
+            return {}
+        return {
+            "apply_status": "applied",
+            "verification_status": "matched",
+            **_flow_recreated_outcome(result, self.entity_id),
+        }

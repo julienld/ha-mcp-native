@@ -18,6 +18,7 @@ from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
 from .native_operations.helpers import DIRECT_OPERATIONS as HELPER_DIRECT_OPERATIONS
+from .native_operations.zones import DIRECT_OPERATIONS as ZONE_DIRECT_OPERATIONS
 from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
 from .native_registry_ops import DIRECT_OPERATIONS as REGISTRY_DIRECT_OPERATIONS
 
@@ -34,6 +35,7 @@ COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
     "helpers.registry.snapshot": ("ha_mcp_tools/registries", False),
     "helpers.entities.for_entry": ("ha_mcp_tools/registry_lookup", False),
 }
+DOMAIN_DIRECT_OPERATIONS = {**HELPER_DIRECT_OPERATIONS, **ZONE_DIRECT_OPERATIONS}
 
 
 class NativeBackend:
@@ -50,6 +52,10 @@ class NativeBackend:
             [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
         ]
         | None = None,
+        config_backup: Callable[
+            [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
+        ]
+        | None = None,
     ) -> None:
         from .websocket_api import _command_specs
 
@@ -58,6 +64,7 @@ class NativeBackend:
         self.skill_guide_reader = skill_guide_reader or SkillGuideReader()
         self.skill_content_enabled = skill_content_enabled or (lambda: True)
         self.helper_backup = helper_backup
+        self.config_backup = config_backup
         self.loop = asyncio.get_running_loop()
         self._commands: dict[str, tuple[Any, Any, Any]] = {}
         self._flows: Any = None
@@ -100,8 +107,8 @@ class NativeBackend:
         if operation in REGISTRY_DIRECT_OPERATIONS:
             result = await REGISTRY_DIRECT_OPERATIONS[operation](self.hass, arguments)
             return json.loads(json_bytes(result))
-        if operation in HELPER_DIRECT_OPERATIONS:
-            function, writes = HELPER_DIRECT_OPERATIONS[operation]
+        if operation in DOMAIN_DIRECT_OPERATIONS:
+            function, writes = DOMAIN_DIRECT_OPERATIONS[operation]
             if writes:
                 check_mutation_admission(context)
             if writes and context.read_only:
@@ -119,8 +126,19 @@ class NativeBackend:
     async def _execute_owned_operation(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
-        if operation == "helpers.backup.capture":
-            return await self._capture_helper_backup(arguments, context)
+        if operation in {
+            f"config.{domain}.{action}"
+            for domain in ("automation", "script", "scene")
+            for action in ("write", "delete")
+        }:
+            from .native_operations.config_mutations import NativeConfigMutations
+
+            result = await NativeConfigMutations(self.hass, self.authorize).execute(
+                operation, arguments, context
+            )
+            return json.loads(json_bytes(result))
+        if operation in {"helpers.backup.capture", "config.backup.capture"}:
+            return await self._capture_backup(operation, arguments, context)
         if operation == "skills.guide":
             return await self.hass.async_add_executor_job(
                 self.skill_guide_reader.read, arguments.get("file", "SKILL.md")
@@ -203,8 +221,8 @@ class NativeBackend:
         if self._flows is not None:
             await self._flows.stop()
 
-    async def _capture_helper_backup(
-        self, arguments: dict[str, Any], context: CallContext
+    async def _capture_backup(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> dict[str, Any]:
         check_mutation_admission(context)
         if context.read_only:
@@ -213,8 +231,15 @@ class NativeBackend:
                 "Writes are disabled for this caller.",
                 status="not_started",
             )
-        if self.helper_backup is not None:
-            return await self.helper_backup(arguments, context) or {}
+        capture = (
+            self.helper_backup
+            if operation == "helpers.backup.capture"
+            else self.config_backup
+        )
+        if capture is not None:
+            return await capture(arguments, context) or {}
         return {
-            "warnings": ["Automatic helper backup is unavailable in this native entry."]
+            "warnings": [
+                "Automatic pre-write backup is unavailable in this native entry."
+            ]
         }

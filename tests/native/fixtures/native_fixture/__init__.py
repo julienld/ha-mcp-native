@@ -9,6 +9,7 @@ import secrets
 import socket
 import sys
 import threading
+from importlib.abc import MetaPathFinder
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,7 @@ class FixtureView(HomeAssistantView):
                     for name in sys.modules
                     if name.startswith(("ha_mcp.client", "ha_mcp.__main__"))
                 ],
+                "remote_import_sites": self.hass.data[DOMAIN]["remote_import_sites"],
                 "owned_tasks": len(manager.engine.tasks)
                 if getattr(manager, "engine", None)
                 else None,
@@ -161,7 +163,12 @@ class FixtureView(HomeAssistantView):
 
 
 async def async_setup(hass, config):
-    data: dict[str, Any] = {"ticks": 0, "guard": False, "loopback_attempts": 0}
+    data: dict[str, Any] = {
+        "ticks": 0,
+        "guard": False,
+        "loopback_attempts": 0,
+        "remote_import_sites": [],
+    }
     hass.data[DOMAIN] = data
     original_connect = socket.socket.connect
 
@@ -178,6 +185,22 @@ async def async_setup(hass, config):
         return original_connect(sock, address)
 
     socket.socket.connect = guarded_connect
+
+    class ImportTrace(MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == "ha_mcp.client":
+                frame = sys._getframe().f_back
+                stack = []
+                while frame is not None:
+                    filename = frame.f_code.co_filename
+                    if "ha_mcp" in filename:
+                        stack.append(
+                            f"{Path(filename).name}:{frame.f_lineno}:{frame.f_code.co_name}"
+                        )
+                    frame = frame.f_back
+                data["remote_import_sites"].append(stack)
+
+    sys.meta_path.insert(0, ImportTrace())
     provider = hass.auth.get_auth_provider("homeassistant", None)
     users = {}
     for name, group in (

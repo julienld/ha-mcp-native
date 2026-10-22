@@ -1,5 +1,6 @@
 """Flow snapshots keep scrubbed, resolved identities and the legacy restore shape."""
 
+import asyncio
 import copy
 import importlib
 import sys
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_mcp.runtime.snapshot_payloads import _FlowHelperReadError
+from ha_mcp.tool_api import CallContext
 
 from .test_native_engine_backend import native as native
 
@@ -156,3 +158,54 @@ async def test_subentry_capture_keeps_original_restore_shape_and_checks_identity
         "entry_id": "resolved",
         **row,
     }
+
+
+@pytest.mark.parametrize("domain", ["automation", "script", "scene"])
+@pytest.mark.parametrize("action", ["set", "remove"])
+async def test_core_config_snapshot_is_readable_by_the_legacy_store(
+    source, tmp_path, monkeypatch, domain, action
+):
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+    from custom_components.ha_mcp_tools.native_snapshots import NativeSnapshots
+    from ha_mcp.backup_manager import BackupManager
+
+    monkeypatch.setenv("ENABLE_AUTO_BACKUP", "true")
+    hass = SimpleNamespace(
+        config=SimpleNamespace(path=lambda *parts: str(tmp_path.joinpath(*parts))),
+        async_add_executor_job=lambda function: (
+            asyncio.get_running_loop().run_in_executor(None, function)
+        ),
+    )
+    snapshots = NativeSnapshots(
+        SimpleNamespace(
+            hass=hass, policy=NativePolicy(flags={"enable_auto_backup": True})
+        )
+    )
+    body = {"id": "stable", "alias": "Original", "sequence": [{"delay": 1}]}
+    await snapshots.config_backup(
+        {
+            "domain": domain,
+            "source_tool": f"ha_config_{action}_{domain}",
+            "backup_id": "stable",
+            "current_config": body,
+        },
+        CallContext("actor"),
+    )
+    store = snapshots._store()
+    name = store.list_snapshots(domain=domain)[0]["name"]
+    legacy = BackupManager(SimpleNamespace(auto_backup_dir=str(store.directory)), None)
+    assert legacy.read_snapshot(name)["config"] == body
+    assert not snapshots.pending
+
+
+async def test_native_config_capture_rejects_cross_domain_tool_identity(
+    source, tmp_path
+):
+    from custom_components.ha_mcp_tools.native_snapshots import NativeSnapshots
+
+    snapshots = NativeSnapshots(SimpleNamespace())
+    with pytest.raises(ValueError, match="domain/source"):
+        await snapshots.config_backup(
+            {"domain": "automation", "source_tool": "ha_config_remove_scene"},
+            CallContext("actor"),
+        )

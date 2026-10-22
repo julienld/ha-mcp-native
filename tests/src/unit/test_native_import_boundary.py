@@ -16,6 +16,10 @@ class ForbidRemoteClient(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, ForbidRemoteClient())
 import ha_mcp.settings_ui
 import ha_mcp.policy.handlers
+import ha_mcp.policy.events
+import ha_mcp.policy.mrtr
+import ha_mcp.visibility.enforcement
+import ha_mcp.config_backup_validation
 from ha_mcp.transforms import CategorizedSearchTransform, DEFAULT_PINNED_TOOLS
 assert DEFAULT_PINNED_TOOLS and CategorizedSearchTransform
 """

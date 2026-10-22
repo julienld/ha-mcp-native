@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from ha_mcp.errors import HomeAssistantError
 
@@ -106,3 +106,57 @@ def _snapshot_validation_message(error: ValueError) -> str:
         if isinstance(error, InvalidBackupSnapshotError)
         else "Snapshot is invalid; inspect its YAML and schema version"
     )
+
+
+class MandatoryBackupError(Exception):
+    """A required pre-write snapshot could not be captured.
+
+    Raised by ``maybe_snapshot(..., mandatory=True)`` when capture genuinely
+    fails (fetch error, snapshot-write failure such as disk-full, or an
+    unusable backup directory) — as opposed to a legitimate skip (nothing to
+    snapshot for a new file/key). Deliberately a plain ``Exception`` and NOT a
+    member of ``_CAPTURE_TRANSIENT_ERRORS`` so the ``@with_auto_backup``
+    decorator's best-effort handler can't swallow it; the decorator maps it to
+    a structured ``BACKUP_CAPTURE_FAILED`` error that fails the write closed.
+
+    ``suggestions`` carries remediation surfaced in that structured error.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        suggestions: list[str] | None = None,
+        safe_detail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.suggestions = suggestions or []
+        # Only locally authored diagnostics may opt in. Fetch/YAML exceptions
+        # can include configuration values even when wrapped by this class.
+        self.safe_detail = safe_detail
+
+    @property
+    def safe_cause(self) -> str:
+        """The safe detail, else only the failing exception's class name."""
+        return self.safe_detail or type(self.__cause__ or self).__name__
+
+
+class BackupRestoreError(HomeAssistantError):
+    """A restore outcome whose apply knowledge must survive caller mapping."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        apply_status: Literal["not_applied", "unknown", "applied"] = "not_applied",
+        verification_status: Literal[
+            "not_run", "matched", "mismatched", "unavailable"
+        ] = "not_run",
+        **outcome: Any,
+    ) -> None:
+        super().__init__(message)
+        self.outcome = {
+            **outcome,
+            "apply_status": apply_status,
+            "verification_status": verification_status,
+        }

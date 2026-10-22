@@ -104,6 +104,34 @@ class NativeSnapshots:
         current["registry_icon"] = icon
         return current
 
+    async def config_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        """Capture the item Core's config owner just resolved, before its compare/write."""
+        domain, source = payload["domain"], payload["source_tool"]
+        if domain not in {"automation", "script", "scene"} or source not in {
+            f"ha_config_set_{domain}",
+            f"ha_config_remove_{domain}",
+        }:
+            raise ValueError("Unsupported native config snapshot domain/source pair")
+        if (
+            not self.manager.policy.flag("enable_auto_backup")
+            or not payload.get("backup_id")
+            or payload.get("current_config") is None
+        ):
+            return None
+        config = copy.deepcopy(payload["current_config"])
+        store = self._store()
+
+        def capture() -> None:
+            from homeassistant.helpers.json import json_bytes
+
+            store.capture(
+                domain, payload["backup_id"], json.loads(json_bytes(config)), source
+            )
+
+        return await self._capture(capture)
+
     async def _capture(self, capture: Any) -> dict[str, Any] | None:
         future = self.manager.hass.async_add_executor_job(capture)
         self.pending.add(future)

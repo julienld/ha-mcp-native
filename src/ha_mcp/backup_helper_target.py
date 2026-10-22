@@ -17,6 +17,7 @@ from typing import Any, NoReturn
 
 from ._vendor.fastmcp.exceptions import ToolError
 from .backup_entity_ids import _manager
+from .runtime.storage_targets import stored_target as stored_target
 
 
 async def _stored_items(client: Any, helper_type: str) -> list[Any]:
@@ -26,30 +27,6 @@ async def _stored_items(client: Any, helper_type: str) -> list[Any]:
         listed = listed.get("storage")  # YAML-defined persons are not editable
     items: list[Any] = bm._require_list(listed, f"{helper_type}/list")
     return items
-
-
-def stored_target(
-    helper_type: str, target: str, stored_ids: Any, rows: list[Any]
-) -> tuple[str | None, str | None]:
-    """The storage id and entity_id of the stored helper ``target`` names.
-
-    A bare ``target`` is a storage id; ``<type>.<name>`` is the entity_id of
-    a registry entry on the type's platform, whose unique_id is the storage id.
-    Its entity_id is None when the item has no registry entry, and both are
-    None when nothing matches. A storage id from the registry need not be
-    stored: a YAML helper has an entry but no stored item.
-    """
-    ids = {str(i) for i in stored_ids}
-    own = [r for r in rows if r.get("platform") == helper_type]
-    if target in ids:
-        entity = next(
-            (r.get("entity_id") for r in own if r.get("unique_id") == target), None
-        )
-        return target, entity
-    row = next((r for r in own if r.get("entity_id") == target), None)
-    if row is None or not row.get("unique_id"):
-        return None, None
-    return str(row["unique_id"]), target
 
 
 async def fetch_helper(client: Any, entity_id: str, helper_type: str) -> Any:

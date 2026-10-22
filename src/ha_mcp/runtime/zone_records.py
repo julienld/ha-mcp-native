@@ -123,3 +123,20 @@ def render_zone_snapshot(
     if snapshot.get("warnings"):
         response.setdefault("warnings", []).extend(snapshot["warnings"])
     return response
+
+
+def _zone_write_response(
+    result: dict[str, Any], storage_id: str | None, verb: str
+) -> dict[str, Any]:
+    """Reshape the helper write path's response into ha_set_zone's."""
+    data = result.get("data") or {}
+    response: dict[str, Any] = {
+        "success": True,
+        "zone_data": data,
+        "zone_id": data.get("id", storage_id),
+        "entity_id": result.get("entity_id"),
+        "message": f"Successfully {verb} zone: {data.get('name', storage_id)}",
+    }
+    if result.get("warnings"):
+        response["warnings"] = result["warnings"]
+    return response
