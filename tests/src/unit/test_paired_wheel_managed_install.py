@@ -18,6 +18,9 @@ def managed(tmp_path, monkeypatch):
     install()
     from custom_components.ha_mcp_tools import paired_wheel
 
+    (tmp_path / "installed" / "ha_mcp").mkdir(parents=True)
+    monkeypatch.setattr(paired_wheel.wheel_payload, "sys", SimpleNamespace(modules={}))
+
     from .test_embedded_server import DATA_LAST_PIP_SPEC, _manager, _PkgEnv, es
 
     manager, hass, entry = _manager(tmp_path, data={DATA_LAST_PIP_SPEC: _SPEC})
@@ -33,6 +36,7 @@ def managed(tmp_path, monkeypatch):
             version="9.0.0.dev1",
             metadata={"Name": "ha-mcp"},
             read_text=lambda _filename: json.dumps(receipt),
+            locate_file=lambda member: tmp_path / "installed" / member,
         )
 
     monkeypatch.setattr(paired_wheel.importlib.metadata, "distribution", distribution)

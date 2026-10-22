@@ -168,6 +168,61 @@ def test_failed_receipt_evidence_never_persists_signed_url_or_arbitrary_fields(
     assert "PRIVATE" not in json.dumps(observation)
 
 
+@pytest.mark.parametrize("change", [None, "version", "conflict"])
+def test_candidate_runtime_dependency_observation_needs_no_public_assets(
+    install_receipt, installed_public_wheel, change
+):
+    world = installed_public_wheel
+    initial = json.loads(world.proof.read_text())
+    initial["mode"] = "candidate"
+    world.proof.write_text(json.dumps(initial))
+    if change == "version":
+        world.versions["rich"] = "15.0"
+    elif change == "conflict":
+        world.issues.append("new runtime dependency conflict")
+    proof = install_receipt.observe_dependencies(
+        world.component, world.proof, world.assets / "does-not-exist"
+    )
+    observation = proof["observations"][-1]
+    assert observation["verified"] is (change is None)
+    assert "receipt" not in observation and "release" not in proof
+    assert proof["after"] == world.versions
+
+
+def test_public_payload_equality_does_not_fabricate_a_PEP610_archive_digest(
+    install_receipt, installed_public_wheel, monkeypatch
+):
+    world = installed_public_wheel
+    world.direct["archive_info"] = {}
+    index = world.component / "native-wheel.json"
+    index.write_text("independent component index")
+    calls = []
+    payload = {
+        "verified": True,
+        "proof": "component_payload_index",
+        "files_checked": 4,
+        "bytes_checked": 98,
+    }
+
+    def verify(distribution, index_path, expected):
+        calls.append((distribution, index_path, expected["wheel_sha256"]))
+        return payload
+
+    monkeypatch.setattr(install_receipt, "_verify_payload", verify)
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert (
+        observation["verified"] and observation["receipt"]["sha256_status"] == "missing"
+    )
+    assert observation["wheel"]["sha256"] is None
+    assert observation["receipt"]["archive_info"] == {}
+    assert observation["wheel"]["payload"] == payload
+    assert calls == [(world.distribution, index, "b" * 64)]
+
+    world.direct["archive_info"] = {"hash": "sha256=" + "0" * 64}
+    failed = observe(install_receipt, world)["observations"][-1]
+    assert not failed["verified"] and len(calls) == 1
+
+
 def test_baseline_refuses_preinstalled_distribution(
     tmp_path, monkeypatch, install_receipt
 ):

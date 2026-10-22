@@ -2,8 +2,9 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -13,19 +14,28 @@ _SPEC = "ha-mcp @ " + _URL + "#sha256=" + _DIGEST
 
 
 @pytest.fixture
-def paired(monkeypatch):
+def paired(monkeypatch, tmp_path):
     path = (
         Path(__file__).resolve().parents[3]
         / "custom_components/ha_mcp_tools/paired_wheel.py"
     )
-    spec = importlib.util.spec_from_file_location("paired_wheel_contract", path)
+    package_name = "paired_wheel_contract"
+    package = ModuleType(package_name)
+    package.__path__ = [str(path.parent)]
+    monkeypatch.setitem(sys.modules, package_name, package)
+    spec = importlib.util.spec_from_file_location(package_name + ".paired_wheel", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    payload = importlib.import_module(package_name + ".wheel_payload")
+    monkeypatch.setattr(payload, "sys", SimpleNamespace(modules={}))
+    site = tmp_path / "installed"
+    (site / "ha_mcp").mkdir(parents=True)
     receipt = {"url": _URL, "archive_info": {"hashes": {"sha256": _DIGEST}}}
     distribution = SimpleNamespace(
         version="9.0.0.dev1",
         metadata={"Name": "ha-mcp"},
         read_text=lambda _name: json.dumps(receipt),
+        locate_file=lambda member: site / member,
     )
     monkeypatch.setattr(
         module.importlib.metadata, "distribution", lambda _name: distribution

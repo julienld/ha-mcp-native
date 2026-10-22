@@ -99,7 +99,10 @@ def _safe_archive_info(direct: dict[str, Any]) -> dict[str, Any] | str | None:
 
 
 def wheel_receipt(
-    expected: dict[str, Any], *, evidence: dict[str, Any] | None = None
+    expected: dict[str, Any],
+    *,
+    evidence: dict[str, Any] | None = None,
+    index_path: Path | None = None,
 ) -> dict[str, Any]:
     if evidence is None:
         evidence = {}
@@ -129,7 +132,20 @@ def wheel_receipt(
         actual = old.removeprefix("sha256=")
     if actual is None:
         evidence["sha256_status"] = "missing"
-        raise ValueError("Installed wheel receipt has no SHA-256 digest")
+        if (
+            archive not in ({}, {"hashes": {}})
+            or index_path is None
+            or not index_path.is_file()
+        ):
+            raise ValueError("Installed wheel receipt has no SHA-256 digest")
+        evidence["payload"] = _verify_payload(distribution, index_path, expected)
+        return {
+            "name": "ha-mcp",
+            "version": distribution.version,
+            "url": expected["wheel_url"],
+            "sha256": None,
+            "payload": evidence["payload"],
+        }
     if actual != expected["wheel_sha256"] or (
         old is not None and old != "sha256=" + expected["wheel_sha256"]
     ):
@@ -145,16 +161,58 @@ def wheel_receipt(
     }
 
 
+def _verify_payload(
+    distribution: Any, index: Path, expected: dict[str, Any]
+) -> dict[str, Any]:
+    from custom_components.ha_mcp_tools.wheel_payload import verify_wheel_payload
+
+    return verify_wheel_payload(
+        distribution,
+        "ha-mcp",
+        distribution.version,
+        expected["wheel_sha256"],
+        index_path=index,
+    )
+
+
+def _public_observation(
+    component: Path, assets: Path, proof: dict[str, Any], observation: dict[str, Any]
+) -> None:
+    expected = json.loads((assets / "published-verification.json").read_bytes())
+    release = json.loads((assets / "native-build.json").read_bytes())
+    raw = (component / "manifest.json").read_bytes()
+    observation["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
+    manifest = json.loads(raw)
+    if observation["manifest_sha256"] != expected["manifest_sha256"]:
+        observation["errors"].append(
+            "The published manifest changed before or during setup"
+        )
+    if release["dependency"] not in manifest.get("requirements", []):
+        observation["errors"].append("The published wheel requirement was rewritten")
+    try:
+        observation["receipt"] = {}
+        observation["wheel"] = wheel_receipt(
+            expected,
+            evidence=observation["receipt"],
+            index_path=component / "native-wheel.json",
+        )
+        if observation["wheel"]["version"] != release["library_version"]:
+            observation["errors"].append(
+                "Installed wheel version differs from the release"
+            )
+    except (OSError, ValueError, metadata.PackageNotFoundError) as error:
+        observation["errors"].append(str(error))
+    proof["release"] = expected
+
+
 def observe_dependencies(
     component: Path,
     path: Path = PROOF,
     assets: Path = ASSETS,
 ) -> dict[str, Any]:
     proof: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    if proof.get("mode") != "published":
-        raise ValueError("Managed-install receipt is specific to the published lane")
-    expected = json.loads((assets / "published-verification.json").read_bytes())
-    release = json.loads((assets / "native-build.json").read_bytes())
+    if proof.get("mode") not in {"candidate", "published"}:
+        raise ValueError("Unknown installation qualification mode")
     after = installed_versions()
     issues = dependency_issues()
     observation: dict[str, Any] = {
@@ -168,30 +226,13 @@ def observe_dependencies(
         "new_issues": sorted(set(issues) - set(proof["before_issues"])),
         "errors": [],
     }
-    raw = (component / "manifest.json").read_bytes()
-    observation["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
-    manifest = json.loads(raw)
-    if observation["manifest_sha256"] != expected["manifest_sha256"]:
-        observation["errors"].append(
-            "The published manifest changed before or during setup"
-        )
-    if release["dependency"] not in manifest.get("requirements", []):
-        observation["errors"].append("The published wheel requirement was rewritten")
-    try:
-        observation["receipt"] = {}
-        observation["wheel"] = wheel_receipt(expected, evidence=observation["receipt"])
-        if observation["wheel"]["version"] != release["library_version"]:
-            observation["errors"].append(
-                "Installed wheel version differs from the release"
-            )
-    except (ValueError, metadata.PackageNotFoundError) as error:
-        observation["errors"].append(str(error))
+    if proof["mode"] == "published":
+        _public_observation(component, assets, proof, observation)
     observation["verified"] = not (
         observation["changed_preinstalled"]
         or observation["new_issues"]
         or observation["errors"]
     )
-    proof["release"] = expected
     proof.setdefault("observations", []).append(observation)
     # Keep the existing probe's dependency fields useful after reload/restart.
     proof.update({key: observation[key] for key in ("after", "after_issues")})

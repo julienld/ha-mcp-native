@@ -1,4 +1,4 @@
-"""Read-only PEP 610 evidence for a component-paired wheel already installed."""
+"""Read-only evidence for a component-paired wheel already installed."""
 
 import importlib.metadata
 import json
@@ -9,13 +9,16 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
+from . import wheel_payload
+
 
 def paired_wheel_matches(
     spec: str, installed_version: str | None, target_version: str | None
 ) -> bool:
-    """Prove URL, wheel version and SHA-256; absence or ambiguity is a miss.
+    """Prove URL/version and either archive hash or independent installed bytes.
 
-    This is installation metadata, not a signature or a scan of installed files.
+    uv can omit archive hashes from PEP 610. Only the component's independent
+    payload index can then establish equality; a contradictory receipt never can.
     The caller must separately exclude overrides, reinstall requests and a
     conflicting distribution before allowing the ordinary no-install path.
     """
@@ -56,33 +59,46 @@ def paired_wheel_matches(
         ):
             return False
         receipt = json.loads(distribution.read_text("direct_url.json") or "null")
-        return _receipt_matches(
+        state = _receipt_state(
             receipt, urlunsplit(url._replace(fragment="")), url.fragment[7:].lower()
         )
+        if state == "invalid" or not wheel_payload.loaded_origins_match(distribution):
+            return False
+        if state == "match":
+            return True
+        wheel_payload.verify_wheel_payload(
+            distribution, name, str(wheel_version), url.fragment[7:].lower()
+        )
+        return True
     except (
         OSError,
         ValueError,
         TypeError,
         KeyError,
+        AttributeError,
         importlib.metadata.PackageNotFoundError,
     ):
         return False
 
 
-def _receipt_matches(receipt: object, url: str, digest: str) -> bool:
+def _receipt_state(receipt: object, url: str, digest: str) -> str:
     if not isinstance(receipt, dict) or receipt.get("url") != url:
-        return False
+        return "invalid"
     if any(key in receipt for key in ("dir_info", "vcs_info", "subdirectory")):
-        return False
+        return "invalid"
     info = receipt.get("archive_info")
     if not isinstance(info, dict):
-        return False
+        return "invalid"
+    if info in ({}, {"hashes": {}}):
+        return "missing"
     hashes = info.get("hashes")
     legacy_hash = info.get("hash")
     if hashes is not None:
-        return (
+        matches = (
             isinstance(hashes, dict)
             and hashes.get("sha256") == digest
             and (legacy_hash is None or legacy_hash == "sha256=" + digest)
         )
-    return legacy_hash == "sha256=" + digest
+    else:
+        matches = legacy_hash == "sha256=" + digest
+    return "match" if matches else "invalid"
