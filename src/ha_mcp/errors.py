@@ -19,6 +19,10 @@ from typing import Any
 TOOL_ERROR_LOG_LEVEL = logging.WARNING
 
 
+class HomeAssistantError(Exception):
+    """Base operation error shared by native and remote Home Assistant access."""
+
+
 class ErrorCode(StrEnum):
     """
     Standard error codes for Home Assistant MCP operations.

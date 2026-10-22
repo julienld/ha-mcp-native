@@ -17,6 +17,7 @@ import httpx
 from .._vendor.websockets.exceptions import WebSocketException
 from .._version import get_supervisor_base_url, is_running_in_addon
 from ..config import get_global_settings
+from ..errors import HomeAssistantError as HomeAssistantError
 from .admin_routes import is_admin_only_route
 from .models import ErrorLogPage
 from .supervisor_client import make_supervisor_httpx_client
@@ -81,10 +82,6 @@ _ADMIN_ONLY_401_MESSAGE = (
     "Home Assistant returned 401 for an admin-only endpoint: "
     "the token is invalid or its user is not an administrator"
 )
-
-
-class HomeAssistantError(Exception):
-    """Base exception for Home Assistant API errors."""
 
 
 class HomeAssistantConnectionError(HomeAssistantError):
