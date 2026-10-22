@@ -41,7 +41,10 @@ JSON is release metadata, **not a signed build-provenance attestation**.
    this real download/install; no scenario is skipped.
 4. After setup, then again after all scenarios and the real process restart, the
    fixture collects installation evidence in an executor. The actual PEP 610
-   record must contain the public URL, expected SHA-256, and expected version.
+   record must contain the public URL and expected version. A contradictory
+   archive hash is refused. If the installer omits that hash, the installed
+   files must match the independent wheel index shipped with the component;
+   the evidence distinguishes payload equality from an archive-hash receipt.
    The manifest bytes must be unchanged; every preinstalled distribution must
    retain its version; `pip check` may contain no new conflicts. New dependencies
    are recorded and permitted.
@@ -75,3 +78,19 @@ behavior and constraints, then refuses any changed preinstalled version or new
 dependency conflict. A plain pip install without upgrade can reuse satisfied
 versions and conceal conflicts that Core's real installation would introduce.
 The separate public lane remains the proof of the unchanged manifest URL.
+Both lanes repeat the full dependency observation after entry setup and after
+the real restart. This also covers separate manifest requirements installed by
+Core after the library wheel itself, rather than checking the wheel alone.
+
+Before the Container bench, the candidate lane creates an isolated environment
+containing Core's base dependencies rather than the Container's full integration
+collection. It seeds an older compatible certifi, then uses Core's actual
+requirements preflight and installer for each manifest entry. Existing versions
+and dependency conflicts must remain unchanged. Real protocol, storage and native
+import probes expose dependencies that the full image could supply incidentally.
+Declared integration dependencies and after-dependencies are processed by Core's
+requirements manager before the runtime probes, with separate observations.
+The unpublished wheel URL is explicitly mapped to its paired local wheel in this
+test only. `minimal-install.json` and its sanitized log record this distinct
+dependency/import qualification; it does not replace the functional Core bench
+or prove installation from the public URL.

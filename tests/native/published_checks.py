@@ -1,18 +1,25 @@
-"""Run the managed-install proof at both ends of the unchanged Core bench."""
+"""Check the installation environment at both ends of the Core bench."""
 
 import json
 from pathlib import Path
 from typing import Any
 
 
-async def exercise_published_install(checks: Any, *, tag: str, phase: str) -> None:
+async def exercise_installation(
+    checks: Any, *, published_tag: str | None, phase: str
+) -> None:
+    mode = "published" if published_tag else "candidate"
     proof = await checks.control("dependency_receipt")
     # Preserve failed dependency evidence too, separately from partial tool checks.
-    output = Path(__file__).parent / "out" / "published-install.json"
+    output = Path(__file__).parent / "out" / f"{mode}-install.json"
     output.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
-    assert proof["mode"] == "published", proof
-    assert proof["release"]["tag"] == tag, proof["release"]
+    assert proof["mode"] == mode, proof.get("mode")
+    if published_tag:
+        assert proof["release"]["tag"] == published_tag, proof["release"]
     observation = proof["observations"][-1]
-    assert observation["verified"], observation
+    assert observation["verified"], {
+        key: observation.get(key)
+        for key in ("changed_preinstalled", "new_issues", "errors", "receipt", "payload")
+    }
     assert not {"ha-mcp", "ha-mcp-dev"} & proof["before"].keys(), proof["before"]
-    checks.passed(f"published_Core_managed_install_receipt_and_dependencies_{phase}")
+    checks.passed(f"{mode}_Core_install_dependencies_{phase}")

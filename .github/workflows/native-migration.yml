@@ -64,7 +64,7 @@ jobs:
   package:
     if: ${{ !inputs.published_tag }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       UV_EXCLUDE_NEWER: '7 days'
     steps:
@@ -82,6 +82,10 @@ jobs:
           NATIVE_VERSION: 9.0.0.dev${{ github.run_number }}
           NATIVE_TAG: native-ci-${{ github.run_id }}
         run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG"
+      - name: Qualify dependencies and imports on minimal Core
+        run: |
+          mkdir -p tests/native/out
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.2 -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json
       - name: Validate library against Home Assistant constraints
         run: docker build -f tests/native/Dockerfile -t ha-mcp-native-candidate .
       - name: Exercise candidate on the real HA HTTP server
@@ -93,6 +97,9 @@ jobs:
           name: native-container-evidence
           path: |
             tests/native/out/evidence.json
+            tests/native/out/candidate-install.json
+            tests/native/out/minimal-install.json
+            tests/native/out/minimal-install.log
             tests/native/out/ha.log
           if-no-files-found: ignore
           retention-days: 14

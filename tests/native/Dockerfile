@@ -27,7 +27,7 @@ from native_dependency_receipt import capture_baseline, dependency_issues, insta
 # Exercise the published lane's baseline collector on real, untouched Core even
 # before release assets exist.
 capture_baseline(Path('/opt/public-baseline-smoke.json'))
-Path('/opt/native-dependencies.json').write_text(json.dumps({'before': installed_versions(), 'before_issues': dependency_issues()}))
+Path('/opt/native-dependencies.json').write_text(json.dumps({'mode': 'candidate', 'before': installed_versions(), 'before_issues': dependency_issues()}))
 PY
 RUN python - <<'PY'
 from pathlib import Path

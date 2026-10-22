@@ -45,6 +45,7 @@ from log_checks import exercise_logs
 from oauth_checks import exercise_oauth
 from overview_checks import exercise_overview
 from pipeline_checks import exercise_pipelines
+from published_checks import exercise_installation
 from radio_checks import exercise_radios
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
@@ -499,13 +500,10 @@ async def exercise(checks: Checks, *, published_tag: str | None = None) -> dict:
     assert final["owned_tasks"] == 0 and final["loopback_attempts"] == 0, final
     assert final["ticks"] > 0, final
     checks.passed("reload_single_listener_no_server_thread_remote_import_or_loopback")
-    if published_tag:
-        from published_checks import exercise_published_install
-
-        await exercise_published_install(
-            checks, tag=published_tag, phase="after_restart"
-        )
-        final = await checks.ready()
+    await exercise_installation(
+        checks, published_tag=published_tag, phase="after_restart"
+    )
+    final = await checks.ready()
     return final
 
 
@@ -601,12 +599,9 @@ async def main(*, published_tag: str | None = None) -> None:
             await create_entry(
                 checks, identities["alpha"]["user_id"], published=bool(published_tag)
             )
-            if published_tag:
-                from published_checks import exercise_published_install
-
-                await exercise_published_install(
-                    checks, tag=published_tag, phase="after_setup"
-                )
+            await exercise_installation(
+                checks, published_tag=published_tag, phase="after_setup"
+            )
             await checks.control("guard", {})
             await exercise_external_clients(checks, identities["alpha"]["user_id"])
             await exercise_standard_proxy(checks)
