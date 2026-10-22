@@ -930,12 +930,22 @@ def test_ha_manage_blueprints_carries_auto_backup_decorator() -> None:
     behavioral tests below drive a stand-in callable, so only this guard notices
     the decorator (or its domain/skip lambdas) disappearing from the real tool.
     """
+    import ast
     from pathlib import Path
 
     tools_dir = Path(__file__).resolve().parents[3] / "src" / "ha_mcp" / "tools"
     src = (tools_dir / "tools_blueprints.py").read_text(encoding="utf-8")
-    idx = src.index("async def ha_manage_blueprints(")
-    head = src[max(0, idx - 1200) : idx]  # the decorator block above the def
+    declaration = next(
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ha_manage_blueprints"
+            for target in node.targets
+        )
+    )
+    head = ast.get_source_segment(src, declaration)
+    assert head is not None
     assert "with_auto_backup(" in head, "ha_manage_blueprints lost @with_auto_backup"
     assert "domain_fn=" in head, "ha_manage_blueprints lost its blueprint domain_fn"
     assert "blueprint_{kw.get(" in head, "the backup domain no longer follows `domain`"

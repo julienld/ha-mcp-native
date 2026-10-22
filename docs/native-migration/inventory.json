@@ -22,12 +22,13 @@
     "custom_components/ha_mcp_tools/native_dashboard_tools.py",
     "custom_components/ha_mcp_tools/native_calendar_tools.py",
     "custom_components/ha_mcp_tools/native_bulk_tools.py",
-    "custom_components/ha_mcp_tools/native_blueprint_tools.py"
+    "custom_components/ha_mcp_tools/native_blueprint_tools.py",
+    "custom_components/ha_mcp_tools/native_search_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 62,
+    "native_catalog_declarations": 63,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -4189,8 +4190,8 @@
         "bounded result serialization"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_search.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/search_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -4820,12 +4821,12 @@
       "functions": [
         {
           "name": "_do_search",
-          "line": 56,
+          "line": 57,
           "async": false
         },
         {
           "name": "_search_prep",
-          "line": 310,
+          "line": 332,
           "async": true
         }
       ],

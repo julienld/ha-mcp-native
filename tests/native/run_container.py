@@ -37,6 +37,7 @@ from log_checks import exercise_logs
 from overview_checks import exercise_overview
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
+from search_checks import exercise_search
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -402,6 +403,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_dashboards(checks, BASE)
     await exercise_resources(checks, BASE)
     await exercise_dashboard_card_types(checks)
+    await exercise_search(checks, receipt, BASE)
     await exercise_history(checks)
     await exercise_logs(checks)
     await exercise_health(checks)
@@ -482,13 +484,21 @@ async def main() -> None:
     )
     (CONFIG / "configuration.yaml").write_text(
         "homeassistant:\n  name: Native migration CI\n  latitude: 0\n  longitude: 0\n"
-        "  elevation: 0\n  unit_system: metric\n  time_zone: UTC\n  auth_providers:\n"
+        "  elevation: 0\n  unit_system: metric\n  time_zone: UTC\n"
+        "  packages:\n    native_search:\n      script:\n        native_search_yaml:\n"
+        "          alias: Native YAML Search\n          sequence:\n"
+        "            - variables:\n                native_search_marker: native_yaml_probe\n"
+        "                fixture_secret: !secret native_search_secret\n"
+        "                fixture_pin: !secret native_search_pin\n  auth_providers:\n"
         "    - type: homeassistant\nhttp:\ninput_boolean:\n  native_light:\n"
         "    name: Native Light\ninput_button:\ninput_select:\ninput_number:\n"
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
         "person:\ntag:\ngroup: {}\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
-        "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\nhistory:\n"
+        "lovelace:\n  mode: storage\n  dashboards:\n    native-yaml-search:\n"
+        "      mode: yaml\n      title: Native YAML Search\n      show_in_sidebar: false\n"
+        "      filename: native-search-dashboard.yaml\n"
+        "recorder:\n  commit_interval: 1\nhistory:\n"
         "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nfrontend:\nnative_fixture:\n"
         "camera:\n  - platform: native_fixture\n",
         encoding="utf-8",
@@ -497,6 +507,14 @@ async def main() -> None:
         ("scripts.yaml", "{}\n"),
         ("scenes.yaml", "[]\n"),
         ("automations.yaml", "[]\n"),
+        (
+            "secrets.yaml",
+            "native_search_secret: native-fixture-secret-probe\nnative_search_pin: 91827364\n",
+        ),
+        (
+            "native-search-dashboard.yaml",
+            "views:\n  - title: native_yaml_dashboard_probe\n    cards: []\n",
+        ),
     ):
         (CONFIG / filename).write_text(empty, encoding="utf-8")
     docker(

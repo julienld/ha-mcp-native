@@ -19,6 +19,9 @@ from ha_mcp.runtime.health_results import (
 )
 from ha_mcp.runtime.integration_logs import get_logger_levels as _shared_logger_levels
 from ha_mcp.runtime.integration_logs import normalize_log_level as normalize_log_level
+from ha_mcp.runtime.search_response import (
+    merge_visibility_warnings as merge_visibility_warnings,
+)
 
 from ..runtime.action_constants import _SERVICE_TO_STATE as _SERVICE_TO_STATE
 from ..runtime.action_constants import (
@@ -116,16 +119,6 @@ BLOCKED_WS_WRITE_COMMANDS: frozenset[str] = frozenset(
 
 # Python logging numeric-level → canonical level name.
 # Mirrors the values in HA's LOGSEVERITY constant (components/logger/const.py).
-
-
-def merge_visibility_warnings(
-    response: dict[str, Any], warnings: list[str]
-) -> dict[str, Any]:
-    """Attach ``warnings`` to a tool response's top-level ``warnings`` list
-    (create-or-extend). Returns ``response`` for ``return`` composition."""
-    if warnings:
-        response.setdefault("warnings", []).extend(warnings)
-    return response
 
 
 # Error strings produced by the pooled WebSocket path when the transport (not

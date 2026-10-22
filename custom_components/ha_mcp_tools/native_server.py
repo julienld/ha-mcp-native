@@ -83,6 +83,7 @@ def _prewarm() -> bool:
         "homeassistant.components.blueprint.importer",
         "homeassistant.components.automation",
         "homeassistant.components.script",
+        "homeassistant.components.search",
     ):
         importlib.import_module(module)
     from io import StringIO

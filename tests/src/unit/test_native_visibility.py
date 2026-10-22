@@ -176,17 +176,6 @@ async def test_template_scalar_uses_core_dependency_scope_before_disclosure(
         assert result.data == payload
 
 
-async def test_unported_discovery_declutter_fails_closed(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _manager, engine, handler = runtime(
-        tmp_path, monkeypatch, "ha_search", {}, enforce=False
-    )
-    result = await engine.call("ha_search", {}, CallContext("alice"))
-    assert result.is_error and result.status == "not_started"
-    handler.assert_not_awaited()
-
-
 async def test_corrupt_visibility_keeps_last_enforced_boundary(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

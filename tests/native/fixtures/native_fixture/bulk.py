@@ -13,6 +13,8 @@ from homeassistant.helpers import entity_registry as er
 async def seed_bulk(hass: HomeAssistant) -> dict[str, Any]:
     domain = "native_fixture"
     entry_id = hass.data[domain]["sensor_entry_id"]
+    config_entry = hass.config_entries.async_get_entry(entry_id)
+    assert config_entry is not None
     areas = ar.async_get(hass)
     area = areas.async_get_area_by_name("Native bulk room") or areas.async_create(
         "Native bulk room"
@@ -24,7 +26,7 @@ async def seed_bulk(hass: HomeAssistant) -> dict[str, Any]:
             domain,
             domain,
             f"bulk_{key}",
-            config_entry_id=entry_id,
+            config_entry=config_entry,
             suggested_object_id=f"native_bulk_{key}",
         )
         registry.async_update_entity(

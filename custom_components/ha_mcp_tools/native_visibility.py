@@ -149,16 +149,6 @@ class NativeVisibility:
         if config is None:
             return
         if not config.enforce:
-            if name == "ha_search":
-                raise ToolFailure(
-                    "ENTITY_VISIBILITY_ENFORCED",
-                    "Native discovery visibility requires its filtered owner",
-                    data=enforcement_error(
-                        name,
-                        "This discovery surface has not yet implemented the configured decluttering filter.",
-                    ),
-                    status="not_started",
-                )
             return
         if name == "ha_get_camera_image":
             self._deny(

@@ -119,6 +119,14 @@
     "reads": "list, get and substitute are classified as reads by arguments",
     "public_contract": "original schemas and safety annotations remain unchanged"
   },
+  "native_search": {
+    "execution": "detached full Core candidates; visibility and secret filtering precede matching, scores, totals and pagination in an owned worker",
+    "config_bodies": "emit only registered Core config-view reads; loaded YAML stays searchable but its body is withheld even when it has a unique_id",
+    "yaml_dashboards": "match through the actual Core owner; emit metadata, never config or body-derived titles",
+    "scrub_unavailable": "omit all config search and reference graph results with a partial-result reason",
+    "budgets": "config_time_budget scopes automation/script/scene; dashboards retain the HA-scoped individual_config_timeout",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
     {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},

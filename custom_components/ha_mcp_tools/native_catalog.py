@@ -21,6 +21,7 @@ from .native_log_tools import logs_definition
 from .native_operations.templates import template_definition
 from .native_overview_tools import overview_definition
 from .native_resource_tools import build_resource_tools
+from .native_search_tools import search_definition
 from .native_trace_tools import trace_definition
 
 
@@ -41,6 +42,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *build_group_tools(manager),
         camera_definition(manager),
         overview_definition(manager),
+        search_definition(manager),
         health_definition(manager),
         *build_calendar_tools(manager),
         *build_resource_tools(manager),

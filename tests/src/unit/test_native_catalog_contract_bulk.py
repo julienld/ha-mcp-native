@@ -1,4 +1,4 @@
-"""Composed native Bulk, Group and Blueprint tools preserve client contracts."""
+"""Composed native tools preserve their existing client contracts."""
 
 import json
 from pathlib import Path
@@ -37,6 +37,7 @@ def test_composed_bulk_keeps_schemas_tags_and_annotations(native: object) -> Non
         "ha_config_set_group",
         "ha_config_remove_group",
         "ha_manage_blueprints",
+        "ha_search",
     ):
         definition = actual[name]
         old = baseline[name]

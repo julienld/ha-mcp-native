@@ -246,6 +246,18 @@ in read-only mode. Mutation admission is rechecked before every actual flow.
 An unexpected failure after a Core flow callback is an unknown outcome, never a
 retry instruction. Parallel probes drain before the invocation returns.
 
+Native Search captures complete detached Core candidates before matching,
+visibility filtering, scoring, totals and pagination in an owned executor.
+Automation, script and scene bodies are emitted only when read through Core's
+registered config owner; a YAML entity's `unique_id` alone is insufficient.
+Loaded YAML remains searchable after secret scrubbing, and YAML dashboard
+matches expose metadata without their config or body-derived titles. If the
+secret scrub is unavailable, all config surfaces, including their reference
+graph leg, are omitted with a partial-result reason. Per-call config budgets
+apply only to automation/script/scene; dashboard reads use the configured
+individual timeout. Native settings use the HA entry's values. Public schemas
+and safety annotations remain unchanged.
+
 Native Blueprint snapshots retain the installed YAML text. Saving or restoring
 through Core normalizes that YAML and may remove comments, as the legacy path
 does. File preflight checks are optimistic: Core provides no atomic compare and
