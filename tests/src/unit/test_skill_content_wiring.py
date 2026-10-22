@@ -234,6 +234,7 @@ def test_MandatoryBPS_is_visible_in_tool_catalog(
          act on the hint when it appears."""
     module_path = TOOLS_DIR / module_file
     tree = _tool_source_tree(module_path, tool_name)
+
     excluded = _decorator_kwarg_literals(tree, tool_name, "exclude_args") or []
     assert "MandatoryBPS" not in excluded, (
         f"{tool_name} in {module_file} has exclude_args={excluded!r} which "
@@ -292,6 +293,10 @@ def test_write_tool_attaches_skill_content_somewhere(
     module_path = TOOLS_DIR / module_file
     tree = _tool_source_tree(module_path, tool_name)
 
+    fn = _find_function_by_name(tree, tool_name)
+    assert fn is not None, f"{tool_name} not found in {module_file}"
+    source_path = getattr(fn, "_source_path", module_path)
+
     # Count attach calls anywhere in the module — the helper tool wraps
     # at the class-level method, others wrap inline in the @tool method,
     # and dashboards/helpers use shared wrappers. All count. The helper
@@ -299,13 +304,17 @@ def test_write_tool_attaches_skill_content_somewhere(
     sibling_paths = [
         TOOLS_DIR / name for name in _ATTACH_SIBLING_MODULES.get(module_file, ())
     ]
+    if source_path != module_path:
+        # A registration facade delegates the successful returns to its shared
+        # owner. Measure that owner, never unrelated legacy attach adapters.
+        sibling_paths = [
+            source_path.parent / name
+            for name in _SHARED_ATTACH_SIBLINGS.get(tool_name, ())
+        ]
     attach_tree = ast.parse(
-        "\n".join(p.read_text() for p in [module_path, *sibling_paths])
+        "\n".join(p.read_text(encoding="utf-8") for p in [source_path, *sibling_paths])
     )
     total_attaches = _count_attach_calls(attach_tree)
-
-    fn = _find_function_by_name(tree, tool_name)
-    assert fn is not None, f"{tool_name} not found in {module_file}"
 
     # Count return statements that return a dict literal or a variable name
     # — these are the success paths.
