@@ -1,0 +1,74 @@
+"""Semantic ports backed by the existing, explicitly remote HA clients."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from ha_mcp.tool_api import CallContext, UnsupportedOperation
+
+
+class RemoteBackend:
+    """Reuse current transport ownership; never invent a client inside HA."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+    async def authorize(self, context: CallContext) -> None:
+        # Remote authorization is enforced by HA on every wire request. The
+        # entrypoint may additionally attach its live OAuth/session validator.
+        if context.credential is not None:
+            await context.credential()
+
+    async def execute(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        await self.authorize(context)
+        if operation == "instance.timezone":
+            from ha_mcp.tools.response_helpers import fetch_ha_timezone
+
+            timezone, failed = await fetch_ha_timezone(self.client)
+            return {"timezone": timezone, "fetch_failed": failed}
+        if operation == "services.catalog":
+            from ha_mcp.tools.tools_services import _fetch_catalog_and_translations
+
+            warnings: list[str] = []
+            services, translations = await _fetch_catalog_and_translations(
+                self.client, arguments.get("domain"), warnings
+            )
+            return {
+                "services": services,
+                "translations": translations,
+                "warnings": warnings,
+            }
+        if operation == "states.read":
+            return await self._states(arguments["entity_ids"])
+        raise UnsupportedOperation(operation)
+
+    async def _states(self, entity_ids: list[str]) -> dict[str, Any]:
+        from ha_mcp.tools.search.state import StateMixin
+
+        # The old reader preserves component negotiation and REST fallback for
+        # read-only operations. It is never imported by the native entrypoint.
+        reader = StateMixin.__new__(StateMixin)
+        reader._client = self.client
+        component = await reader._fetch_states_via_component(entity_ids)
+        if component is not None:
+            return component
+        results = await asyncio.gather(
+            *(reader._fetch_single_state(eid) for eid in entity_ids)
+        )
+        states = {
+            row["entity_id"]: row["state"]
+            for row in results
+            if row.get("success") is True
+        }
+        return {
+            "states": states,
+            "missing": [eid for eid in entity_ids if eid not in states],
+            "errors": {
+                eid: row
+                for eid, row in zip(entity_ids, results, strict=True)
+                if not row.get("success")
+            },
+        }

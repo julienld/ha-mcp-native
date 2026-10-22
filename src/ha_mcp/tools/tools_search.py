@@ -11,6 +11,7 @@ from pydantic import Field
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..config import get_global_settings
 from ..errors import create_validation_error
 from ..transforms.categorized_search import DEFAULT_PINNED_TOOLS
@@ -694,106 +695,11 @@ class SearchTools(ComponentSearchMixin, OverviewMixin, StateMixin):
 
         return projected
 
-    @tool(
+    ha_get_state = tool(
         name="ha_get_state",
         tags={"Search & Discovery"},
         annotations=read_only_hints("Get Entity State", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_state(
-        self,
-        entity_id: Annotated[
-            str | list[str],
-            JSON_STRING_COERCION,
-            Field(
-                description="Entity ID or list of entity IDs to retrieve state for "
-                "(e.g., 'light.kitchen' or ['light.kitchen', 'sensor.temperature'])"
-            ),
-        ],
-        fields: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Return only the specified top-level entity record keys to reduce "
-                    'response size (e.g. ["state", "attributes"]). None = full entity '
-                    "record. Available keys: entity_id, state, attributes, last_changed, "
-                    "last_reported, last_updated, context."
-                ),
-            ),
-        ] = None,
-        attribute_keys: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Return only the specified keys from each entity's attributes dict "
-                    '(e.g. ["brightness", "color_temp_kelvin"] for lights). None = full '
-                    "attributes. Unknown keys are silently dropped."
-                ),
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get current status, state, and attributes of one or more entities (lights, switches, sensors, climate, covers, locks, fans, etc.).
-
-        Pass a string entity_id for one entity, or a list (max 100, duplicates
-        deduplicated) for several, fetched in parallel. A bulk call returns
-        success=True if at least one state was retrieved; check 'error_count'
-        for failed lookups.
-
-        `fields=` projects the per-entity record keys, NOT the outer bulk
-        response wrapper: in single-entity mode it filters the returned record;
-        in bulk mode it filters each record inside `states[entity_id]` while
-        outer keys (`success`, `count`, `states`, `errors`, ...) are always
-        preserved. `attribute_keys=` further narrows the `attributes` sub-dict
-        and is only applied when `"attributes"` is in `fields=` (or
-        `fields=None`); otherwise it is a no-op and a `warnings` list is emitted
-        outside the projected record(s) — at the response wrapper level in bulk
-        mode, at the top-level result (sibling of `data`/`metadata`) in
-        single-entity mode — so `fields=["state"]` still returns a record with
-        only `state`.
-
-        EXAMPLES:
-        - Single: ha_get_state("light.kitchen")
-        - Multiple: ha_get_state(["light.kitchen", "light.living_room", "sensor.temperature"])
-        - Slim bulk: ha_get_state(["light.kitchen", "sensor.temperature"], fields=["state", "attributes"], attribute_keys=["brightness"])
-        """
-        # Parse projection params once up front so the bulk loop doesn't re-parse
-        # the same string/CSV input per entity.
-        try:
-            parsed_fields = parse_string_list_param(fields, "fields", allow_csv=True)
-        except ValueError as e:
-            raise_tool_error(create_validation_error(str(e), parameter="fields"))
-        try:
-            parsed_attribute_keys = parse_string_list_param(
-                attribute_keys, "attribute_keys", allow_csv=True
-            )
-        except ValueError as e:
-            raise_tool_error(
-                create_validation_error(str(e), parameter="attribute_keys")
-            )
-
-        # `attribute_keys` only takes effect when `attributes` is in the projected
-        # field set (or `fields=None`). Surface a warning rather than silently
-        # ignoring it.
-        attribute_keys_no_effect = (
-            parsed_attribute_keys is not None
-            and parsed_fields is not None
-            and "attributes" not in parsed_fields
-        )
-
-        if isinstance(entity_id, str):
-            return await self._get_single_entity_state(
-                entity_id,
-                parsed_fields,
-                parsed_attribute_keys,
-                attribute_keys_no_effect,
-            )
-        return await self._get_bulk_entity_states(
-            entity_id, parsed_fields, parsed_attribute_keys, attribute_keys_no_effect
-        )
+    )(log_tool_usage(legacy_errors(StateMixin.ha_get_state)))
 
 
 def register_search_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
