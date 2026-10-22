@@ -152,6 +152,17 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
+        elif operation == "seed_resources":
+            from homeassistant.components.lovelace.const import LOVELACE_DATA
+
+            resources = self.hass.data[LOVELACE_DATA].resources
+            assert not resources.loaded
+            await resources.ll_config.async_save(
+                {
+                    "views": [],
+                    "resources": [{"url": "/local/native-legacy.js", "type": "module"}],
+                }
+            )
         elif operation == "configure":
             entry = manager.entry
             await self.hass.config_entries.async_unload(entry.entry_id)

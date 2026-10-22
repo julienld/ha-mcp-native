@@ -135,7 +135,17 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
     overrides = json.loads(
         (_CONTRACTS / "compatibility.json").read_text(encoding="utf-8")
     )["native_annotation_overrides"]
-    assert set(overrides) == {"ha_config_list_helpers", "ha_get_integration"}
+    assert set(overrides) == {
+        "ha_config_list_helpers",
+        "ha_get_integration",
+        "ha_config_list_dashboard_resources",
+    }
+    assert overrides["ha_config_list_dashboard_resources"]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+    }
+    assert overrides["ha_config_list_dashboard_resources"]["reason"]
     assert overrides["ha_get_integration"]["annotations"] == {
         "readOnlyHint": False,
         "destructiveHint": True,

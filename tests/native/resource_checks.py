@@ -4,6 +4,7 @@ from typing import Any
 
 
 async def exercise_resources(checks: Any, base: str) -> None:
+    await checks.control("seed_resources", {})
     listed = await checks.call("ha_config_list_dashboard_resources")
     assert any(
         row["url"] == "/local/native-legacy.js" for row in listed["resources"]

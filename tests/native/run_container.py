@@ -431,29 +431,6 @@ async def exercise(checks: Checks) -> dict:
     return final
 
 
-def prepare_lovelace_fixture() -> None:
-    storage = CONFIG / ".storage"
-    storage.mkdir(exist_ok=True)
-    (storage / "lovelace").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "minor_version": 1,
-                "key": "lovelace",
-                "data": {
-                    "config": {
-                        "views": [],
-                        "resources": [
-                            {"url": "/local/native-legacy.js", "type": "module"}
-                        ],
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
 async def main() -> None:
     CONFIG.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -483,7 +460,6 @@ async def main() -> None:
         "lovelace:\n  mode: storage\nnative_fixture:\n",
         encoding="utf-8",
     )
-    prepare_lovelace_fixture()
     for filename, empty in (
         ("scripts.yaml", "{}\n"),
         ("scenes.yaml", "[]\n"),
