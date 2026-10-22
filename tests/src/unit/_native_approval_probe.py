@@ -31,9 +31,19 @@ def _component_imports() -> Any:
     return native_server
 
 
-async def run() -> None:
-    from ha_mcp._vendor.fastmcp import Client, FastMCP
+def _client(url: str, identity: str, through_proxy: bool) -> Any:
+    from ha_mcp._vendor.fastmcp import Client
     from ha_mcp._vendor.fastmcp.client.transports import StreamableHttpTransport
+
+    if through_proxy:
+        from ha_mcp.native_proxy import create_native_component_proxy
+
+        return Client(create_native_component_proxy(url, auth=identity))
+    return Client(StreamableHttpTransport(url, headers={"X-Test-Client": identity}))
+
+
+async def run(*, through_proxy: bool = False) -> None:
+    from ha_mcp._vendor.fastmcp import FastMCP
     from ha_mcp._vendor.mcp import MCPError
     from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity
     from ha_mcp._vendor.mcp_types import InputRequiredResult
@@ -97,7 +107,13 @@ async def run() -> None:
     async with app.lifespan(app) as state:
 
         async def handle(request: web.Request) -> web.StreamResponse:
-            actor = CallContext("alice", request.headers.get("X-Test-Client", "A"))
+            actor = CallContext(
+                "alice",
+                request.headers.get("X-Test-Client")
+                or request.headers.get("Authorization", "Bearer A").removeprefix(
+                    "Bearer "
+                ),
+            )
             return await native.serve_asgi(
                 app,
                 request,
@@ -109,9 +125,8 @@ async def run() -> None:
         aiohttp_app.router.add_post("/api/webhook/test", handle)
         async with TestServer(aiohttp_app) as server:
             url = str(server.make_url("/api/webhook/test"))
-            async with Client(
-                StreamableHttpTransport(url, headers={"X-Test-Client": "A"})
-            ) as client:
+
+            async with _client(url, "A", through_proxy) as client:
                 first = await client.session.call_tool(
                     "native_write", {"value": "once"}, allow_input_required=True
                 )
@@ -120,9 +135,7 @@ async def run() -> None:
                 pending = gate.queue.list_pending()[0]
                 assert pending.token not in first.request_state
                 gate.queue.approve(pending.token)
-                async with Client(
-                    StreamableHttpTransport(url, headers={"X-Test-Client": "B"})
-                ) as other:
+                async with _client(url, "B", through_proxy) as other:
                     try:
                         await other.session.call_tool(
                             "native_write",

@@ -20,6 +20,7 @@ from configuration_checks import (
     exercise_flow_helpers,
     exercise_todo,
 )
+from interop_checks import exercise_llm
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -341,6 +342,29 @@ async def exercise_external_clients(checks: Checks, user_id: str) -> None:
     checks.passed("shared_tool_bodies_use_real_remote_REST_and_WebSocket")
 
 
+async def exercise_standard_proxy(checks: Checks) -> None:
+    source = (ROOT / "tests/native/component_proxy_probe.py").read_text(
+        encoding="utf-8"
+    )
+    result = await asyncio.to_thread(
+        subprocess.run,
+        ["docker", "exec", "-i", CONTAINER, "python", "-c", source],
+        input=json.dumps(
+            {
+                "url": BASE + checks.path,
+                "token": checks.credentials["alpha"]["access_token"],
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    checks.passed(
+        "standard_MCP_bridge_calls_canonical_Core_and_relays_catalog_resources"
+    )
+
+
 async def exercise(checks: Checks) -> dict:
     probe = await checks.ready()
     assert probe["manager_type"] == "NativeServerManager", probe
@@ -387,30 +411,7 @@ async def exercise(checks: Checks) -> dict:
     )
     assert "result" in unpack(response)
     checks.passed("legacy_initialize")
-    await checks.control("configure", {})
-    await checks.ready()
-    result = await checks.control(
-        "llm",
-        {
-            "tool_name": "ha_get_state",
-            "arguments": {
-                "entity_id": "sensor.native_fixture",
-            },
-        },
-    )
-    assert not result["error"] and "ready" in json.dumps(result), result
-    checks.passed("shared_tool_exported_to_Assist")
-    imported = await checks.call("ha_native_llm_tools", {"api_id": "native_fixture"})
-    assert "native_fixture/NativeEcho" in json.dumps(imported), imported
-    reply = await checks.call(
-        "ha_native_llm_call",
-        {
-            "name": "native_fixture/NativeEcho",
-            "arguments": {"text": "native"},
-        },
-    )
-    assert "NATIVE" in json.dumps(reply), reply
-    checks.passed("native_LLM_API_import_with_original_validator")
+    await exercise_llm(checks)
     await checks.control("reload", {})
     final = await checks.ready()
     assert checks.path == original_path
@@ -485,6 +486,7 @@ async def main() -> None:
             await create_entry(checks, identities["alpha"]["user_id"])
             await checks.control("guard", {})
             await exercise_external_clients(checks, identities["alpha"]["user_id"])
+            await exercise_standard_proxy(checks)
             evidence = await exercise(checks)
             # Do not persist generated identities or access/refresh tokens.
             evidence.pop("entry_id", None)

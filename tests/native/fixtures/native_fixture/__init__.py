@@ -53,8 +53,33 @@ class EchoTool(llm.Tool):
 class FixtureAPI(llm.API):
     async def async_get_api_instance(self, llm_context):
         return llm.APIInstance(
-            self, "Use the fixture's own validator.", llm_context, [EchoTool()]
+            self,
+            "Use the fixture's own validator.",
+            llm_context,
+            [EchoTool(), TurnOnTool()],
         )
+
+
+class TurnOnTool(llm.Tool):
+    name = "NativeTurnOn"
+    description = "Turn on the disposable fixture light through Core's service owner."
+    parameters = probatio.from_openapi(
+        {"type": "object", "properties": {}, "additionalProperties": False}
+    )
+    annotations = llm.ToolAnnotations(
+        read_only=False, destructive=False, idempotent=True
+    )
+
+    async def async_call(self, hass, tool_input, llm_context):
+        self.parameters(tool_input.tool_args)
+        await hass.services.async_call(
+            "input_boolean",
+            "turn_on",
+            {"entity_id": "input_boolean.native_light"},
+            blocking=True,
+            context=llm_context.context,
+        )
+        return llm.ToolResult(data={"turned_on": True})
 
 
 class FixtureView(HomeAssistantView):

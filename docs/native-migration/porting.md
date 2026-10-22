@@ -22,12 +22,21 @@ Keep `Engine`, public tool contracts, coercion and pure algorithms reusable.
 native handler. Every MCP, Assist or remote-component entry must still enter the
 same Engine for policy, actor validation and operation ownership.
 
-The planned remote-component path delegates a bounded tool name and arguments
-to that canonical Engine, with versioned catalog/capability discovery. Select
-component delegation or the isolated legacy implementation before invocation.
-Never fall back or retry a mutation after a lost or uncertain reply. The older
-installation without the component retains its compatibility implementation;
-it must not dictate the shape of new Core handlers.
+The remote-component path uses a standard FastMCP proxy to the existing HA MCP
+endpoint. That endpoint already owns catalog/capability negotiation, calls,
+resources and authentication; a second WebSocket tool RPC would duplicate it.
+The proxy accepts an explicit MCP URL and SDK authentication. It must not add
+legacy middleware or cache stale per-user catalog metadata. The pinned proxy's
+background-task limitation does not restrict direct clients of the HA endpoint.
+
+The optional [standard proxy factory](../../src/ha_mcp/native_proxy.py) can run a
+stdio bridge with `create_native_component_proxy(native_mcp_url, auth=existing_token).run(transport="stdio")`.
+It does not discover the secret endpoint or construct an old HA REST/WS server.
+
+Select component delegation or the isolated legacy implementation before
+invocation. Never fall back or retry a mutation after a lost or uncertain reply.
+The older installation without the component retains its compatibility
+implementation; it must not dictate the shape of new Core handlers.
 
 The semantic backends below describe the first migration increment already in
 the repository. They remain useful for existing tools and tests, but implementing
@@ -67,7 +76,7 @@ tags and the old output schema. Its optional `handler` is for an existing owner
 whose construction differs, such as a custom-code session; it is not a second
 copy of that owner's method. `build_initial_catalog` publishes migrated tools.
 
-## Add finite semantic operations
+## Existing finite semantic operations
 
 The shared body calls `await backend.execute(operation, arguments, context)`.
 An operation names a bounded capability such as `integrations.entries`,

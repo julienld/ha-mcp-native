@@ -40,7 +40,7 @@ async def test_registry_edit_during_storage_validation_refuses_restore_before_co
     storage, monkeypatch
 ):
     collection, _user, backend, engine = storage
-    row, expected = registry(monkeypatch, "input_boolean")
+    row, expected = registry(monkeypatch, "person")
     actor = CallContext("actor")
     task = asyncio.create_task(
         engine.call_owned(
@@ -48,7 +48,7 @@ async def test_registry_edit_during_storage_validation_refuses_restore_before_co
             lambda: backend.execute(
                 "helpers.storage.write",
                 {
-                    "helper_type": "input_boolean",
+                    "helper_type": "person",
                     "action": "update",
                     "item_id": "target",
                     "data": {"name": "Restored"},

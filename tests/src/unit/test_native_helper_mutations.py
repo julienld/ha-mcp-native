@@ -27,6 +27,7 @@ class CoreStorage:
         self.notified.set()
         self.saves = 0
         self.changes = []
+        self.public_calls = []
         self.id_manager = SimpleNamespace(generate_id=lambda name: name.lower())
 
     async def _process_create_data(self, fields):
@@ -60,6 +61,7 @@ class CoreStorage:
         await self.notified.wait()
 
     async def async_create_item(self, fields):
+        self.public_calls.append("create")
         validated = await self._process_create_data(fields)
         item_id = self.id_manager.generate_id(self._get_suggested_id(validated))
         item = self._create_item(item_id, validated)
@@ -69,6 +71,7 @@ class CoreStorage:
         return item
 
     async def async_update_item(self, item_id, fields):
+        self.public_calls.append("update")
         if item_id not in self.data:
             raise ItemNotFound(item_id)
         updated = await self._update_data(self.data[item_id], fields)
@@ -90,7 +93,12 @@ async def storage(native, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "homeassistant.helpers.collection", core)
     collection = CoreStorage()
-    hass = _hass(collection, "input_boolean")
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.person",
+        SimpleNamespace(PersonStorageCollection=CoreStorage),
+    )
+    hass = _hass(collection, "person")
     user = authorize(hass)
     monkeypatch.setattr(wsapi.er, "async_get", lambda hass: FakeRegistry())
     backend = native.NativeBackend(hass)
@@ -107,7 +115,7 @@ async def updating(storage):
             lambda: backend.execute(
                 "helpers.storage.write",
                 {
-                    "helper_type": "input_boolean",
+                    "helper_type": "person",
                     "action": "update",
                     "item_id": "target",
                     "data": {"name": "AI edit"},
@@ -167,7 +175,7 @@ async def test_snapshot_compare_is_type_sensitive(storage):
         await backend.execute(
             "helpers.storage.write",
             {
-                "helper_type": "input_boolean",
+                "helper_type": "person",
                 "action": "update",
                 "item_id": "target",
                 "data": {"name": "AI edit"},
@@ -190,7 +198,7 @@ async def test_create_rechecks_collection_and_admission_after_validation(storage
             lambda: backend.execute(
                 "helpers.storage.write",
                 {
-                    "helper_type": "input_boolean",
+                    "helper_type": "person",
                     "action": "create",
                     "data": {"name": "New"},
                 },
@@ -213,7 +221,7 @@ async def test_successful_create_keeps_Core_ID_hash_and_listener_protocol(storag
     collection.validated.set()
     result = await backend.execute(
         "helpers.storage.write",
-        {"helper_type": "input_boolean", "action": "create", "data": {"name": "New"}},
+        {"helper_type": "person", "action": "create", "data": {"name": "New"}},
         CallContext("actor"),
     )
     assert result["success"] and result["item"]["id"] == "new"
@@ -245,7 +253,7 @@ async def test_idempotent_update_with_a_failed_listener_remains_an_unknown_outco
         lambda: backend.execute(
             "helpers.storage.write",
             {
-                "helper_type": "input_boolean",
+                "helper_type": "person",
                 "action": "update",
                 "item_id": "target",
                 "data": {"name": "Original"},

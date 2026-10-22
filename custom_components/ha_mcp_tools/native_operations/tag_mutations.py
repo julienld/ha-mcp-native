@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import copy
-import dis
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
-from .helper_mutations import _fingerprint
-
-
-def _require_non_suspending(method: Any) -> None:
-    if any(
-        instruction.opname in {"GET_AWAITABLE", "YIELD_VALUE", "SEND"}
-        for instruction in dis.get_instructions(method)
-    ):
-        raise UnsupportedOperation("helpers.storage.tag.suspending_validation")
+from .storage_api import (
+    dispatch_core,
+    require_core_api,
+)
+from .storage_api import (
+    fingerprint as _fingerprint,
+)
+from .storage_api import (
+    require_non_suspending as _require_non_suspending,
+)
 
 
 async def write_tag(
@@ -39,6 +39,7 @@ async def write_tag(
 
     if type(collection) is not TagStorageCollection:
         raise UnsupportedOperation("helpers.storage.tag.overridden_validation")
+    require_core_api(collection, action)
     validator = (
         collection._process_create_data
         if action == "create"
@@ -72,42 +73,12 @@ async def write_tag(
                 "The tag changed after its snapshot was read",
                 status="not_started",
             )
-    return await _dispatch_tag(collection, action, item_id, values, actor, admit)
-
-
-async def _dispatch_tag(
-    collection: Any,
-    action: str,
-    item_id: str | None,
-    values: dict[str, Any],
-    actor: CallContext,
-    admit: Callable[[CallContext], Awaitable[None]],
-) -> Any:
-    completed = False
-    try:
-        # Core 2026.10.2's tag validators cannot suspend (checked above).
-        # Its original API therefore updates registry+store without a yield
-        # between final admission and those changes, then awaits its listeners.
-        result = (
-            await collection.async_create_item(values)
-            if action == "create"
-            else await collection.async_update_item(item_id, values)
-        )
-        completed = True
-        await admit(actor)
-        return result
-    except Exception as error:
-        raise ToolFailure(
-            "OUTCOME_UNKNOWN",
-            "Tag dispatch started; inspect its registry and stored state before retrying",
-            data={
-                "success": False,
-                "error": {
-                    "code": "OUTCOME_UNKNOWN",
-                    "message": "Tag dispatch did not complete normally",
-                },
-                "registry_may_have_changed": True,
-                "config_applied": True if completed else None,
-            },
-            status="outcome_unknown",
-        ) from error
+    return await dispatch_core(
+        actor,
+        admit,
+        collection,
+        action,
+        item_id,
+        values,
+        registry_may_have_changed=True,
+    )

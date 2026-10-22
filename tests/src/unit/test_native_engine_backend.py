@@ -70,7 +70,7 @@ def native(monkeypatch: pytest.MonkeyPatch) -> Any:
     module = importlib.import_module("custom_components.ha_mcp_tools.native_backend")
     monkeypatch.setattr(module, "json_bytes", lambda value: json.dumps(value).encode())
     mutations = importlib.import_module(
-        "custom_components.ha_mcp_tools.native_operations.helper_mutations"
+        "custom_components.ha_mcp_tools.native_operations.storage_api"
     )
     monkeypatch.setattr(mutations, "json_bytes", module.json_bytes)
     monkeypatch.setattr(module, "Context", SimpleNamespace)
