@@ -529,7 +529,7 @@ class TestHaConfigListDashboardResources:
             retained_counts.append(sum(1 for d in decoded_page if d is not None))
             return real_process(page, decoded_page, include)
 
-        monkeypatch.setattr(tools_resources, "_process_resource_list", _spy)
+        monkeypatch.setattr("ha_mcp.runtime.resource_values._process_resource_list", _spy)
 
         result = await list_tool(include_content=True, limit=1, offset=1)
 

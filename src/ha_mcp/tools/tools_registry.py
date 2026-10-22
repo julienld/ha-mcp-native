@@ -8,14 +8,13 @@ Important: Device renaming does NOT cascade to entities - they are independent r
 
 import asyncio
 import logging
-from typing import Annotated, Any, NoReturn
-
-from pydantic import Field
+from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..backends.legacy import LegacyBackendTools, legacy_errors
+from ..backends.legacy_devices import LegacyDevices
 from ..errors import ErrorCode, create_error_response
 from ..runtime.device_records import _add_integration_hints as _add_integration_hints
 from ..runtime.device_records import _build_entity_maps as _build_entity_maps
@@ -30,26 +29,22 @@ from ..runtime.device_records import _get_device_info as _get_device_info
 from ..runtime.device_records import _list_devices_result as _list_devices_result
 from ..runtime.device_records import _matches_integration as _matches_integration
 from ..runtime.device_records import _process_device_domain as _process_device_domain
+from ..runtime.device_tools import Devices, DeviceWriteTools
 from ..runtime.devices import DeviceDiscoveryTools
 from ..utils.device_registry_semantics import (
     EFFECTIVE_AREA_MARKER,
     annotate_device_rows_with_effective_area,
 )
 from .auto_backup import with_auto_backup
-from .coercion import JSON_STRING_COERCION, parse_string_list_param
 from .component_devices import (
     fetch_device_list_via_component,
     fetch_device_via_component,
 )
-from .config_helpers.registry import validate_registry_ids
 from .helpers import (
-    WHITESPACE_CLEARS_NOTE,
-    clearable_value,
     exception_to_structured_error,
     log_tool_usage,
     raise_tool_error,
     register_tool_methods,
-    validate_identifier_not_empty,
 )
 from .tool_hints import read_only_hints, write_hints
 
@@ -314,122 +309,35 @@ async def _remove_device_config_entries(
     return results
 
 
-class RegistryTools(LegacyBackendTools, DeviceDiscoveryTools):
+class RegistryTools(LegacyBackendTools, DeviceDiscoveryTools, LegacyDevices):
     """Device registry tools: get, update, and remove devices."""
 
-    async def _update_device_internal(
-        self,
-        device_id: str,
-        name: str | None = None,
-        area_id: str | None = None,
-        disabled_by: str | None = None,
-        labels: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Internal implementation of device update."""
-        try:
-            message: dict[str, Any] = {
-                "type": "config/device_registry/update",
-                "device_id": device_id,
-            }
+    @property
+    def devices(self) -> Devices:
+        return self
 
-            updates_made = []
-
-            if name is not None:
-                name = clearable_value(name, "name")
-                message["name_by_user"] = name
-                updates_made.append(f"name='{name}'" if name else "name cleared")
-
-            if area_id is not None:
-                area_id = clearable_value(area_id, "area_id")
-                message["area_id"] = area_id
-                updates_made.append(
-                    f"area_id='{area_id}'" if area_id else "area cleared"
-                )
-
-            if disabled_by is not None:
-                disabled_by = clearable_value(
-                    disabled_by,
-                    "disabled_by",
-                    hint="Pass 'user' to disable the device, or '' (a single space "
-                    "' ' if your client cannot send an empty string) to enable it",
-                )
-                message["disabled_by"] = disabled_by
-                updates_made.append(
-                    f"disabled_by='{disabled_by}'" if disabled_by else "enabled"
-                )
-
-            if labels is not None:
-                message["labels"] = labels
-                updates_made.append(f"labels={labels}")
-
-            if not updates_made:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        "No updates specified",
-                        suggestions=[
-                            "Provide at least one of: name, area_id, disabled_by, or labels",
-                        ],
-                        context={"device_id": device_id},
-                    )
-                )
-
-            # Issue #2159: HA stores an unknown area_id or label_id on the
-            # device verbatim. Device labels replace the existing set, so the
-            # supplied list is the full set to check; an empty list clears.
-            await validate_registry_ids(
-                self._client, area_id, labels, None, fail_closed=True
-            )
-
-            logger.info(f"Updating device {device_id}: {', '.join(updates_made)}")
-            result = await self._client.send_websocket_message(message)
-
-            if result.get("success"):
-                device_entry = result.get("result", {})
-                return {
-                    "success": True,
-                    "device_id": device_id,
-                    "updates": updates_made,
-                    "device_entry": {
-                        "name": device_entry.get("name_by_user")
-                        or device_entry.get("name"),
-                        "name_by_user": device_entry.get("name_by_user"),
-                        "area_id": device_entry.get("area_id"),
-                        "disabled_by": device_entry.get("disabled_by"),
-                        "labels": device_entry.get("labels", []),
-                    },
-                    "message": f"Device updated: {', '.join(updates_made)}",
-                    "note": "Remember: Device rename does NOT cascade to entities. Use ha_set_entity(new_entity_id=...) to rename entities.",
-                }
-            else:
-                error = result.get("error", {})
-                error_msg = (
-                    error.get("message", str(error))
-                    if isinstance(error, dict)
-                    else str(error)
-                )
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        f"Failed to update device: {error_msg}",
-                        suggestions=[
-                            "Verify the device_id exists using ha_get_device()",
-                            "Check that area_id exists if specified",
-                        ],
-                        context={"device_id": device_id},
-                    )
-                )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error updating device: {e}")
-            exception_to_structured_error(
-                e,
-                context={"device_id": device_id},
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-        return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
+    ha_set_device = tool(
+        name="ha_set_device",
+        tags={"Device Registry"},
+        annotations=write_hints(
+            "Set Device", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(domain="device", id_param="device_id")(
+            log_tool_usage(legacy_errors(DeviceWriteTools.ha_set_device))
+        )
+    )
+    ha_remove_device = tool(
+        name="ha_remove_device",
+        tags={"Device Registry"},
+        annotations=write_hints(
+            "Remove Device", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(domain="device", id_param="device_id")(
+            log_tool_usage(legacy_errors(DeviceWriteTools.ha_remove_device))
+        )
+    )
 
     @staticmethod
     def _get_device_info(device: dict[str, Any]) -> dict[str, Any]:
@@ -463,215 +371,6 @@ class RegistryTools(LegacyBackendTools, DeviceDiscoveryTools):
             "Get Device (incl. Zigbee/ZHA/Z2M, Z-Wave and Matter)", open_world=False
         ),
     )(log_tool_usage(legacy_errors(DeviceDiscoveryTools.ha_get_device)))
-
-    @tool(
-        name="ha_set_device",
-        tags={"Device Registry"},
-        annotations=write_hints(
-            "Set Device", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(domain="device", id_param="device_id")
-    @log_tool_usage
-    async def ha_set_device(
-        self,
-        device_id: Annotated[
-            str,
-            Field(description="Device ID to update"),
-        ],
-        name: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "New display name for the device (sets name_by_user). '' clears "
-                    "name_by_user and reverts to the integration-provided name. "
-                    + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        area_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Area/room ID to assign the device to. Use empty string '' to "
-                    "unassign. " + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        disabled_by: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Set to 'user' to disable the device, or '' (empty string) "
-                    "to enable it. Omit to leave the disabled state unchanged. "
-                    + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        labels: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description="Labels to assign to the device (replaces existing labels)",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """
-        Update device properties such as name, area, disabled state, or labels.
-
-        IMPORTANT: Renaming a device does NOT rename its entities!
-        Device and entity names are independent. To rename entities, use ha_set_entity(new_entity_id=...).
-
-        Common workflow for full rename:
-        1. ha_set_device(device_id="abc", name="Living Room Sensor")  # Rename device
-        2. ha_set_entity("sensor.old", new_entity_id="sensor.living_room")  # Rename entities separately
-
-        EXAMPLES:
-        - Rename device: ha_set_device("abc123", name="Living Room Hub")
-        - Move to area: ha_set_device("abc123", area_id="living_room")
-        - Disable device: ha_set_device("abc123", disabled_by="user")
-        - Enable device: ha_set_device("abc123", disabled_by="")
-        - Add labels: ha_set_device("abc123", labels=["important", "sensor"])
-        """
-        parsed_labels = None
-        if labels is not None:
-            try:
-                parsed_labels = parse_string_list_param(labels, "labels")
-            except ValueError as e:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"Invalid labels parameter: {e}",
-                    )
-                )
-
-        # Empty/whitespace device_id would reach the
-        # ``config/device_registry/update`` WS message inside
-        # ``_update_device_internal`` and surface as a misleading HA
-        # "device not found" — same destructive-WS-call class as the
-        # ``ha_remove_device`` guard added in this PR.
-        validate_identifier_not_empty(
-            device_id,
-            "device_id",
-            suggestions=["Use ha_get_device() to find valid device IDs"],
-        )
-        return await self._update_device_internal(
-            device_id=device_id,
-            name=name,
-            area_id=area_id,
-            disabled_by=disabled_by,
-            labels=parsed_labels,
-        )
-
-    @tool(
-        name="ha_remove_device",
-        tags={"Device Registry"},
-        annotations=write_hints(
-            "Remove Device", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(domain="device", id_param="device_id")
-    @log_tool_usage
-    async def ha_remove_device(
-        self,
-        device_id: Annotated[
-            str,
-            Field(description="Device ID to remove from the registry"),
-        ],
-    ) -> dict[str, Any]:
-        """
-        Remove an orphaned device from the Home Assistant device registry.
-
-        WARNING: This removes the device entry from the registry.
-        - Use only for orphaned devices that are no longer connected
-        - Active devices will typically be re-added by their integration
-        - Associated entities may also be removed
-
-        Works only when the integration supports removing devices.
-
-        EXAMPLES:
-        - Remove orphaned device: ha_remove_device("abc123def456")
-
-        NOTE: For most use cases, consider disabling the device instead:
-        ha_set_device(device_id="abc123", disabled_by="user")
-        """
-        try:
-            # Empty/whitespace device_id would slip past the local-filter dict
-            # lookup below and surface as a generic "Device not found: " error
-            # after a wasted registry-list round-trip.
-            validate_identifier_not_empty(
-                device_id,
-                "device_id",
-                suggestions=["Use ha_get_device() to find valid device IDs"],
-            )
-            device = await _lookup_device_for_remove(self._client, device_id)
-
-            config_entries = _device_config_entries(device)
-            device_name = device.get("name_by_user") or device.get("name")
-            if not config_entries:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        "Device has no config entries - cannot be removed via this method",
-                        suggestions=[
-                            "This device may be managed by an integration directly. Try disabling it instead.",
-                        ],
-                        context={"device_id": device_id, "device_name": device_name},
-                    )
-                )
-
-            removal_results = await _remove_device_config_entries(
-                self._client, device_id, config_entries
-            )
-            all_succeeded = all(r["success"] for r in removal_results)
-            any_succeeded = any(r["success"] for r in removal_results)
-
-            if all_succeeded:
-                return {
-                    "success": True,
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    "config_entries_removed": len(config_entries),
-                    "message": f"Successfully removed device from {len(config_entries)} config entry/entries",
-                }
-            elif any_succeeded:
-                return {
-                    "success": True,
-                    "partial": True,
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    "removal_results": removal_results,
-                    "message": "Device partially removed - some config entries could not be removed",
-                }
-            else:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        "Failed to remove device from any config entries",
-                        suggestions=[
-                            "Device may be actively managed by its integration. Try disabling it instead.",
-                        ],
-                        context={
-                            "device_id": device_id,
-                            "removal_results": removal_results,
-                        },
-                    )
-                )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error removing device: {e}")
-            exception_to_structured_error(
-                e,
-                context={"device_id": device_id},
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-        return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
 
 
 def register_registry_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

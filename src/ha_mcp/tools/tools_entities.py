@@ -8,6 +8,7 @@ via the Home Assistant entity registry API.
 import asyncio
 import logging
 import re
+from contextlib import AsyncExitStack
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -16,6 +17,7 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..backends.legacy import legacy_errors
+from ..backends.legacy_entity_snapshots import capture_entity_registry
 from ..backends.legacy_registry_errors import raise_entity_read_error
 from ..client.rest_client import (
     HomeAssistantCommandError,
@@ -32,6 +34,7 @@ from ..runtime.entity_records import (
     _merge_entity_enrichment as _merge_entity_enrichment,
 )
 from ..runtime.entity_records import _parse_get_entity_ids as _parse_get_entity_ids
+from ..runtime.entity_removal_tools import EntityRemovals, EntityRemovalTools
 from ..utils.registry_update_lock import registry_update_lock
 from .auto_backup import with_auto_backup
 from .coercion import JSON_STRING_COERCION
@@ -294,6 +297,22 @@ def _validate_enabled_constraint(
 
 class EntityTools(EntityDiscoveryTools):
     """Entity registry tools: get, update, and remove entities."""
+
+    @property
+    def removals(self) -> EntityRemovals:
+        return self
+
+    ha_remove_entity = tool(
+        name="ha_remove_entity",
+        tags={"Entity Registry"},
+        annotations=write_hints(
+            "Remove Entity", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(
+            domain="entity_registry", id_param="entity_id", skip_fn=lambda kw: True
+        )(log_tool_usage(legacy_errors(EntityRemovalTools.ha_remove_entity)))
+    )
 
     def __init__(self, client: Any) -> None:
         self._client = client
@@ -924,6 +943,9 @@ class EntityTools(EntityDiscoveryTools):
                 fail_closed=True,
             )
 
+            if len(message) > 2 or parsed_options or parsed_expose_to:
+                await capture_entity_registry(self._client, entity_id, "ha_set_entity")
+
             # Phase 3: Send entity registry update (covers all fields except expose_to)
             (
                 entity_id,
@@ -1104,7 +1126,13 @@ class EntityTools(EntityDiscoveryTools):
         entity_entry; a refetch failure keeps the pre-exposure snapshot since
         the exposure already committed.
         """
-        expose_error = await self._bulk_apply_expose(eligible_ids, parsed_expose_to)
+        async with AsyncExitStack() as owners:
+            for eid in sorted(set(eligible_ids)):
+                await owners.enter_async_context(registry_update_lock("entity", eid))
+            if parsed_expose_to:
+                for eid in dict.fromkeys(eligible_ids):
+                    await capture_entity_registry(self._client, eid, "ha_set_entity")
+            expose_error = await self._bulk_apply_expose(eligible_ids, parsed_expose_to)
         if expose_error is not None:
             failed = [
                 {"entity_id": eid, "error": f"Exposure failed: {expose_error}"}
@@ -1290,16 +1318,11 @@ class EntityTools(EntityDiscoveryTools):
         ),
     )
     @with_auto_backup(
-        domain="entity",
-        # Bulk calls (entity_id is a list) intentionally skip the
-        # decorator path: we'd otherwise snapshot only the first entity
-        # and silently leave the rest of the list un-protected. The
-        # capture pipeline treats "" as "no entity" and no-ops.
-        id_fn=lambda kw: (
-            ""
-            if isinstance(kw.get("entity_id"), list)
-            else str(kw.get("entity_id") or "")
-        ),
+        domain="entity_registry",
+        # Capture the real registry row under its durable UUID inside the
+        # per-entity owner, including bulk targets, instead of state+attributes.
+        skip_fn=lambda kw: True,
+        id_param="entity_id",
     )
     @log_tool_usage
     async def ha_set_entity(
@@ -1722,9 +1745,11 @@ class EntityTools(EntityDiscoveryTools):
         skipped: list[str] = []
         errors: list[dict[str, str]] = []
         for eid in entity_ids:
-            result = await self._client.send_websocket_message(
-                {"type": "config/entity_registry/remove", "entity_id": eid}
-            )
+            async with registry_update_lock("entity", eid):
+                await capture_entity_registry(self._client, eid, "ha_remove_entity")
+                result = await self._client.send_websocket_message(
+                    {"type": "config/entity_registry/remove", "entity_id": eid}
+                )
             if result.get("success"):
                 removed.append(eid)
                 continue
@@ -1750,55 +1775,7 @@ class EntityTools(EntityDiscoveryTools):
             "errors": errors,
         }
 
-    @tool(
-        name="ha_remove_entity",
-        tags={"Entity Registry"},
-        annotations=write_hints(
-            "Remove Entity", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    # Only a single id is snapshotted (id_param): a bulk list stringifies to no
-    # matching target, so bulk removal is not individually backed up.
-    @with_auto_backup(domain="entity", id_param="entity_id")
-    @log_tool_usage
-    async def ha_remove_entity(
-        self,
-        entity_id: Annotated[
-            str | list[str],
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Entity ID, or a list of entity IDs, to remove from the "
-                    "entity registry (e.g., 'sensor.old_temperature')."
-                )
-            ),
-        ],
-    ) -> dict[str, Any]:
-        """Remove one or more entities from the Home Assistant entity registry.
-
-        Permanently removes the entity registration; the entity will no longer
-        appear in the UI or be available to automations. Use only for orphaned
-        or stale entity entries: if the underlying device, integration or
-        stored helper is still there, the entity may be re-added on the next HA
-        restart or reload; for a stored helper's entity a single-id removal
-        names the tool that removes the helper. This cannot be undone without restoring
-        from backup. For most use cases, consider disabling instead:
-        ha_set_entity(entity_id="sensor.old", enabled=False).
-
-        BULK MODE:
-        Pass a list of entity IDs to remove up to 100 at once — handy for
-        clearing the restored=true orphans an integration leaves behind after
-        its filters change. Removals run sequentially and return:
-          {removed: [...], skipped: [...], errors: [{entity_id, code, message}]}
-        where skipped = ids already absent (not-found is idempotent, not an
-        error). Only single-id removal is auto-backed-up.
-
-        EXAMPLES:
-        - Remove orphaned sensor: ha_remove_entity("sensor.old_temperature")
-        - Bulk cleanup: ha_remove_entity(["sensor.orphan_1", "sensor.orphan_2"])
-
-        Use ha_search / ha_get_entity to verify an entity before removing it.
-        """
+    async def remove(self, entity_id: str | list[str]) -> dict[str, Any]:
         try:
             # List mode: bulk removal with a per-id classification envelope.
             if not isinstance(entity_id, str):
@@ -1813,7 +1790,11 @@ class EntityTools(EntityDiscoveryTools):
                     "Use ha_search() to find valid entity IDs",
                 ],
             )
-            result, notes = await remove_registry_entry(self._client, entity_id)
+            async with registry_update_lock("entity", entity_id):
+                await capture_entity_registry(
+                    self._client, entity_id, "ha_remove_entity"
+                )
+                result, notes = await remove_registry_entry(self._client, entity_id)
 
             if not result.get("success"):
                 error_msg = _extract_ws_error(result)

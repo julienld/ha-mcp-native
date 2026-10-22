@@ -125,6 +125,20 @@ ID that already exists is rejected before snapshot capture and mutation.
 
 ## Readiness evidence
 
+Entity edit history distinguishes two persisted domains. Historical `entity`
+snapshots retain their original state-and-attributes meaning. New
+`entity_registry` snapshots preserve Core's full registry entry and use its UUID
+as the key, so an `entity_id` rename does not redirect a restore to another
+registration. No global snapshot format version changes.
+
+Registry restoration changes the user settings and option domains through the
+actual registry API. It compares the current row with the same typed before-image
+saved as its safety copy and refuses concurrent edits. It updates an existing
+durable identity; it cannot recreate an integration-owned entity registration.
+Single and bulk removals capture each existing target. An uncertain Core
+removal stops a native bulk call, returning its confirmed progress and explicit
+`not_attempted` targets without replaying a removal.
+
 The native catalog deliberately corrects three safety hints for
 `ha_config_list_helpers`: `readOnlyHint=false`, `destructiveHint=true` and
 `idempotentHint=false`. Describing a flow-backed helper may initialize a Core

@@ -63,6 +63,12 @@ import yaml  # type: ignore[import-untyped]
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.websockets.exceptions import ConnectionClosed
+from ha_mcp.runtime.calendar_values import (
+    _calendar_bound as _calendar_bound,
+)
+from ha_mcp.runtime.calendar_values import (
+    _recurrence_id_window as _recurrence_id_window,
+)
 
 from .backends.legacy_flows import legacy_flow
 from .backup_dashboards import (
@@ -198,7 +204,6 @@ from .runtime.snapshot_payloads import validate_snapshot_identity
 from .runtime.snapshot_restore import ApplyStatus, restore_snapshot_data
 from .utils.data_paths import get_data_dir
 from .utils.owned_executor import await_backup_io as _await_backup_io
-from .utils.registry_update_lock import registry_update_lock
 
 logger = logging.getLogger(__name__)
 
@@ -1703,19 +1708,6 @@ async def _find_calendar_event(
     return None
 
 
-def _recurrence_id_window(
-    recurrence_id: str | None,
-) -> tuple[datetime, datetime] | None:
-    """A day-wide window around an iCalendar recurrence id, if it parses."""
-    if not recurrence_id:
-        return None
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M%SZ", "%Y%m%d"):
-        try:
-            at = datetime.strptime(recurrence_id, fmt).replace(tzinfo=UTC)
-        except ValueError:
-            continue
-        return at - timedelta(days=1), at + timedelta(days=1)
-    return None
 
 
 async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
@@ -1786,22 +1778,6 @@ async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
     return {"calendar_entity_id": cal, **found}
 
 
-def _calendar_bound(value: Any) -> tuple[str, bool] | None:
-    """Return ``(iso_value, is_date_only)`` for a snapshotted event boundary.
-
-    The REST view wraps each boundary as ``{"dateTime": ...}`` (timed) or
-    ``{"date": ...}`` (all-day); snapshots taken before that switch hold a
-    flat ISO string, which a 10-character length identifies as date-only.
-    """
-    if isinstance(value, dict):
-        if value.get("dateTime"):
-            return str(value["dateTime"]), False
-        if value.get("date"):
-            return str(value["date"]), True
-        return None
-    if isinstance(value, str) and value:
-        return value, len(value) == 10
-    return None
 
 
 # HA reports a missing event as a plain ``failed`` command error whose message
@@ -2765,6 +2741,11 @@ _KNOWN_HELPER_TYPES = sorted(_HELPER_LIST_TYPES)
 
 
 def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
+    from .backends.legacy_entity_snapshots import (
+        fetch_entity_registry,
+        restore_entity_registry,
+    )
+
     mgr.register(DomainHandler("automation", _fetch_automation, _restore_automation))
     mgr.register(DomainHandler("script", _fetch_script, _restore_script))
     mgr.register(DomainHandler("scene", _fetch_scene, _restore_scene))
@@ -2787,6 +2768,9 @@ def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
     )
     mgr.register(DomainHandler("todo_item", _fetch_todo_item, _restore_todo_item))
     mgr.register(DomainHandler("entity", _fetch_entity_state, _restore_entity_state))
+    mgr.register(
+        DomainHandler("entity_registry", fetch_entity_registry, restore_entity_registry)
+    )
     mgr.register(DomainHandler("device", _fetch_device, _restore_device))
     mgr.register(DomainHandler("integration", fetch_integration, restore_integration))
     mgr.register(DomainHandler("file", _fetch_file, _restore_file))
@@ -2815,13 +2799,31 @@ class _LegacyRestoreOperations:
     entity_id: str
     config: Any
     handler: DomainHandler
+    registry_before: Any = None
 
     async def needs_safety(self) -> bool:
+        if self.domain == "entity_registry":
+            self.registry_before = await self.handler.fetch(
+                self.manager._client, self.entity_id
+            )
+            if self.registry_before is None:
+                raise BackupRestoreError(
+                    "The saved entity registration no longer exists; restore cannot recreate it.",
+                    reason="entry_deleted",
+                )
+            return True
         return await self.manager._restore_needs_safety(
             self.handler, self.entity_id, self.config
         )
 
     async def capture_safety(self, outcome: dict[str, Any]) -> Path | None:
+        if self.domain == "entity_registry":
+            if not getattr(self.manager._settings, "enable_auto_backup", False):
+                return None
+            return await self.manager.maybe_snapshot_known(
+                self.domain, self.entity_id, self.registry_before,
+                tool_name="ha_manage_backup.restore.safety", force=True, mandatory=True,
+            )
         return await self.manager._capture_restore_safety(
             self.domain, self.entity_id, outcome, self.config
         )
@@ -2830,6 +2832,13 @@ class _LegacyRestoreOperations:
         await _await_backup_io(_require_restore_safety, path)
 
     async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
+        if self.domain == "entity_registry":
+            from .backends.legacy_entity_snapshots import restore_entity_registry
+
+            return await restore_entity_registry(
+                self.manager._client, self.entity_id, self.config,
+                expected=self.registry_before,
+            )
         # Absence commits to recreation; a target reappearing cannot be edited
         # without the recovery point that an existing target requires.
         restore = (

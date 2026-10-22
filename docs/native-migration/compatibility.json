@@ -55,6 +55,15 @@
     "ha_get_blueprint": "ha_manage_blueprints",
     "ha_import_blueprint": "ha_manage_blueprints"
   },
+  "entity_edit_history": {
+    "legacy_state_domain": "entity",
+    "registry_domain": "entity_registry",
+    "registry_key": "Core registry entry UUID (config.id), independent of entity_id renames",
+    "preserve_legacy_state_snapshots": true,
+    "registry_restore": "existing identity only; restore user registry fields and options through Core owners, never synthetic state writes",
+    "safety_compare": "typed before-image captured before awaits; restore must refuse a change after that same safety image",
+    "missing_registration": "explicit unsupported recreation; restoring history does not recreate an integration-owned entity"
+  },
   "native_annotation_overrides": {
     "ha_get_integration": {
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
