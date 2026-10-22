@@ -15,9 +15,9 @@ __version__ = get_version()
 __author__ = "Julien"
 __license__ = "MIT"
 
-from importlib import import_module
-from typing import Any
+from functools import partial
 
+from ._lazy_exports import resolve_export
 from .errors import (
     ErrorCode,
     create_auth_error,
@@ -44,18 +44,12 @@ _LAZY_EXPORTS = {
 }
 
 
-def __getattr__(name: str) -> Any:
-    """Resolve backwards-compatible exports without loading remote launchers."""
-    if name not in _LAZY_EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute = _LAZY_EXPORTS[name]
-    value = getattr(import_module(module_name, __name__), attribute)
-    globals()[name] = value
-    return value
+__getattr__ = partial(resolve_export, __name__, globals(), _LAZY_EXPORTS)
 
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | _LAZY_EXPORTS.keys())
+
 
 __all__ = [
     "Settings",

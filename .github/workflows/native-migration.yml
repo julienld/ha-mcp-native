@@ -33,7 +33,9 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.14'
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: '0.13.0'
+          python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -43,7 +45,7 @@ jobs:
           npm ci --prefix tests/js
       - name: Run complete unit suite
         working-directory: tests
-        run: uv run --frozen pytest src/unit/ -n 2 --tb=short -q --junitxml=unit-results.xml
+        run: uv run --frozen pytest src/unit/ -n 2 --tb=short -q --maxfail=0 --junitxml=unit-results.xml
       - name: Preserve unit results
         if: always()
         uses: actions/upload-artifact@v4
