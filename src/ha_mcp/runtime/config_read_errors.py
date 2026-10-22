@@ -1,10 +1,30 @@
 """Transport-neutral scene storage classification, preserving existing guidance."""
 
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from ha_mcp.errors import ErrorCode, create_error_response
 
 from .errors import raise_failure
+
+
+def raise_scene_config_missing(scene_id: str, result: dict[str, Any]) -> NoReturn:
+    if result.get("not_in_storage"):
+        _raise_scene_not_storage_error(scene_id, result.get("platform"))
+    raise_failure(
+        create_error_response(
+            ErrorCode.ENTITY_NOT_FOUND,
+            f"Entity 'scene.{scene_id.removeprefix('scene.')}' not found",
+            context={
+                "entity_id": f"scene.{scene_id.removeprefix('scene.')}",
+                "scene_id": scene_id,
+            },
+            suggestions=[
+                "Call ha_config_get_scene() without scene_id to discover scenes",
+                "Check Home Assistant connection",
+                "Use ha_get_skill_guide for help",
+            ],
+        )
+    )
 
 
 def _raise_scene_not_storage_error(scene_id: str, platform: str | None) -> NoReturn:

@@ -88,15 +88,20 @@ class Engine:
         definition = self.tools.get(name)
         if definition is None:
             raise ToolFailure("UNKNOWN_TOOL", f"Unknown tool {name!r}.")
-        self._check_policy(name, context, not definition.read_only)
+        self._check_policy(name, context, False)
         validated = (
             definition.validate(arguments) if definition.validate else dict(arguments)
+        )
+        writes = (
+            definition.writes(validated)
+            if definition.writes is not None
+            else not definition.read_only
         )
         return await self.call_owned(
             name,
             lambda: definition.handler(validated, context),
             context,
-            writes=not definition.read_only,
+            writes=writes,
             arguments=validated,
         )
 

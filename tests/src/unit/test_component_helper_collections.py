@@ -42,6 +42,33 @@ class FakeCollection:
     def __init__(self, items: dict[str, dict[str, Any]] | None = None) -> None:
         self.data = dict(items or {})
         self.invalid: Exception | None = None
+        self.id_manager = SimpleNamespace(generate_id=lambda name: name.lower())
+
+    async def _process_create_data(self, data):
+        if self.invalid:
+            raise self.invalid
+        return dict(data)
+
+    def _get_suggested_id(self, data):
+        return data["name"]
+
+    def _create_item(self, item_id, data):
+        return {"id": item_id, **data}
+
+    async def _update_data(self, current, data):
+        return {"id": current["id"], **data}
+
+    def _async_schedule_save(self):
+        return None
+
+    def _serialize_item(self, item_id, item):
+        return item
+
+    def _hash_item(self, item):
+        return "fixture-hash"
+
+    async def notify_changes(self, changes):
+        return None
 
     async def async_create_item(self, data: dict[str, Any]) -> dict[str, Any]:
         if self.invalid:

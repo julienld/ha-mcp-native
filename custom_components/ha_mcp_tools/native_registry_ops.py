@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from ha_mcp.tool_api import ToolFailure
 
+from .native_operations.blueprints import render_blueprint
 from .native_operations.config_reads import DIRECT_OPERATIONS as CONFIG_READ_OPERATIONS
 
 # This is a semantic capability map, never permission to execute arbitrary WS
@@ -18,6 +19,7 @@ COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
     "registries.snapshot": ("ha_mcp_tools/registries", False),
     "assist.exposure": ("ha_mcp_tools/exposure", False),
     "entities.enrich": ("ha_mcp_tools/entity_enrich", False),
+    "config.references.snapshot": ("ha_mcp_tools/reference_data", False),
 }
 
 
@@ -181,6 +183,7 @@ async def _device_list_snapshot(hass: HomeAssistant, arguments: dict[str, Any]) 
 DIRECT_OPERATIONS: dict[
     str, Callable[[HomeAssistant, dict[str, Any]], Awaitable[Any]]
 ] = {
+    "blueprints.render": render_blueprint,
     "radio.zha.devices": _zha_devices,
     "radio.zwave.node_status": _zwave_node_status,
     "radio.matter.node_diagnostics": _matter_node_diagnostics,

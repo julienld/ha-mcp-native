@@ -55,11 +55,11 @@ async def _execute(
         "helpers.entities.update",
     }:
         return await _flow_records(client, operation, arguments)
+    if operation == "helpers.backup.capture":
+        return await _capture_backup(client, arguments)
     helper_type = arguments["helper_type"]
     if helper_type not in SIMPLE_HELPER_TYPES:
         raise UnsupportedOperation(f"helpers.storage.{helper_type}")
-    if operation == "helpers.backup.capture":
-        return await _capture_backup(client, arguments)
     if operation == "helpers.storage.list":
         from ha_mcp.tools.config_helpers.listing import listed_items
 

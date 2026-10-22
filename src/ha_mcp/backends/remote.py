@@ -26,15 +26,15 @@ class RemoteBackend:
     ) -> Any:
         await self.authorize(context)
         if operation in {
+            "config.entries.read",
+            "config.subentries.list",
+            "config.flow.settings",
+            "helpers.flow.types",
             "config.flow.start",
             "config.flow.configure",
             "config.flow.abort",
         }:
-            from .remote_flow_ops import RemoteFlows
-
-            if self._flows is None:
-                self._flows = RemoteFlows(self.client)
-            return await self._flows.execute(operation, arguments, context)
+            return await self._flow_operation(operation, arguments, context)
         if operation in {"skills.guide", "skills.files"}:
             from .remote_skill_ops import execute_skill_operation
 
@@ -71,6 +71,21 @@ class RemoteBackend:
         if operation in HELPER_OPERATIONS:
             return await execute_helper_operation(self.client, operation, arguments)
         raise UnsupportedOperation(operation)
+
+    async def _flow_operation(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        from .remote_flow_ops import RemoteFlows, read_flow_operation
+
+        if operation in {
+            "config.flow.start",
+            "config.flow.configure",
+            "config.flow.abort",
+        }:
+            if self._flows is None:
+                self._flows = RemoteFlows(self.client)
+            return await self._flows.execute(operation, arguments, context)
+        return await read_flow_operation(self.client, operation, arguments)
 
     async def _states(self, entity_ids: list[str]) -> dict[str, Any]:
         from ha_mcp.tools.search.state import StateMixin

@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_BODY = 1_048_576
-_INSTRUCTIONS = "Use Home Assistant tools with the caller's permissions. Preserve errors and uncertain operation outcomes; do not retry an uncertain write automatically."
 
 
 def _prewarm() -> bool:
@@ -55,6 +54,8 @@ def _prewarm() -> bool:
     importlib.import_module("ha_mcp.settings_ui")
     importlib.import_module("ha_mcp.policy.handlers")
     importlib.import_module(f"{__package__}.native_visibility")
+    importlib.import_module(f"{__package__}.native_resources")
+    importlib.import_module(f"{__package__}.native_code")
     from io import StringIO
 
     from ha_mcp._vendor.fastmcp.server.dependencies import is_docket_available
@@ -161,6 +162,7 @@ class NativeServerManager:
         self.search_enabled = False
         self.snapshots: Any = None
         self.visibility: Any = None
+        self.code: Any = None
         self.http_limit = max(
             1, min(256, int(entry.options.get(OPT_NATIVE_HTTP_LIMIT, 32)))
         )
@@ -186,35 +188,41 @@ class NativeServerManager:
         from ha_mcp.runtime.best_practices import AcknowledgmentState
         from ha_mcp.runtime.catalog import build_initial_catalog
         from ha_mcp.runtime.skills import SkillGuideReader
-        from ha_mcp.tools.renamed_tool_middleware import RenamedToolAliasMiddleware
 
-        from .native_approvals import NativeApprovalGate, approval_context_middleware
+        from .native_approvals import NativeApprovalGate
         from .native_backend import NativeBackend
+        from .native_code import NativeCode
         from .native_settings import NativeSettings
         from .native_snapshots import NativeSnapshots
         from .native_visibility import NativeVisibility
 
         self.acknowledgment = AcknowledgmentState()
         self.snapshots = NativeSnapshots(self)
+        self.settings_ui = NativeSettings(self)
+        self.policy = await self.settings_ui._io(
+            load_policy, self.settings_ui.directory
+        )
+        self.code = NativeCode(self)
         self.backend = NativeBackend(
             self.hass,
             service_policy=self.service_policy,
             skill_guide_reader=SkillGuideReader(ack_line=self.skill_ack_line),
             skill_content_enabled=lambda: self.policy.flag("enable_mandatory_bps"),
+            redaction_enabled=lambda: self.policy.flag("redact_secrets"),
             helper_backup=self.snapshots.helper_backup,
+            config_backup=self.snapshots.config_backup,
+            code_handler=self.code.run,
         )
-        self.settings_ui = NativeSettings(self)
         self.visibility = NativeVisibility(self)
         self.approval_gate = NativeApprovalGate(self)
         self.engine = Engine(
             self.backend,
             tools=build_initial_catalog(self.backend),
             policy_guard=self.approval_gate,
-            result_filter=self.visibility.after,
+            result_filter=self.filter_result,
         )
         self.mcp = FastMCP(
             name="Home Assistant MCP",
-            instructions=_INSTRUCTIONS,
             request_state_security=RequestStateSecurity(
                 keys=[secrets.token_bytes(32)],
                 ttl=300,
@@ -224,17 +232,7 @@ class NativeServerManager:
                 ),
             ),
         )
-        for definition in self.engine.tools.values():
-            self.mcp.add_tool(_project_tool(self, definition))
-        from .native_llm_import import register_import_tools
-
-        register_import_tools(self)
-        self.mcp.add_middleware(RenamedToolAliasMiddleware())
-        self.mcp.add_middleware(catalogue_middleware(self))
-        self.mcp.add_middleware(approval_context_middleware())
-        await self.refresh_policy()
-        self.mcp.add_transform(catalogue_transform(self))
-        self._configure_search()
+        await self._configure_catalogue()
         self.app = self.mcp.http_app(
             path=self.path, stateless_http=True, host_origin_protection=False
         )
@@ -254,6 +252,26 @@ class NativeServerManager:
         except BaseException:
             await self.async_stop()
             raise
+
+    async def _configure_catalogue(self) -> None:
+        from ha_mcp.tools.renamed_tool_middleware import RenamedToolAliasMiddleware
+
+        from .native_approvals import approval_context_middleware
+        from .native_llm_import import register_import_tools
+        from .native_resources import register_resources
+
+        if (code_tool := await self.code.async_definition()) is not None:
+            self.engine.register(code_tool)
+        for definition in self.engine.tools.values():
+            self.mcp.add_tool(_project_tool(self, definition))
+        register_import_tools(self)
+        await register_resources(self)
+        self.mcp.add_middleware(RenamedToolAliasMiddleware())
+        self.mcp.add_middleware(catalogue_middleware(self))
+        self.mcp.add_middleware(approval_context_middleware())
+        await self.refresh_policy()
+        self.mcp.add_transform(catalogue_transform(self))
+        self._configure_search()
 
     async def _supervise(self) -> None:
         try:
@@ -288,12 +306,16 @@ class NativeServerManager:
             raise ValueError("tool_search_max_results is outside supported bounds")
         self.mcp.add_transform(
             CategorizedSearchTransform(
-                max_results=maximum, always_visible=sorted(self.policy.pinned)
+                max_results=maximum,
+                always_visible=sorted(self.policy.pinned),
+                enable_code_mode="ha_manage_custom_tool" in self.engine.tools,
             )
         )
 
     async def refresh_policy(self) -> None:
         """Apply all-client restrictions independently from Assist exposure."""
+        from .native_resources import build_instructions
+
         policy = await self.hass.async_add_executor_job(
             load_policy, Path(self.hass.config.path(SERVER_CONFIG_SUBDIR))
         )
@@ -309,8 +331,8 @@ class NativeServerManager:
                 else policy.enabled(name)
             )
         }
-        self.mcp.instructions = _INSTRUCTIONS + (
-            "\n\n" + policy.custom_instructions if policy.custom_instructions else ""
+        self.mcp.instructions = await self.settings_ui._io(
+            build_instructions, policy, self.engine.enabled_tools
         )
 
     def service_policy(self, domain: str, service: str) -> None:
@@ -321,6 +343,30 @@ class NativeServerManager:
             service,
             enable_snapshot_actions=self.policy.flag("enable_snapshot_actions"),
             backup_read_only=self.policy.flag("backup_read_only"),
+        )
+
+    async def filter_result(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: CallContext,
+        result: ToolResult,
+    ) -> ToolResult:
+        """Inspect raw output for visibility, then scrub secrets for both facades."""
+        from dataclasses import replace
+
+        from ha_mcp.runtime.redaction import (
+            known_secret_values,
+            scrub_obj,
+            with_serialized_variants,
+        )
+
+        result = await self.visibility.after(name, arguments, context, result)
+        if not self.policy.flag("redact_secrets"):
+            return result
+        secrets = with_serialized_variants(known_secret_values())
+        return (
+            replace(result, data=scrub_obj(result.data, secrets)) if secrets else result
         )
 
     def strict_best_practices(self) -> bool:

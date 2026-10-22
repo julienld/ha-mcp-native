@@ -8,12 +8,23 @@ from typing import Any, get_type_hints
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError, create_model
 
-from ha_mcp.tool_api import Backend, CallContext, ToolDefinition, ToolFailure
+from ha_mcp.tool_api import (
+    Backend,
+    CallContext,
+    ToolDefinition,
+    ToolFailure,
+    ToolHandler,
+)
 from ha_mcp.tool_api.parameters import hidden_param_names
 from ha_mcp.tools.tool_hints import read_only_hints, write_hints
 
 from .actions import ServiceCallTools
 from .config_reads import AutomationReadTools, SceneReadTools, ScriptReadTools
+from .config_removals import (
+    AutomationRemovalTools,
+    SceneRemovalTools,
+    ScriptRemovalTools,
+)
 from .devices import DeviceDiscoveryTools
 from .entities import EntityDiscoveryTools
 from .exposure import ExposureTools
@@ -24,6 +35,8 @@ from .registries import AreaDiscoveryTools
 from .services import ServiceDiscoveryTools
 from .skills import SkillGuideTools
 from .states import StateTools
+from .tool_effects import READ_ONLY_EXEMPT_TOOLS
+from .zone_writes import ZoneWriteTools
 from .zones import ZoneReadTools
 
 
@@ -36,9 +49,18 @@ def define_tool(
     tags: frozenset[str] = frozenset(),
     source_module: str | None = None,
     meta: dict[str, Any] | None = None,
+    writes: Callable[[dict[str, Any]], bool] | None = None,
+    handler: ToolHandler | None = None,
 ) -> ToolDefinition:
     """One signature drives validation, schemas and both transport facades."""
     method = getattr(owner, method_name)
+    exemption = READ_ONLY_EXEMPT_TOOLS.get(method_name)
+    if writes is None and exemption is not None:
+
+        def writes(arguments: dict[str, Any]) -> bool:
+            assert exemption is not None
+            return exemption.blocked_write(arguments) is not None
+
     signature = inspect.signature(method)
     hints = get_type_hints(method, include_extras=True)
     fields: dict[str, Any] = {
@@ -73,7 +95,7 @@ def define_tool(
         method_name,
         inspect.getdoc(method) or "",
         input_schema,
-        invoke,
+        handler or invoke,
         annotations,
         output_schema=_without_schema_titles(
             TypeAdapter(hints.get("return", Any)).json_schema()
@@ -82,6 +104,7 @@ def define_tool(
         tags=tags,
         source_module=source_module,
         meta=meta or {},
+        writes=writes,
     )
 
 
@@ -108,6 +131,61 @@ def _without_schema_titles(schema: Any) -> Any:
 def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
     """Only complete migrated tools are advertised by the native entry."""
     return [
+        *(
+            define_tool(
+                backend,
+                owner,
+                name,
+                source_module=module,
+                annotations=write_hints(
+                    title, destructive=True, idempotent=True, open_world=False
+                ),
+                tags=frozenset({tag}),
+            )
+            for owner, name, module, title, tag in (
+                (
+                    AutomationRemovalTools,
+                    "ha_config_remove_automation",
+                    "tools_config_automations",
+                    "Remove Automation",
+                    "Automations",
+                ),
+                (
+                    ScriptRemovalTools,
+                    "ha_config_remove_script",
+                    "tools_config_scripts",
+                    "Remove Script",
+                    "Scripts",
+                ),
+                (
+                    SceneRemovalTools,
+                    "ha_config_remove_scene",
+                    "tools_config_scenes",
+                    "Remove Scene",
+                    "Scenes",
+                ),
+            )
+        ),
+        define_tool(
+            backend,
+            ZoneWriteTools,
+            "ha_set_zone",
+            source_module="tools_zones",
+            annotations=write_hints(
+                "Set Zone", destructive=True, idempotent=False, open_world=False
+            ),
+            tags=frozenset({"Zones"}),
+        ),
+        define_tool(
+            backend,
+            ZoneWriteTools,
+            "ha_remove_zone",
+            source_module="tools_zones",
+            annotations=write_hints(
+                "Remove Zone", destructive=True, idempotent=True, open_world=False
+            ),
+            tags=frozenset({"Zones"}),
+        ),
         define_tool(
             backend,
             StateTools,
@@ -213,9 +291,12 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
                             "create": sorted(SIMPLE_HELPER_TYPES),
                             "update": sorted(SIMPLE_HELPER_TYPES),
                         },
-                        "flow_helpers": {"create": ["utility_meter"], "update": []},
-                        "config_subentries": False,
-                        "note": "Experimental native branches: storage helper create/update and utility_meter creation. Other helper flows and subentries are not ported yet.",
+                        "flow_helpers": {
+                            "create": "Home Assistant's discovered helper flows",
+                            "update": "Options flows of existing helper entries",
+                        },
+                        "config_subentries": True,
+                        "note": "Native helper storage, config/options flows and config subentries. External authorization and progress steps require the Home Assistant UI, as on the remote backend.",
                     }
                 }
             },

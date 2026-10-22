@@ -73,13 +73,10 @@ from .backup_dashboards import (
     valid_dashboard_capture,
 )
 from .backup_diff import (
-    _TEXT_KIND,
     DiffResponse,
     DiffResponseText,
-    _build_diff_response,
     _build_text_diff_response,
     _compute_json_patch,
-    _summarize_patch_counts,
 )
 from .backup_entity_ids import (
     _restore_entity_ids,
@@ -101,6 +98,7 @@ from .client.rest_client import (
     HomeAssistantConnectionError,
     HomeAssistantError,
 )
+from .runtime.snapshot_compare import comparison_values, diff_snapshot_values
 from .runtime.snapshot_files import (
     _FILENAME_RE as _FILENAME_RE,
 )
@@ -158,6 +156,9 @@ from .runtime.snapshot_files import (
 from .runtime.snapshot_files import (
     _snapshot_order as _snapshot_order,
 )
+from .runtime.snapshot_payloads import (
+    _REGISTRY_READONLY_KEYS as _REGISTRY_READONLY_KEYS,
+)
 from .runtime.snapshot_payloads import BackupRestoreError as BackupRestoreError
 from .runtime.snapshot_payloads import (
     InvalidBackupSnapshotError as InvalidBackupSnapshotError,
@@ -172,11 +173,14 @@ from .runtime.snapshot_payloads import _FlowHelperReadError as _FlowHelperReadEr
 from .runtime.snapshot_payloads import (
     _snapshot_validation_message as _snapshot_validation_message,
 )
+from .runtime.snapshot_payloads import _strip_readonly as _strip_readonly
 from .runtime.snapshot_payloads import _subentry_data as _subentry_data
 from .runtime.snapshot_payloads import _subentry_row as _subentry_row
 from .runtime.snapshot_payloads import _subentry_target as _subentry_target
+from .runtime.snapshot_payloads import validate_snapshot_identity
 from .runtime.snapshot_restore import ApplyStatus, restore_snapshot_data
 from .utils.data_paths import get_data_dir
+from .utils.owned_executor import await_backup_io as _await_backup_io
 from .utils.registry_update_lock import registry_update_lock
 
 logger = logging.getLogger(__name__)
@@ -209,12 +213,7 @@ _CAPTURE_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
 
 def _validate_snapshot_envelope(data: dict[str, Any]) -> None:
     """Validate stored identities before selecting or dispatching a handler."""
-    for key in ("domain", "entity_id", "config"):
-        if key not in data:
-            raise InvalidBackupSnapshotError(f"Snapshot is missing {key}")
-    for key in ("domain", "entity_id"):
-        if not isinstance(data[key], str) or (key == "domain" and not data[key]):
-            raise InvalidBackupSnapshotError(f"Snapshot has invalid {key}")
+    validate_snapshot_identity(data)
     if data.get("kind") == _DASHBOARD_KIND and not valid_dashboard_capture(
         data["config"]
     ):
@@ -399,26 +398,6 @@ def _resolve_default_dir() -> Path:
 # or a None config for an entity that did not exist. Distinct from any real
 # config value so the caller can tell "skip" from a genuine payload.
 _SNAPSHOT_SKIP: Any = object()
-
-
-async def _await_backup_io[T](operation: Callable[..., T], *args: Any) -> T:
-    """Keep backup locks/pins until executor I/O settles, even after cancellation."""
-    worker = asyncio.create_task(asyncio.to_thread(operation, *args))
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        # Cancelling the await cannot stop its executor thread. Releasing the
-        # caller's lock now would let another capture reserve the same filename.
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue  # Repeated cancellation must not release the lock early.
-            except Exception:  # noqa: BLE001
-                break  # Consume the worker failure below; preserve cancellation.
-        if not worker.cancelled():
-            worker.exception()
-        raise
 
 
 def _require_restore_safety(path: Path) -> None:
@@ -1083,22 +1062,7 @@ class BackupManager(SnapshotFilesMixin):
             live = await _dashboard_resource_like(self._client, data["config"])
             if live is not None:
                 current = {**live, "id": data["config"].get("id")}
-        if (
-            isinstance(current, dict)
-            and isinstance(data["config"], dict)
-            and "registry_icon" not in data["config"]
-        ):
-            # A snapshot from before registry icons were recorded: its restore
-            # leaves the registry alone, so the icon is no difference.
-            current.pop("registry_icon", None)
-        if _is_flow_helper_domain(domain) and current is not None:
-            # Both MCP and Settings preview this comparison. Registry metadata
-            # is recreation-only; an existing-entry restore applies options.
-            data["config"] = {
-                key: data["config"][key] for key in ("entry_id", "options")
-            }
-            current = {key: current[key] for key in ("entry_id", "options")}
-        return data, current
+        return comparison_values(data, current)
 
     async def diff_snapshot(self, name: str) -> DiffResponse | DiffResponseText:
         """Compare a stored snapshot against the live config of the same entity.
@@ -1120,37 +1084,7 @@ class BackupManager(SnapshotFilesMixin):
         if name.startswith(LEGACY_PREFIX):
             return await self._diff_legacy(name[len(LEGACY_PREFIX) :])
         data, current = await self.snapshot_comparison(name)
-        domain = data["domain"]
-        entity_id = data["entity_id"]
-        stored = data["config"]
-        captured_at = data.get("captured")
-        if data.get("kind") == _TEXT_KIND:
-            return _build_text_diff_response(
-                name, domain, entity_id, captured_at, str(stored), current
-            )
-        if current is None:
-            return _build_diff_response(
-                name,
-                domain,
-                entity_id,
-                captured_at,
-                entity_missing=True,
-                patch=[],
-                counts=_summarize_patch_counts([]),
-                truncated=False,
-            )
-        patch: list[dict[str, Any]] = []
-        truncated = _compute_json_patch(stored, current, _MAX_PATCH_OPS, patch)
-        return _build_diff_response(
-            name,
-            domain,
-            entity_id,
-            captured_at,
-            entity_missing=False,
-            patch=patch,
-            counts=_summarize_patch_counts(patch),
-            truncated=truncated,
-        )
+        return diff_snapshot_values(name, data, current, max_patch_ops=_MAX_PATCH_OPS)
 
     # ----- legacy store (pre-#1579 .ha_mcp_tools_backups/) ---------------
 
@@ -1568,19 +1502,6 @@ async def _restore_dashboard_resource(client: Any, entity_id: str, config: Any) 
 # (they're part of the snapshot's informational payload), so the restore
 # strips them at the last moment. Same pattern applies to category /
 # zone / area / floor / integration / helper registries.
-_REGISTRY_READONLY_KEYS = frozenset({"created_at", "modified_at"})
-
-
-def _strip_readonly(config: dict[str, Any], *extra: str) -> dict[str, Any]:
-    """Return ``config`` with read-only registry fields removed.
-
-    Always strips ``created_at`` / ``modified_at`` (universal across HA's
-    registries). Caller passes additional per-registry id keys (e.g.
-    ``label_id`` / ``category_id``) that the update endpoint re-injects
-    separately and rejects when sent inside the payload body.
-    """
-    drop = _REGISTRY_READONLY_KEYS | set(extra)
-    return {k: v for k, v in config.items() if k not in drop}
 
 
 async def _fetch_label(client: Any, entity_id: str) -> Any:

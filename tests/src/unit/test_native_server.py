@@ -202,3 +202,37 @@ async def test_already_cancelled_lifespan_does_not_prevent_owned_cleanup() -> No
     await runtime.async_stop()
     assert runtime._stopped
     runtime.engine.stop.assert_awaited_once()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_shared_result_filter_redacts_after_visibility_without_changing_outcome(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+    from ha_mcp.runtime import redaction
+    from ha_mcp.tool_api import CallContext, ToolResult
+
+    monkeypatch.setattr(redaction, "_known_secrets", {"operator-password"})
+    runtime = manager()
+    runtime.policy = NativePolicy(flags={"redact_secrets": enabled})
+    raw = ToolResult({"secret": "operator-password"}, is_error=True, status="unknown")
+    visible = ToolResult(
+        {"filtered": "failed with operator-password"},
+        is_error=True,
+        status="unknown",
+        operation_id="operation",
+    )
+    runtime.visibility = SimpleNamespace(after=AsyncMock(return_value=visible))
+    actor = CallContext("owner")
+    result = await runtime.filter_result("read", {}, actor, raw)
+    runtime.visibility.after.assert_awaited_once_with("read", {}, actor, raw)
+    assert result.data == {
+        "filtered": "failed with <redacted>"
+        if enabled
+        else "failed with operator-password"
+    }
+    assert (
+        result.is_error
+        and result.status == "unknown"
+        and result.operation_id == "operation"
+    )

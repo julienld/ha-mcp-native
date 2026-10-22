@@ -4,6 +4,7 @@ import asyncio
 import copy
 import importlib
 import sys
+import threading
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -214,3 +215,71 @@ async def test_native_config_validation_await_cannot_bypass_a_fresh_refusal(
     )
     assert result.is_error
     assert writes == tasks == [] and owner.current[0]["alias"] == "Before"
+
+
+async def test_cancelled_config_writer_keeps_core_lock_until_executor_finishes(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, hass, _, writes, tasks, module = _mutation_setup(monkeypatch, "automation")
+    backend = native.NativeBackend(hass)
+    mutations = module.NativeConfigMutations(hass, backend.authorize)
+    started = threading.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    original_write = sys.modules["homeassistant.components.config.view"]._write
+
+    def blocked_write(path: str, current: Any) -> None:
+        started.set()
+        assert release.wait(5), "The test failed to release its executor worker"
+        original_write(path, current)
+
+    monkeypatch.setattr(
+        sys.modules["homeassistant.components.config.view"], "_write", blocked_write
+    )
+    hass.async_add_executor_job = lambda function, *args: loop.run_in_executor(
+        None, function, *args
+    )
+    context = CallContext("actor")
+    first = asyncio.create_task(
+        mutations.execute(
+            "config.automation.write",
+            {
+                "storage_key": "uid",
+                "expected_config": copy.deepcopy(owner.current[0]),
+                "data": {"alias": "First"},
+            },
+            context,
+        )
+    )
+    second = None
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        first.cancel()
+        await asyncio.sleep(0)
+        first.cancel()
+        await asyncio.sleep(0)
+        assert not first.done(), "Cancelled await released an active executor writer"
+        assert owner.mutation_lock.locked()
+        second = asyncio.create_task(
+            mutations.execute(
+                "config.automation.write",
+                {
+                    "storage_key": "uid",
+                    "expected_config": {"id": "uid", "alias": "First"},
+                    "data": {"alias": "Second"},
+                },
+                context,
+            )
+        )
+        await asyncio.sleep(0)
+        assert owner.reads == 1, "A second writer passed the held Core lock"
+    finally:
+        release.set()
+        await asyncio.gather(
+            first, *([second] if second else []), return_exceptions=True
+        )
+        await asyncio.gather(*tasks)
+    assert first.cancelled()
+    assert second is not None and second.result()["result"] == "ok"
+    assert len(writes) == 2 and owner.current[0]["alias"] == "Second"
+    assert owner.post_write_hook.await_count == 2

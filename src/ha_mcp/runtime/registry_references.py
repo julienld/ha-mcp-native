@@ -3,6 +3,7 @@
 from typing import Any
 
 from ha_mcp.errors import ErrorCode, create_error_response
+from ha_mcp.tool_api import Backend, CallContext
 
 from .errors import raise_failure
 
@@ -100,3 +101,33 @@ def _raise_if_unknown_floor(floors: list[dict[str, Any]], floor_id: str) -> None
                 ],
             )
         )
+
+
+async def validate_registry_ids(
+    backend: Backend,
+    context: CallContext,
+    area_id: str | None,
+    labels: list[str] | None,
+    categories: dict[str, str | None],
+    *,
+    fail_closed: bool = True,
+) -> None:
+    requested = (
+        (["area"] if area_id else [])
+        + (["label"] if labels else [])
+        + (["category"] if any(categories.values()) else [])
+    )
+    if not requested:
+        return
+    rows = await backend.execute(
+        "helpers.registry.snapshot",
+        {"registries": requested, "category_scopes": list(categories)},
+        context,
+    )
+    if area_id:
+        _raise_if_unknown_area(rows["areas"], area_id)
+    if labels:
+        _raise_if_unknown_labels(rows["labels"], labels)
+    for scope, category in categories.items():
+        if category:
+            _raise_if_unknown_category(rows["categories"][scope], category, scope)

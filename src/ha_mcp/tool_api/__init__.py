@@ -78,6 +78,9 @@ class ToolDefinition:
     tags: frozenset[str] = frozenset()
     source_module: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    writes: Callable[[dict[str, Any]], bool] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def read_only(self) -> bool:

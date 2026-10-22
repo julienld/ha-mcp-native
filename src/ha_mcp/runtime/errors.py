@@ -12,3 +12,16 @@ def raise_failure(payload: dict[str, Any]) -> NoReturn:
         error.get("message", "Tool failed"),
         data=payload,
     )
+
+
+def raise_classified(
+    error: Exception, context: dict[str, Any] | None = None
+) -> NoReturn:
+    """Keep the historical classifier without depending on MCP or a client."""
+    from .error_classification import _append_macos_hints, _classify_exception
+
+    if isinstance(error, ToolFailure):
+        raise error
+    payload = _classify_exception(error, str(error).lower(), str(error), context)
+    _append_macos_hints(payload)
+    raise_failure(payload)

@@ -15,7 +15,13 @@ from ha_mcp.runtime import Engine
 from ha_mcp.runtime.catalog import build_initial_catalog
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
-from .test_component_helper_collections import FakeCollection, FakeRegistry, _hass, hc
+from .test_component_helper_collections import (
+    FakeCollection,
+    FakeRegistry,
+    ItemNotFound,
+    _hass,
+    hc,
+)
 from .test_component_ws_phase2_async import _call_hass, _FakeCallServices
 from .test_component_ws_search import _REAL_VOL, FakeState, wsapi
 
@@ -38,6 +44,18 @@ class EventBus:
 
 @pytest.fixture
 def native(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.helpers.collection",
+        SimpleNamespace(
+            StorageCollection=FakeCollection,
+            DictStorageCollection=FakeCollection,
+            CollectionChange=lambda *values: values,
+            CHANGE_ADDED="added",
+            CHANGE_UPDATED="updated",
+            ItemNotFound=ItemNotFound,
+        ),
+    )
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.helpers.json",

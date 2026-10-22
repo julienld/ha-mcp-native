@@ -79,20 +79,14 @@ async def _script_read(
 
 
 async def _scene_read(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
-    identifier = arguments["identifier"]
-    bare = identifier.removeprefix("scene.")
     supplied = arguments.get("resolution")
     if supplied is None:
-        entry = _registry_entry(hass, f"scene.{bare}")
-        hit = bool(entry and entry.unique_id)
-        key = str(entry.unique_id) if hit else bare
-        platform = entry.platform if hit else None
-    else:
-        key, hit, platform = (
-            supplied["storage_key"],
-            supplied["registry_hit"],
-            supplied["platform"],
-        )
+        supplied = await _scene_resolve(hass, arguments)
+    key, hit, platform = (
+        supplied["storage_key"],
+        supplied["registry_hit"],
+        supplied["platform"],
+    )
     value = await read_config_item(hass, "scene", key)
     return {
         "found": value is not None,
@@ -101,6 +95,19 @@ async def _scene_read(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[st
         "not_in_storage": value is None
         and (hit or hass.states.get(f"scene.{key}") is not None),
         "platform": platform,
+    }
+
+
+async def _scene_resolve(
+    hass: HomeAssistant, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    bare = arguments["identifier"].removeprefix("scene.")
+    entry = _registry_entry(hass, f"scene.{bare}")
+    hit = bool(entry and entry.unique_id)
+    return {
+        "storage_key": str(entry.unique_id) if hit else bare,
+        "registry_hit": hit,
+        "platform": entry.platform if hit else None,
     }
 
 
@@ -121,16 +128,16 @@ async def _entity_id(hass: HomeAssistant, arguments: dict[str, Any]) -> str | No
             ),
             None,
         )
-    if domain != "scene":
+    if domain not in {"script", "scene"}:
         raise UnsupportedOperation(f"config.{domain}.entity_id")
-    key = identifier.removeprefix("scene.")
-    for attempt in range(2):
+    key = identifier.removeprefix(f"{domain}.")
+    for attempt in range(2 if domain == "scene" else 1):
         for entry in er.async_get(hass).entities.values():
-            if entry.entity_id.startswith("scene.") and entry.unique_id == key:
+            if entry.entity_id.startswith(f"{domain}.") and entry.unique_id == key:
                 return str(entry.entity_id)
-        if attempt == 0:
+        if domain == "scene" and attempt == 0:
             await asyncio.sleep(0.2)
-    return f"scene.{key}"
+    return f"{domain}.{key}"
 
 
 async def _category(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +224,7 @@ DIRECT_OPERATIONS: dict[
     "config.automation.read": _automation_read,
     "config.script.read": _script_read,
     "config.scene.read": _scene_read,
+    "config.scene.resolve": _scene_resolve,
     "config.entity_id": _entity_id,
     "entities.category.read": _category,
     "zones.snapshot": _zones,

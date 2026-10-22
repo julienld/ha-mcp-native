@@ -49,6 +49,41 @@ class Backend:
 ACTOR = CallContext("user")
 
 
+async def test_polymorphic_effect_uses_validated_arguments_and_fences_writes() -> None:
+    from ha_mcp.runtime.mutation_guard import check_mutation_admission
+
+    observed = []
+
+    async def invoke(arguments: dict, context: CallContext) -> dict:
+        if arguments["action"] == "read_then_write":
+            check_mutation_admission(context)
+        return arguments
+
+    async def guard(
+        name: str, arguments: dict, context: CallContext, writes: bool
+    ) -> None:
+        observed.append(writes)
+
+    tool = ToolDefinition(
+        "polymorphic",
+        "",
+        {},
+        invoke,
+        {"readOnlyHint": False},
+        validate=lambda args: {"action": args.get("action", "read")},
+        writes=lambda args: args["action"] == "write",
+    )
+    engine = Engine(Backend(), [tool], read_only=True, policy_guard=guard)
+    result = await engine.call(tool.name, {}, ACTOR)
+    assert result.data == {"action": "read"} and not result.is_error
+    assert observed == [False]
+    with pytest.raises(ToolFailure, match="Writes are disabled"):
+        await engine.call(tool.name, {"action": "write"}, ACTOR)
+    blocked = await engine.call(tool.name, {"action": "read_then_write"}, ACTOR)
+    assert blocked.is_error and blocked.status == "not_started"
+    assert observed == [False, False]
+
+
 def definition(handler: Any, *, read_only: bool = False) -> ToolDefinition:
     return ToolDefinition(
         "work", "work", {"type": "object"}, handler, {"readOnlyHint": read_only}
@@ -344,7 +379,7 @@ async def test_filter_failure_never_leaks_result_or_claims_write_was_not_started
 
 
 def test_shared_catalog_imports_neither_ha_nor_remote_clients() -> None:
-    code = "from ha_mcp.runtime.catalog import build_initial_catalog; import sys; assert 'ha_mcp.server' not in sys.modules; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server.', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
+    code = "from ha_mcp.runtime.catalog import build_initial_catalog; import ha_mcp.runtime.flows.helpers; import ha_mcp.runtime.redaction; import sys; assert 'ha_mcp.server' not in sys.modules; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server.', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )

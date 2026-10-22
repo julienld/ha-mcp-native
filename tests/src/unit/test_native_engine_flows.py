@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -19,6 +20,63 @@ class UnknownFlow(Exception):
     pass
 
 
+class InvalidData(Exception):
+    schema_errors: ClassVar[dict[str, str]] = {"field": "invalid"}
+
+
+class UnknownHandler(Exception):
+    pass
+
+
+class UnknownStep(Exception):
+    pass
+
+
+@pytest.mark.parametrize("resume", [False, True])
+async def test_cancellation_drains_core_step_and_keeps_result_ownership(
+    flows: Any, resume: bool
+) -> None:
+    owner = manager()
+    backend = flows.NativeFlows(
+        SimpleNamespace(config_entries=SimpleNamespace(flow=owner)), AsyncMock()
+    )
+    context = CallContext("actor")
+    if resume:
+        await backend.execute("config.flow.start", {"handler": "template"}, context)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def step(*args: Any, **kwargs: Any) -> dict:
+        entered.set()
+        await release.wait()
+        return {"flow_id": "owned", "type": "create_entry" if resume else "form"}
+
+    if resume:
+        owner.async_configure.side_effect = step
+    else:
+        owner.async_init.side_effect = step
+    waiter = asyncio.create_task(
+        backend.execute(
+            "config.flow.configure" if resume else "config.flow.start",
+            {"flow_id": "owned", "user_input": {}}
+            if resume
+            else {"handler": "template"},
+            context,
+        )
+    )
+    await entered.wait()
+    waiter.cancel()
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert bool(backend.owned) is not resume
+    await backend.stop()
+    assert not backend.owned
+
+
 @pytest.fixture
 def flows(monkeypatch: pytest.MonkeyPatch) -> Any:
     module = importlib.import_module(
@@ -27,7 +85,12 @@ def flows(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.data_entry_flow",
-        SimpleNamespace(UnknownFlow=UnknownFlow),
+        SimpleNamespace(
+            UnknownFlow=UnknownFlow,
+            InvalidData=InvalidData,
+            UnknownHandler=UnknownHandler,
+            UnknownStep=UnknownStep,
+        ),
     )
     monkeypatch.setattr(
         module,
@@ -74,7 +137,8 @@ async def test_flow_uses_real_managers_and_public_serializer(flows: Any) -> None
         actor,
     )
     owner.async_configure.assert_awaited_once_with("owned", {"name": "Example"})
-    authorize.assert_awaited_once_with(actor)
+    assert authorize.await_count == 3
+    assert all(args.args == (actor,) for args in authorize.await_args_list)
     assert result == {"flow_id": "owned", "type": "create_entry"}
     assert not backend.owned
 
@@ -104,12 +168,13 @@ async def test_flow_resume_is_bound_to_actor_and_client(
 
 async def test_revoked_actor_cannot_resume(flows: Any) -> None:
     owner = manager()
-    authorize = AsyncMock(side_effect=PermissionError("revoked"))
+    authorize = AsyncMock()
     backend = flows.NativeFlows(
         SimpleNamespace(config_entries=SimpleNamespace(flow=owner)), authorize
     )
     actor = CallContext("user")
     await backend.execute("config.flow.start", {"handler": "template"}, actor)
+    authorize.side_effect = PermissionError("revoked")
     with pytest.raises(PermissionError, match="revoked"):
         await backend.execute("config.flow.configure", {"flow_id": "owned"}, actor)
     owner.async_configure.assert_not_awaited()

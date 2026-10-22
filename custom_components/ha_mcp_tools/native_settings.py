@@ -24,11 +24,29 @@ _SUPPORTED_FLAGS = (
     "enable_mandatory_bps",
     "enable_strict_mandatory_bps",
     "enable_tool_search",
+    "redact_secrets",
+    "enable_beta_features",
+    "enable_code_mode",
 )
-_BACKUP_FLAGS = ("enable_snapshot_actions", "backup_read_only")
+_BACKUP_SETTINGS = frozenset(
+    {
+        "enable_snapshot_actions",
+        "backup_read_only",
+        "enable_auto_backup",
+        "auto_backup_dir",
+        "auto_backup_throttle_minutes",
+        "auto_backup_retain_per_entity",
+    }
+)
 _ADVANCED = {
     "enabled_tool_modules": "ENABLED_TOOL_MODULES",
     "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS",
+    "tool_search_max_results": "TOOL_SEARCH_MAX_RESULTS",
+    "code_mode_max_duration": "CODE_MODE_MAX_DURATION",
+    "code_mode_max_memory": "CODE_MODE_MAX_MEMORY",
+    "code_mode_max_recursion": "CODE_MODE_MAX_RECURSION",
+    "code_mode_max_invocations": "CODE_MODE_MAX_INVOCATIONS",
+    "code_mode_saved_tools_path": "CODE_MODE_SAVED_TOOLS_PATH",
 }
 
 
@@ -40,9 +58,12 @@ class NativeSettings:
         self.directory = Path(manager.hass.config.path(SERVER_CONFIG_SUBDIR))
         self.worker_id = uuid4().hex
         self._pending_io: set[asyncio.Future[Any]] = set()
+        self._stopping = False
         self.backups = NativeBackupSettings(self)
 
     async def _io(self, function: Any, *args: Any) -> Any:
+        if self._stopping:
+            raise RuntimeError("Native settings I/O is stopping")
         future = asyncio.ensure_future(
             self.manager.hass.async_add_executor_job(function, *args)
         )
@@ -56,6 +77,7 @@ class NativeSettings:
             future.exception()
 
     async def async_stop(self) -> None:
+        self._stopping = True
         if self._pending_io:
             _, pending = await asyncio.wait(tuple(self._pending_io), timeout=10)
             if pending:
@@ -247,7 +269,7 @@ class NativeSettings:
             for name in _SUPPORTED_FLAGS
         }
         return web.json_response(
-            {"flags": flags, "beta_sub_flags": [], "is_addon": False}
+            {"flags": flags, "beta_sub_flags": ["enable_code_mode"], "is_addon": False}
         )
 
     def _save_features(self, body: Any) -> dict[str, Any]:
@@ -265,7 +287,13 @@ class NativeSettings:
             "success": True,
             "applied": raw,
             "mode": "file",
-            "restart_required": "enable_tool_search" in raw,
+            "restart_required": bool(
+                {
+                    "enable_tool_search",
+                    "enable_beta_features",
+                    "enable_code_mode",
+                }.intersection(raw)
+            ),
         }
 
     def _validate_bps_flags(self, raw: dict[str, Any]) -> None:
@@ -309,27 +337,49 @@ class NativeSettings:
             await self.manager.refresh_policy()
             return web.json_response(result)
         await self.manager.refresh_policy()
-        policy = self.manager.policy
-        fields = [
-            {
-                "field": name,
-                "env_var": name.upper(),
-                "value": policy.flag(name),
-                "origin": "env" if name.upper() in os.environ else "file",
-                "editable": name.upper() not in os.environ,
-            }
-            for name in _BACKUP_FLAGS
-        ]
+        fields = await self._io(self._backup_config_fields)
         return web.json_response({"success": True, "is_addon": False, "fields": fields})
+
+    def _backup_config_fields(self) -> list[dict[str, Any]]:
+        from ha_mcp.config_registry import BACKUP_OVERRIDE_FIELDS, SETTING_BOUNDS
+        from ha_mcp.config_settings import Settings
+
+        policy = load_policy(self.directory)
+        rows = []
+        for name, env_name, kind in BACKUP_OVERRIDE_FIELDS:
+            if name not in _BACKUP_SETTINGS:
+                continue
+            raw = os.environ.get(
+                env_name, policy.flags.get(name, Settings.model_fields[name].default)
+            )
+            row = {
+                "field": name,
+                "env_var": env_name,
+                "value": policy.flag(name) if kind is bool else kind(raw),
+                "origin": (
+                    "env"
+                    if env_name in os.environ
+                    else "file"
+                    if name in policy.flags
+                    else "default"
+                ),
+                "editable": env_name not in os.environ,
+            }
+            if name in SETTING_BOUNDS:
+                row["min"], row["max"] = SETTING_BOUNDS[name]
+            rows.append(row)
+        return rows
 
     def _save_backup_config(self, body: Any) -> dict[str, Any]:
         from ha_mcp.config_backup_validation import _validate_backup_payload
+
+        from .native_server_policy import environment_name
 
         clean, error = _validate_backup_payload(body)
         if error is not None:
             raise ValueError(error)
         for name in clean:
-            if name not in _BACKUP_FLAGS or name.upper() in os.environ:
+            if name not in _BACKUP_SETTINGS or environment_name(name) in os.environ:
                 raise ValueError(
                     f"Unsupported or environment-controlled native backup setting: {name}"
                 )
@@ -389,42 +439,71 @@ class NativeSettings:
             await self.manager.refresh_policy()
             return web.json_response(result)
         await self.manager.refresh_policy()
-        values = self.manager.policy.flags
-        fields = [
-            {
-                "field": name,
-                "env_var": env,
-                "type": "str",
-                "section": "tools_surface",
-                "value": os.environ.get(
-                    env,
-                    values.get(name, "all" if name == "enabled_tool_modules" else ""),
-                ),
-                "origin": "env" if env in os.environ else "file",
-                "editable": env not in os.environ,
-                "multiline": name == "custom_instructions",
-                "restart_required": False,
-            }
-            for name, env in _ADVANCED.items()
-        ]
+        fields = await self._io(self._advanced_fields)
         return web.json_response(
             {"fields": fields, "is_addon": False, "is_stdio": False}
         )
 
+    def _advanced_fields(self) -> list[dict[str, Any]]:
+        from ha_mcp.config_registry import ADVANCED_SETTINGS_FIELDS, SETTING_BOUNDS
+        from ha_mcp.config_settings import Settings
+
+        values = load_policy(self.directory).flags
+        fields = []
+        for name, env, kind, section, _editable in ADVANCED_SETTINGS_FIELDS:
+            if name not in _ADVANCED:
+                continue
+            row = {
+                "field": name,
+                "env_var": env,
+                "type": kind.__name__,
+                "section": section,
+                "value": kind(
+                    os.environ.get(
+                        env,
+                        values.get(name, Settings.model_fields[name].default),
+                    )
+                ),
+                "origin": "env" if env in os.environ else "file",
+                "editable": env not in os.environ,
+                "multiline": name == "custom_instructions",
+                "restart_required": name.startswith("code_mode_")
+                or name == "tool_search_max_results",
+            }
+            if name in SETTING_BOUNDS:
+                row["min"], row["max"] = SETTING_BOUNDS[name]
+            fields.append(row)
+        return fields
+
     def _save_advanced(self, body: Any) -> dict[str, Any]:
+        from ha_mcp.config_overrides import (
+            _advanced_override_passes_constraints,
+            _coerce_advanced_override_value,
+        )
+        from ha_mcp.config_registry import ADVANCED_SETTINGS_FIELDS
+
         if not isinstance(body, dict) or not body:
             raise ValueError("Expected advanced settings as a nonempty object")
+        kinds = {name: kind for name, _env, kind, *_rest in ADVANCED_SETTINGS_FIELDS}
+        clean = {}
         for name, value in body.items():
-            if name not in _ADVANCED or not isinstance(value, str):
+            if name not in _ADVANCED:
                 raise ValueError(f"Unsupported native advanced setting: {name}")
             if _ADVANCED[name] in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
-        self._merge("feature_flags.json", body)
+            valid, coerced = _coerce_advanced_override_value(name, kinds[name], value)
+            if not valid or not _advanced_override_passes_constraints(name, coerced):
+                raise ValueError(f"Invalid native advanced setting: {name}")
+            clean[name] = coerced
+        self._merge("feature_flags.json", clean)
         return {
             "success": True,
-            "applied": body,
+            "applied": clean,
             "mode": "file",
-            "restart_required": False,
+            "restart_required": any(
+                name.startswith("code_mode_") or name == "tool_search_max_results"
+                for name in clean
+            ),
         }
 
     async def _policy(self, request: web.Request) -> web.Response:

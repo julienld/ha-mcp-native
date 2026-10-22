@@ -8,6 +8,24 @@ from ha_mcp.errors import HomeAssistantError
 
 from .snapshot_files import _flow_label
 
+_REGISTRY_READONLY_KEYS = frozenset({"created_at", "modified_at"})
+
+
+def _strip_readonly(config: dict[str, Any], *extra: str) -> dict[str, Any]:
+    """Remove universal and domain-owned keys before a Core config write."""
+    drop = _REGISTRY_READONLY_KEYS | set(extra)
+    return {key: value for key, value in config.items() if key not in drop}
+
+
+def validate_snapshot_identity(data: dict[str, Any]) -> None:
+    """Validate stored identities before selecting a semantic domain operation."""
+    for key in ("domain", "entity_id", "config"):
+        if key not in data:
+            raise InvalidBackupSnapshotError(f"Snapshot is missing {key}")
+    for key in ("domain", "entity_id"):
+        if not isinstance(data[key], str) or (key == "domain" and not data[key]):
+            raise InvalidBackupSnapshotError(f"Snapshot has invalid {key}")
+
 
 class _FlowHelperReadError(HomeAssistantError):
     """A local validation failure with a safe diagnostic code."""

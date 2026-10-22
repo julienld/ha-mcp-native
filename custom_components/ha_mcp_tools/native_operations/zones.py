@@ -1,14 +1,14 @@
 """Bounded zone collection operations; no transport or registry-delete fallback."""
 
-import asyncio
 from typing import Any
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
 
 from ha_mcp.tool_api import UnsupportedOperation
 
 from ..helper_collections import collection_owner
+from .entity_waiters import wait_removed
 from .helpers import check_expected_item, list_storage_items
 
 
@@ -45,34 +45,8 @@ async def delete_zone(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[st
     return {"success": True}
 
 
-async def wait_removed(hass: HomeAssistant, arguments: dict[str, Any]) -> bool:
-    """Observe the state owner after acknowledged deletion, never reissue it."""
-    entity_id = arguments["entity_id"]
-    wake = asyncio.Event()
-
-    @callback
-    def changed(event: Any) -> None:
-        if event.data.get("entity_id") == entity_id:
-            wake.set()
-
-    unsubscribe = hass.bus.async_listen("state_changed", changed)
-    try:
-        async with asyncio.timeout(10):
-            while hass.states.get(entity_id) is not None:
-                wake.clear()
-                try:
-                    await asyncio.wait_for(wake.wait(), timeout=0.3)
-                except TimeoutError:
-                    pass
-        return True
-    except TimeoutError:
-        return False
-    finally:
-        unsubscribe()
-
-
 DIRECT_OPERATIONS = {
     "zones.target.snapshot": (target_snapshot, False),
     "zones.storage.delete": (delete_zone, True),
-    "zones.removal.wait": (wait_removed, False),
+    "entities.removal.wait": (wait_removed, False),
 }

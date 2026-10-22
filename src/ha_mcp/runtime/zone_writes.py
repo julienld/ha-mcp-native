@@ -86,7 +86,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
 
     async def _wait_zone_removed(self, entity_id: str) -> bool:
         result: bool = await self.backend.execute(
-            "zones.removal.wait", {"entity_id": entity_id}, self.context
+            "entities.removal.wait", {"entity_id": entity_id}, self.context
         )
         return result
 

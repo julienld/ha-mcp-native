@@ -738,7 +738,7 @@ def extract_tools() -> list[dict]:
         for node in ast.walk(tree):
             if isinstance(node, ast.AsyncFunctionDef):
                 tool = _extract_tool_from_node(node, f.name, scope)
-            elif isinstance(node, ast.Assign):
+            elif isinstance(node, ast.Assign | ast.Expr):
                 tool = shared.extract(node, f)
             else:
                 continue

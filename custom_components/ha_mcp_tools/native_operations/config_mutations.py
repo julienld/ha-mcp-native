@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from collections.abc import Awaitable, Callable
@@ -15,6 +16,7 @@ from homeassistant.helpers.json import json_bytes
 from ha_mcp.errors import create_validation_error
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
+from ha_mcp.utils.owned_executor import await_owned_io
 
 from ..helper_collections import _INVALID_ERRORS
 from .core_views import config_view
@@ -59,6 +61,7 @@ class NativeConfigMutations:
                     status="not_started",
                 )
             await self._validate(owner, key, value)
+        interrupted: asyncio.CancelledError | None = None
         async with owner.mutation_lock:
             current = await owner.read_config(self.hass)
             previous = owner._get_value(self.hass, current, key)
@@ -82,8 +85,8 @@ class NativeConfigMutations:
                 owner._delete_value(self.hass, current, key)
             else:
                 owner._write_value(self.hass, current, key, value)
-            await self.hass.async_add_executor_job(
-                writer, self.hass.config.path(owner.path), current
+            interrupted = await _persist_config(
+                self.hass, writer, self.hass.config.path(owner.path), current
             )
         hook = owner.post_write_hook
         if hook is not None:
@@ -95,6 +98,8 @@ class NativeConfigMutations:
                     key,
                 )
             )
+        if interrupted is not None:
+            raise interrupted
         # Core acknowledges persisted content and schedules its hook. A caller
         # that needs reload/registration confirmation must observe that event.
         return {
@@ -134,3 +139,18 @@ def _invalid_config(error: BaseException, kind: str) -> NoReturn:
     raise ToolFailure(
         data["error"]["code"], data["error"]["message"], data=data, status="not_started"
     ) from error
+
+
+async def _persist_config(
+    hass: HomeAssistant, writer: Callable[..., Any], path: str, current: Any
+) -> asyncio.CancelledError | None:
+    worker = asyncio.ensure_future(hass.async_add_executor_job(writer, path, current))
+    try:
+        await await_owned_io(worker)
+    except asyncio.CancelledError as error:
+        if worker.cancelled() or worker.exception() is not None:
+            raise
+        # The atomic write succeeded while the caller was cancelled. The owner
+        # must still schedule Core's hook exactly once, then propagate it.
+        return error
+    return None

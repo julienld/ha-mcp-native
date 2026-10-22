@@ -17,8 +17,17 @@ import httpx
 from .._vendor.websockets.exceptions import WebSocketException
 from .._version import get_supervisor_base_url, is_running_in_addon
 from ..config import get_global_settings
+from ..errors import (
+    NON_ADMIN_TOKEN_WARNING as NON_ADMIN_TOKEN_WARNING,
+)
+from ..errors import (
+    HomeAssistantAdminRequiredError as HomeAssistantAdminRequiredError,
+)
 from ..errors import HomeAssistantAPIError as HomeAssistantAPIError
 from ..errors import HomeAssistantAuthError as HomeAssistantAuthError
+from ..errors import (
+    HomeAssistantCommandError as HomeAssistantCommandError,
+)
 from ..errors import HomeAssistantConnectionError as HomeAssistantConnectionError
 from ..errors import HomeAssistantError as HomeAssistantError
 from .admin_routes import is_admin_only_route
@@ -76,11 +85,6 @@ MIN_LOG_WINDOW_LINES = 2
 # journald's cursor/timestamp metadata exists only in the journal export
 # format, which the hassio-proxy route cannot request.
 _PROBE_ENTRIES = 8
-NON_ADMIN_TOKEN_WARNING = (
-    "ha-mcp does not officially support non-admin Home Assistant tokens. They "
-    "still work, but admin-only operations fail. Use a long-lived access token "
-    "from an administrator's profile for full access."
-)
 _ADMIN_ONLY_401_MESSAGE = (
     "Home Assistant returned 401 for an admin-only endpoint: "
     "the token is invalid or its user is not an administrator"
@@ -102,15 +106,6 @@ class HomeAssistantCommandNotSent(HomeAssistantConnectionError):
     post-send socket close (mid-await) likewise raises a plain
     ``HomeAssistantConnectionError`` (the close handler sets it on the pending future),
     so type alone distinguishes never-sent from sent-then-dropped/ambiguous.
-    """
-
-
-class HomeAssistantAdminRequiredError(HomeAssistantAuthError):
-    """An admin-only request refused because the token's user is not an admin.
-
-    A REST request is refused locally, never sent: Home Assistant would answer
-    401 and count it toward its IP ban (#2546). A service call is refused by
-    Home Assistant over WebSocket, where a refusal is not counted.
     """
 
 
@@ -160,29 +155,6 @@ class SceneStorageConfigNotFoundError(HomeAssistantAPIError):
         if storage_key and storage_key != scene_id:
             msg += f" (resolved storage key: {storage_key})"
         super().__init__(msg, status_code=404)
-
-
-class HomeAssistantCommandError(HomeAssistantError):
-    """WebSocket command returned success=False.
-
-    Raised by ``WebSocketClient.send_command`` when Home Assistant responds
-    with ``{type: "result", success: False}``. Used as a type marker in
-    ``_classify_exception``'s match dispatch; classification then falls
-    through to ``_classify_by_message`` for pattern matching on the
-    error message.
-
-    ``code`` carries HA's structured WebSocket error code (the ``code`` field
-    of the response ``error`` object — e.g. ``"unknown_command"``,
-    ``"invalid_format"``) when available, so routing decisions can key off the
-    stable code rather than pattern-matching the human-readable message. It
-    defaults to ``None`` for exceptions raised without a code (older raise
-    sites, string error payloads, or direct construction in tests), which
-    keeps the single-positional-argument constructor backward-compatible.
-    """
-
-    def __init__(self, message: str, code: str | None = None):
-        super().__init__(message)
-        self.code = code
 
 
 class HomeAssistantCommandTimeout(HomeAssistantError):
@@ -1640,7 +1612,9 @@ class HomeAssistantClient:
             )
         return entity_id
 
-    async def delete_automation_config(self, identifier: str) -> dict[str, Any]:
+    async def delete_automation_config(
+        self, identifier: str, *, resolved_id: str | None = None
+    ) -> dict[str, Any]:
         """
         Delete automation configuration by entity_id or unique_id.
 
@@ -1653,7 +1627,11 @@ class HomeAssistantClient:
         Raises:
             HomeAssistantAPIError: If automation not found or API error
         """
-        unique_id = await self._resolve_automation_id(identifier)
+        unique_id = (
+            resolved_id
+            if resolved_id is not None
+            else await self._resolve_automation_id(identifier)
+        )
         logger.debug(f"Deleting automation config for unique_id: {unique_id}")
 
         try:
@@ -2322,9 +2300,15 @@ class HomeAssistantClient:
             logger.error(f"Failed to upsert script config for {script_id}: {e}")
             raise
 
-    async def delete_script_config(self, script_id: str) -> dict[str, Any]:
+    async def delete_script_config(
+        self, script_id: str, *, resolved_id: str | None = None
+    ) -> dict[str, Any]:
         """Delete Home Assistant script configuration."""
-        resolved_id = await self._resolve_script_id(script_id)
+        resolved_id = (
+            resolved_id
+            if resolved_id is not None
+            else await self._resolve_script_id(script_id)
+        )
         try:
             endpoint = f"config/script/config/{resolved_id}"
             response = await self._request("DELETE", endpoint)

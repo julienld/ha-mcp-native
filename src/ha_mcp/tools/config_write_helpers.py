@@ -21,6 +21,13 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
+from ..runtime.config_write_context import (
+    _WRITE_TOOL_BP_HINT_SUGGESTION as _WRITE_TOOL_BP_HINT_SUGGESTION,
+)
+from ..runtime.config_write_context import attach_error_guidance
+from ..runtime.config_write_context import (
+    merge_validation_meta as merge_validation_meta,
+)
 from ..runtime.skill_content import (
     _SKILL_CONTENT_OPTOUT_HINT as _SKILL_CONTENT_OPTOUT_HINT,
 )
@@ -165,37 +172,6 @@ async def apply_entity_category(
         )
 
 
-def merge_validation_meta(
-    result: dict[str, Any], validation_meta: dict[str, Any]
-) -> None:
-    """Attach reference-validator output to a set-tool success ``result``.
-
-    Produces a single nested ``validation`` field when there's anything
-    worth reporting - warnings, skipped templates, or a blueprint
-    short-circuit. Keeps the happy-path response unchanged.
-
-    Shared between ``ha_config_set_automation`` and
-    ``ha_config_set_script``; see
-    :mod:`ha_mcp.tools.reference_validator` for the validator itself
-    and #940 for background.
-    """
-    warnings = validation_meta.get("warnings") or []
-    unvalidated_templates = validation_meta.get("unvalidated_templates") or 0
-    blueprint_skipped = bool(validation_meta.get("blueprint_skipped"))
-
-    if not warnings and not unvalidated_templates and not blueprint_skipped:
-        return
-
-    entry: dict[str, Any] = {}
-    if warnings:
-        entry["warnings"] = warnings
-    if unvalidated_templates:
-        entry["unvalidated_templates"] = unvalidated_templates
-    if blueprint_skipped:
-        entry["blueprint_skipped"] = True
-    result["validation"] = entry
-
-
 # ---------------------------------------------------------------------------
 # Skill content assembly (write-tool MandatoryBPS parameter, issue #1182)
 # ---------------------------------------------------------------------------
@@ -299,11 +275,6 @@ def build_skill_content(
 # the floor — when BP fired, the checker's own warning text (with its
 # more specific 2-route hint) is appended alongside in the suggestions
 # array, and the matching section body auto-embeds inline.
-_WRITE_TOOL_BP_HINT_SUGGESTION = (
-    "For Home Assistant best-practice guidance, call "
-    "ha_get_skill_guide() to read SKILL.md, then the reference file its "
-    "table points to, before retrying."
-)
 
 
 def attach_skill_content(
@@ -398,19 +369,9 @@ def augment_error_dict_with_skill_content(
     (defensive — preserves the contract for any caller passing a
     non-standard error shape).
     """
-    err = error_dict.get("error")
-    if not isinstance(err, dict):
+    if not isinstance(error_dict.get("error"), dict):
         return
-    suggestions = err.setdefault("suggestions", [])
-    # create_error_response emits only the singular field for one suggestion.
-    # Preserve that recovery advice before appending the generic skill hint.
-    primary = err.get("suggestion")
-    if not suggestions and isinstance(primary, str) and primary:
-        suggestions.append(primary)
-    if _WRITE_TOOL_BP_HINT_SUGGESTION not in suggestions:
-        suggestions.append(_WRITE_TOOL_BP_HINT_SUGGESTION)
-    if suggestions:
-        err["suggestion"] = suggestions[0]
+    attach_error_guidance(error_dict)
 
     referenced_files = getattr(bp_warnings, "referenced_files", None)
     if referenced_files:

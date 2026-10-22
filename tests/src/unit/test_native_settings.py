@@ -23,6 +23,19 @@ def settings(tmp_path: Path) -> NativeSettings:
     return NativeSettings(SimpleNamespace(hass=hass))
 
 
+async def test_unload_closes_io_admission_before_an_inflight_request_can_dispatch(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    ui = settings(tmp_path)
+    ui.manager.hass.async_add_executor_job = AsyncMock()
+    await ui.async_stop()
+    with pytest.raises(RuntimeError, match="stopping"):
+        await ui._io(lambda: None)
+    ui.manager.hass.async_add_executor_job.assert_not_called()
+
+
 def test_tool_toggles_apply_to_native_policy_and_stay_in_instance_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -107,6 +120,37 @@ def test_backup_controls_share_canonical_backup_settings_file(tmp_path: Path) ->
     assert (tmp_path / "backup_settings.json").exists()
 
 
+def test_auto_backup_controls_keep_types_and_environment_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in (
+        "ENABLE_AUTO_BACKUP",
+        "AUTO_BACKUP_RETAIN_PER_ENTITY",
+        "AUTO_BACKUP_THROTTLE_MINUTES",
+        "HAMCP_BACKUP_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    ui = settings(tmp_path)
+    ui._save_backup_config(
+        {
+            "enable_auto_backup": False,
+            "auto_backup_retain_per_entity": 8,
+            "auto_backup_throttle_minutes": 3,
+            "auto_backup_dir": str(tmp_path / "snapshots"),
+        }
+    )
+    fields = {row["field"]: row for row in ui._backup_config_fields()}
+    assert fields["enable_auto_backup"]["value"] is False
+    assert fields["auto_backup_retain_per_entity"]["value"] == 8
+    assert fields["auto_backup_throttle_minutes"]["value"] == 3
+    monkeypatch.setenv("HAMCP_BACKUP_DIR", str(tmp_path / "environment"))
+    fields = {row["field"]: row for row in ui._backup_config_fields()}
+    assert fields["auto_backup_dir"]["value"] == str(tmp_path / "environment")
+    assert not fields["auto_backup_dir"]["editable"]
+    with pytest.raises(ValueError, match="environment-controlled"):
+        ui._save_backup_config({"auto_backup_dir": "other"})
+
+
 def test_settings_page_uses_explicit_theme_without_global_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -138,6 +182,25 @@ def test_module_selection_and_instructions_reuse_existing_advanced_file(
     assert not policy.enabled("ha_call_service", source_module="tools_service")
     assert policy.custom_instructions == "Keep user guidance."
     assert (tmp_path / "feature_flags.json").exists()
+
+
+def test_code_limits_are_typed_bounded_and_require_reload(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODE_MODE_MAX_DURATION", raising=False)
+    ui = settings(tmp_path)
+    with pytest.raises(ValueError, match="Invalid native"):
+        ui._save_advanced({"code_mode_max_duration": True})
+    with pytest.raises(ValueError, match="Invalid native"):
+        ui._save_advanced({"code_mode_max_duration": 0})
+    saved = ui._save_advanced({"code_mode_max_duration": 42.5})
+    assert saved["restart_required"]
+    row = next(
+        row for row in ui._advanced_fields() if row["field"] == "code_mode_max_duration"
+    )
+    assert row["type"] == "float" and row["value"] == 42.5
+    assert row["min"] <= row["value"] <= row["max"]
+    monkeypatch.setenv("CODE_MODE_MAX_DURATION", "60")
+    with pytest.raises(ValueError, match="Environment-controlled"):
+        ui._save_advanced({"code_mode_max_duration": 10})
 
 
 def test_strict_bps_keeps_guide_available_and_rejects_conflicting_ui_edits(

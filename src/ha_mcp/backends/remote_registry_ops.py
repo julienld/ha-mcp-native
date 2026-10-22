@@ -6,11 +6,15 @@ from typing import Any
 
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 
+from .remote_config_finalize import CONFIG_FINALIZE_OPERATIONS, execute_config_finalize
+from .remote_config_mutations import CONFIG_MUTATION_OPERATIONS, execute_config_mutation
 from .remote_config_ops import CONFIG_READ_OPERATIONS, execute_config_operation
 from .remote_zone_ops import ZONE_OPERATIONS, execute_zone_operation
 
 _FAMILY_OPERATIONS = {
     **dict.fromkeys(CONFIG_READ_OPERATIONS, execute_config_operation),
+    **dict.fromkeys(CONFIG_MUTATION_OPERATIONS, execute_config_mutation),
+    **dict.fromkeys(CONFIG_FINALIZE_OPERATIONS, execute_config_finalize),
     **dict.fromkeys(ZONE_OPERATIONS, execute_zone_operation),
 }
 
@@ -31,6 +35,8 @@ REGISTRY_OPERATIONS = frozenset(
         "entities.enrich",
         *_RADIO_COMMANDS,
         *CONFIG_READ_OPERATIONS,
+        *CONFIG_MUTATION_OPERATIONS,
+        *CONFIG_FINALIZE_OPERATIONS,
         *ZONE_OPERATIONS,
     }
 )

@@ -14,10 +14,35 @@ from custom_components.ha_mcp_tools.native_llm import exposed_catalog  # noqa: E
 from custom_components.ha_mcp_tools.native_server_policy import (  # noqa: E402
     NativePolicy,
     catalogue_transform,
+    filter_catalogue,
 )
 from ha_mcp._vendor.fastmcp import Client, FastMCP  # noqa: E402
 from ha_mcp.tool_api import ToolDefinition  # noqa: E402
 from ha_mcp.transforms import CategorizedSearchTransform  # noqa: E402
+
+
+async def test_read_only_catalogue_keeps_mixed_tools_for_their_read_operations() -> (
+    None
+):
+    mcp = FastMCP("Mixed catalogue")
+
+    @mcp.tool(annotations={"readOnlyHint": False})
+    async def mixed(action: str) -> str:
+        return action
+
+    definition = ToolDefinition(
+        "mixed",
+        "Read or write",
+        {},
+        AsyncMock(),
+        writes=lambda args: args.get("action") != "list",
+    )
+    manager = SimpleNamespace(
+        engine=SimpleNamespace(tools={"mixed": definition}),
+        policy=NativePolicy(read_only=True),
+    )
+    catalogue = filter_catalogue(manager, await mcp.local_provider._list_tools())
+    assert [tool.name for tool in catalogue] == ["mixed"]
 
 
 async def test_hidden_tools_are_absent_from_search_and_assist_keeps_full_catalogue() -> (

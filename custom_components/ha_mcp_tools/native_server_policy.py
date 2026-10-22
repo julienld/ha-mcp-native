@@ -162,6 +162,10 @@ def filter_catalogue(manager: Any, tools: Any) -> list[Any]:
     for tool in tools:
         writes = getattr(tool.annotations, "read_only_hint", False) is not True
         definition = manager.engine.tools.get(tool.name)
+        if definition is not None and definition.writes is not None:
+            # Mixed tools remain discoverable for their read operations. The
+            # engine classifies each validated invocation before policy checks.
+            writes = False
         source_module = definition.source_module if definition is not None else None
         if not policy.enabled(
             tool.name, writes=writes, source_module=source_module

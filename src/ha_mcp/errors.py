@@ -607,3 +607,42 @@ class HomeAssistantAPIError(HomeAssistantError):
         super().__init__(message)
         self.status_code = status_code
         self.response_data = response_data
+
+
+NON_ADMIN_TOKEN_WARNING = (
+    "ha-mcp does not officially support non-admin Home Assistant tokens. They "
+    "still work, but admin-only operations fail. Use a long-lived access token "
+    "from an administrator's profile for full access."
+)
+
+
+class HomeAssistantAdminRequiredError(HomeAssistantAuthError):
+    """An admin-only request refused because the token's user is not an admin.
+
+    A REST request is refused locally, never sent: Home Assistant would answer
+    401 and count it toward its IP ban (#2546). A service call is refused by
+    Home Assistant over WebSocket, where a refusal is not counted.
+    """
+
+
+class HomeAssistantCommandError(HomeAssistantError):
+    """WebSocket command returned success=False.
+
+    Raised by ``WebSocketClient.send_command`` when Home Assistant responds
+    with ``{type: "result", success: False}``. Used as a type marker in
+    ``_classify_exception``'s match dispatch; classification then falls
+    through to ``_classify_by_message`` for pattern matching on the
+    error message.
+
+    ``code`` carries HA's structured WebSocket error code (the ``code`` field
+    of the response ``error`` object — e.g. ``"unknown_command"``,
+    ``"invalid_format"``) when available, so routing decisions can key off the
+    stable code rather than pattern-matching the human-readable message. It
+    defaults to ``None`` for exceptions raised without a code (older raise
+    sites, string error payloads, or direct construction in tests), which
+    keeps the single-positional-argument constructor backward-compatible.
+    """
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code

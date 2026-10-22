@@ -17,6 +17,7 @@ from ha_mcp.runtime.skill_files import read_skill_files
 from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
+from .native_operations.flow_records import DIRECT_OPERATIONS as FLOW_DIRECT_OPERATIONS
 from .native_operations.helpers import DIRECT_OPERATIONS as HELPER_DIRECT_OPERATIONS
 from .native_operations.zones import DIRECT_OPERATIONS as ZONE_DIRECT_OPERATIONS
 from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
@@ -35,7 +36,11 @@ COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
     "helpers.registry.snapshot": ("ha_mcp_tools/registries", False),
     "helpers.entities.for_entry": ("ha_mcp_tools/registry_lookup", False),
 }
-DOMAIN_DIRECT_OPERATIONS = {**HELPER_DIRECT_OPERATIONS, **ZONE_DIRECT_OPERATIONS}
+DOMAIN_DIRECT_OPERATIONS = {
+    **HELPER_DIRECT_OPERATIONS,
+    **ZONE_DIRECT_OPERATIONS,
+    **FLOW_DIRECT_OPERATIONS,
+}
 
 
 class NativeBackend:
@@ -48,6 +53,9 @@ class NativeBackend:
         service_policy: Callable[[str, str], None] | None = None,
         skill_guide_reader: SkillGuideReader | None = None,
         skill_content_enabled: Callable[[], bool] | None = None,
+        redaction_enabled: Callable[[], bool] | None = None,
+        code_handler: Callable[[dict[str, Any], CallContext], Awaitable[Any]]
+        | None = None,
         helper_backup: Callable[
             [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
         ]
@@ -63,6 +71,8 @@ class NativeBackend:
         self.service_policy = service_policy
         self.skill_guide_reader = skill_guide_reader or SkillGuideReader()
         self.skill_content_enabled = skill_content_enabled or (lambda: True)
+        self.redaction_enabled = redaction_enabled or (lambda: False)
+        self.code_handler = code_handler
         self.helper_backup = helper_backup
         self.config_backup = config_backup
         self.loop = asyncio.get_running_loop()
@@ -104,6 +114,8 @@ class NativeBackend:
                 "Protected operation envelope field.",
                 status="not_started",
             )
+        if operation == "config.flow.settings":
+            return {"redact_secrets": self.redaction_enabled()}
         if operation in REGISTRY_DIRECT_OPERATIONS:
             result = await REGISTRY_DIRECT_OPERATIONS[operation](self.hass, arguments)
             return json.loads(json_bytes(result))
@@ -126,6 +138,8 @@ class NativeBackend:
     async def _execute_owned_operation(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
+        if operation == "code.run" and self.code_handler is not None:
+            return await self.code_handler(arguments, context)
         if operation in {
             f"config.{domain}.{action}"
             for domain in ("automation", "script", "scene")
@@ -192,6 +206,13 @@ class NativeBackend:
         )
         message = schema({"type": command, **payload})
         message["ha_mcp_context"] = Context(user_id=context.user_id)
+        if operation == "helpers.storage.write":
+            from .native_operations.helper_mutations import NativeHelperMutations
+
+            result = await NativeHelperMutations(self.hass, self.authorize).execute(
+                {**message, "expected_item": expected}, context
+            )
+            return json.loads(json_bytes(result))
         if operation == "services.call_observe":
             from .native_operations.services import call_and_observe
 

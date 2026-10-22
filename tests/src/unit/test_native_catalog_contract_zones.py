@@ -48,7 +48,6 @@ def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, backup: Any) -> tuple:
     operations = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.zones"
     )
-    monkeypatch.setattr(operations, "callback", lambda function: function)
     collection = _Zones()
     registry = FakeRegistry()
     entry = FakeRegEntry("zone.renamed", platform="zone", unique_id="office")

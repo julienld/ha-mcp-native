@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from pathlib import Path
 
 
 def test_native_version_check_never_imports_remote_tools() -> None:
@@ -25,6 +26,10 @@ version = _read_min_component_version()
 assert version and all(part.isdigit() for part in version.split('.'))
 """
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=Path(__file__).resolve().parents[3],
     )
     assert result.returncode == 0, result.stdout + result.stderr

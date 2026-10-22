@@ -34,12 +34,6 @@ guards are the deliberate exception and stay active either way.
 
 from __future__ import annotations
 
-import copy
-import json
-import logging
-import re
-import threading
-from collections.abc import Iterable, Sequence
 from typing import Any
 
 from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
@@ -49,408 +43,107 @@ from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
 )
 
 from .config import get_global_settings
-
-logger = logging.getLogger(__name__)
-
-# Sentinels emitted in place of secret values. SET/EMPTY preserve the
-# "configured at all?" diagnostic on schema-redacted surfaces; KNOWN marks a
-# known-value scrub hit inside arbitrary tool output.
-REDACTED_SET = "<redacted: set>"
-REDACTED_EMPTY = "<redacted: empty>"
-REDACTED_KNOWN = "<redacted>"
-
-_SENTINELS = frozenset({REDACTED_SET, REDACTED_EMPTY, REDACTED_KNOWN})
-
-# Values shorter than this are never registered for the known-value text
-# scrub: substring-replacing a tiny fragment (think a 4-char PIN that also
-# appears as a port number or entity-id fragment) would corrupt unrelated
-# output far more often than it would protect anything.
-_MIN_KNOWN_SECRET_LEN = 6
-
-# An add-on schema can legitimately omit ``format: password`` for a deploy
-# key. The PEM envelope itself is unambiguous enough to protect without
-# falling back to name-based secret guessing.
-_PEM_PRIVATE_KEY_MARKER = re.compile(
-    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+from .runtime.redaction import (
+    _MIN_KNOWN_SECRET_LEN as _MIN_KNOWN_SECRET_LEN,
 )
-
-_known_secrets: set[str] = set()
-_known_secrets_lock = threading.Lock()
+from .runtime.redaction import (
+    _PEM_PRIVATE_KEY_MARKER as _PEM_PRIVATE_KEY_MARKER,
+)
+from .runtime.redaction import (
+    _SENTINELS as _SENTINELS,
+)
+from .runtime.redaction import (
+    REDACTED_EMPTY as REDACTED_EMPTY,
+)
+from .runtime.redaction import (
+    REDACTED_KNOWN as REDACTED_KNOWN,
+)
+from .runtime.redaction import (
+    REDACTED_SET as REDACTED_SET,
+)
+from .runtime.redaction import (
+    _clear_known_secret_values as _clear_known_secret_values,
+)
+from .runtime.redaction import (
+    _collect_sentinel_paths as _collect_sentinel_paths,
+)
+from .runtime.redaction import (
+    _iter_schema_entries as _iter_schema_entries,
+)
+from .runtime.redaction import (
+    _known_secrets as _known_secrets,
+)
+from .runtime.redaction import (
+    _known_secrets_lock as _known_secrets_lock,
+)
+from .runtime.redaction import (
+    _redact_flow_schema_in_place as _redact_flow_schema_in_place,
+)
+from .runtime.redaction import (
+    _redact_nested_sections as _redact_nested_sections,
+)
+from .runtime.redaction import (
+    carries_sentinel as carries_sentinel,
+)
+from .runtime.redaction import (
+    collect_addon_secret_values as collect_addon_secret_values,
+)
+from .runtime.redaction import (
+    contains_pem_private_key as contains_pem_private_key,
+)
+from .runtime.redaction import (
+    harvest_secret_strings as harvest_secret_strings,
+)
+from .runtime.redaction import (
+    is_password_flow_field as is_password_flow_field,
+)
+from .runtime.redaction import (
+    is_sentinel as is_sentinel,
+)
+from .runtime.redaction import (
+    known_secret_values as known_secret_values,
+)
+from .runtime.redaction import (
+    known_values_for_option_item as known_values_for_option_item,
+)
+from .runtime.redaction import (
+    logger as logger,
+)
+from .runtime.redaction import (
+    redact_addon_options as redact_addon_options,
+)
+from .runtime.redaction import (
+    redact_flow_schema as redact_flow_schema,
+)
+from .runtime.redaction import (
+    redact_options_by_flow_schema as redact_options_by_flow_schema,
+)
+from .runtime.redaction import (
+    register_known_secret_values as register_known_secret_values,
+)
+from .runtime.redaction import (
+    scrub_obj as scrub_obj,
+)
+from .runtime.redaction import (
+    scrub_text as scrub_text,
+)
+from .runtime.redaction import (
+    sentinel_for as sentinel_for,
+)
+from .runtime.redaction import (
+    sentinel_option_keys as sentinel_option_keys,
+)
+from .runtime.redaction import (
+    sentinel_replacement as sentinel_replacement,
+)
+from .runtime.redaction import (
+    with_serialized_variants as with_serialized_variants,
+)
 
 
 def redaction_enabled() -> bool:
     """Live per-request read of the ``redact_secrets`` flag."""
     return bool(get_global_settings().redact_secrets)
-
-
-def sentinel_for(value: Any) -> str:
-    """SET/EMPTY sentinel preserving the "configured at all?" diagnostic."""
-    if value is None or value in ("", []):
-        return REDACTED_EMPTY
-    return REDACTED_SET
-
-
-def is_sentinel(value: Any) -> bool:
-    """True when ``value`` is exactly one of the redaction sentinels."""
-    return isinstance(value, str) and value in _SENTINELS
-
-
-def carries_sentinel(value: Any) -> bool:
-    """True when ``value`` is or CONTAINS a redaction sentinel.
-
-    The known-value scrub can rewrite a secret embedded in a larger unmarked
-    string (``postgres://u:<redacted>@db``); a caller resubmitting that
-    corrupted value must be rejected just like an exact sentinel.
-    """
-    return isinstance(value, str) and any(s in value for s in _SENTINELS)
-
-
-def harvest_secret_strings(value: Any) -> None:
-    """Register a password-marked value (scalar or ``multiple`` list)."""
-    if isinstance(value, str) and value:
-        register_known_secret_values([value])
-    elif isinstance(value, list):
-        register_known_secret_values(
-            [item for item in value if isinstance(item, str) and item]
-        )
-
-
-def sentinel_replacement(value: Any) -> Any:
-    """Sentinel(s) for a password-marked value, keeping list container shape."""
-    if isinstance(value, list):
-        return [item if is_sentinel(item) else sentinel_for(item) for item in value]
-    return value if is_sentinel(value) else sentinel_for(value)
-
-
-def contains_pem_private_key(value: Any) -> bool:
-    """Whether an option value or list of lines contains a PEM private key."""
-    if isinstance(value, str):
-        return bool(_PEM_PRIVATE_KEY_MARKER.search(value))
-    return isinstance(value, list) and any(
-        isinstance(item, str) and _PEM_PRIVATE_KEY_MARKER.search(item) for item in value
-    )
-
-
-def known_values_for_option_item(value: Any) -> set[str]:
-    """Return a string option item plus PEM lines needed by log scrubbing."""
-    if not isinstance(value, str) or not value:
-        return set()
-    values = {value}
-    if contains_pem_private_key(value):
-        # Supervisor log reads split multiline option values before the
-        # middleware can scrub them, so retain every line as well.
-        values.update(line for line in value.splitlines() if line)
-    return values
-
-
-# ---------------------------------------------------------------------------
-# Surface 1: Supervisor add-on options + schema
-# ---------------------------------------------------------------------------
-
-# Supervisor serializes an add-on ``schema`` as a list of ``{name, type, ...}``
-# field descriptors; a nested option group is an entry whose own ``schema``
-# key holds another such list, and a password leaf carries
-# ``format: "password"`` (e.g. ``{"name": "github_pat", "type": "string",
-# "format": "password"}``).
-
-
-def _iter_schema_entries(schema: Any) -> Iterable[dict[str, Any]]:
-    if not isinstance(schema, list):
-        return
-    for entry in schema:
-        if isinstance(entry, dict) and isinstance(entry.get("name"), str):
-            yield entry
-
-
-def redact_addon_options(options: Any, schema: Any) -> Any:
-    """Copy of ``options`` with ``format: password`` values sentinel-replaced.
-
-    Walks nested option groups recursively (a group's value may be a dict or,
-    with ``multiple``, a list of dicts). Keys without a schema entry pass
-    through untouched. Non-dict ``options`` are returned as-is.
-    """
-    if not isinstance(options, dict):
-        return options
-    out = dict(options)
-    for entry in _iter_schema_entries(schema):
-        name = entry["name"]
-        if name not in out:
-            continue
-        value = out[name]
-        nested = entry.get("schema")
-        if isinstance(nested, list):
-            if isinstance(value, dict):
-                out[name] = redact_addon_options(value, nested)
-            elif isinstance(value, list):
-                out[name] = [
-                    redact_addon_options(item, nested)
-                    if isinstance(item, dict)
-                    else item
-                    for item in value
-                ]
-            continue
-        if entry.get("format") == "password" or contains_pem_private_key(value):
-            # multiple: true passwords are a list — sentinel_replacement
-            # keeps the container shape so the option's type survives.
-            out[name] = sentinel_replacement(value)
-    return out
-
-
-def collect_addon_secret_values(options: Any, schema: Any) -> set[str]:
-    """Live ``format: password`` option values, for the known-value scrub."""
-    values: set[str] = set()
-    if not isinstance(options, dict):
-        return values
-    for entry in _iter_schema_entries(schema):
-        value = options.get(entry["name"])
-        nested = entry.get("schema")
-        if isinstance(nested, list):
-            if isinstance(value, dict):
-                values |= collect_addon_secret_values(value, nested)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        values |= collect_addon_secret_values(item, nested)
-            continue
-        if entry.get("format") == "password" or contains_pem_private_key(value):
-            candidates = value if isinstance(value, list) else [value]
-            for candidate in candidates:
-                values |= known_values_for_option_item(candidate)
-    return values
-
-
-def sentinel_option_keys(options: Any, _prefix: str = "") -> list[str]:
-    """Dotted paths of submitted option values that equal a redaction sentinel.
-
-    Used by ``ha_manage_app`` config mode to reject round-tripping a
-    redacted read back into a live add-on config.
-    """
-    keys: list[str] = []
-    if not isinstance(options, dict):
-        return keys
-    for name, value in options.items():
-        path = f"{_prefix}.{name}" if _prefix else str(name)
-        _collect_sentinel_paths(value, path, keys)
-    return keys
-
-
-def _collect_sentinel_paths(value: Any, path: str, keys: list[str]) -> None:
-    """Append ``path`` (or deeper paths) for every sentinel-carrying value.
-
-    Recurses through dicts AND lists at any nesting depth so a sentinel at
-    e.g. ``opt[0][0]`` cannot slip past the write guard.
-    """
-    if carries_sentinel(value):
-        keys.append(path)
-    elif isinstance(value, dict):
-        keys.extend(sentinel_option_keys(value, path))
-    elif isinstance(value, list):
-        for idx, item in enumerate(value):
-            _collect_sentinel_paths(item, f"{path}[{idx}]", keys)
-
-
-# ---------------------------------------------------------------------------
-# Surface 2: options-flow schema (config entries)
-# ---------------------------------------------------------------------------
-
-
-def is_password_flow_field(field: dict[str, Any]) -> bool:
-    """True when a serialized flow field is marked as a password input.
-
-    The authoritative marker is a text selector with ``type: "password"``
-    (``TextSelectorType.PASSWORD`` — serialized as
-    ``{"selector": {"text": {"type": "password"}}}``). A literal
-    ``type: "password"`` on the field is honored too. Fields with no
-    password marker cannot be classified from metadata and pass through —
-    the known-value scrub is the only remaining line for those.
-    """
-    selector = field.get("selector")
-    if isinstance(selector, dict):
-        text = selector.get("text")
-        if isinstance(text, dict) and text.get("type") == "password":
-            return True
-    return field.get("type") == "password"
-
-
-def redact_flow_schema(data_schema: Any) -> Any:
-    """Deep-copied flow schema with password-field current values redacted.
-
-    HA injects the persisted option into each field's
-    ``description.suggested_value`` (and static defaults into ``default`` /
-    ``value``), so an ``include_schema=True`` echo carries the live secret.
-    Harvests each replaced value into the known-secrets set first.
-    """
-    if not isinstance(data_schema, list):
-        return data_schema
-    schema = copy.deepcopy(data_schema)
-    _redact_flow_schema_in_place(schema)
-    return schema
-
-
-def _redact_flow_schema_in_place(data_schema: list[Any]) -> None:
-    for field in data_schema:
-        if not isinstance(field, dict):
-            continue
-        nested = field.get("schema")
-        if isinstance(nested, list):
-            _redact_flow_schema_in_place(nested)
-            continue
-        if not is_password_flow_field(field):
-            continue
-        description = field.get("description")
-        if isinstance(description, dict) and "suggested_value" in description:
-            value = description["suggested_value"]
-            harvest_secret_strings(value)
-            description["suggested_value"] = sentinel_replacement(value)
-        for key in ("default", "value"):
-            if key in field and field[key] is not None:
-                value = field[key]
-                harvest_secret_strings(value)
-                field[key] = sentinel_replacement(value)
-
-
-def redact_options_by_flow_schema(options: Any, data_schema: Any) -> Any:
-    """Copy of ``options`` with password-flow-field values sentinel-replaced.
-
-    For the component-served path, whose raw persisted options are populated
-    independently of the flow probe: once the flow schema is in hand, the
-    fields it marks as passwords are redacted here. Harvests replaced string
-    values into the known-secrets set first.
-    """
-    if not isinstance(options, dict) or not isinstance(data_schema, list):
-        return options
-    # Local import: config_entry_flow_form imports tool helpers; keep this
-    # module importable from config-adjacent contexts without dragging the
-    # tools package in at module import time.
-    from .tools.config_entry_flow_form import iter_schema_fields
-
-    out = dict(options)
-    _redact_nested_sections(out, data_schema)
-    for field in iter_schema_fields(data_schema):
-        if not is_password_flow_field(field):
-            continue
-        name = field.get("name")
-        if not isinstance(name, str) or name not in out:
-            continue
-        value = out[name]
-        if is_sentinel(value):
-            continue
-        harvest_secret_strings(value)
-        out[name] = sentinel_replacement(value)
-    return out
-
-
-def _redact_nested_sections(out: dict[str, Any], data_schema: list[Any]) -> None:
-    """Redact the password fields inside each named section's nested dict.
-
-    Stored options keep a section's fields nested under the section name. The
-    ``iter_schema_fields`` pass in :func:`redact_options_by_flow_schema` yields
-    section fields too, but matches their names only against top-level keys, so
-    it never reaches the nested dict.
-    """
-    for field in data_schema:
-        if not isinstance(field, dict):
-            continue
-        nested = field.get("schema")
-        if isinstance(nested, list):
-            name = field.get("name")
-            if isinstance(name, str) and isinstance(out.get(name), dict):
-                out[name] = redact_options_by_flow_schema(out[name], nested)
-
-
-# ---------------------------------------------------------------------------
-# Surface 3: known-value scrub across all tool responses
-# ---------------------------------------------------------------------------
-
-
-def register_known_secret_values(values: Iterable[str]) -> None:
-    """Remember live secret values for the global response scrub.
-
-    Values shorter than ``_MIN_KNOWN_SECRET_LEN`` are dropped (substring
-    replacement of tiny fragments corrupts unrelated output). The set is
-    process-local and fills as the server fetches the payloads that carry
-    the secrets; it is only consulted while ``redact_secrets`` is on.
-    """
-    filtered = {
-        v for v in values if isinstance(v, str) and len(v) >= _MIN_KNOWN_SECRET_LEN
-    }
-    if not filtered:
-        return
-    with _known_secrets_lock:
-        _known_secrets.update(filtered)
-
-
-def known_secret_values() -> tuple[str, ...]:
-    """Snapshot of the registered secret values, ordered longest-first.
-
-    The ordering is computed once per snapshot so ``scrub_obj`` does not
-    re-sort for every string node of a large structured payload.
-    """
-    with _known_secrets_lock:
-        return tuple(sorted(_known_secrets, key=len, reverse=True))
-
-
-def _clear_known_secret_values() -> None:
-    """Test hook: empty the known-secrets set."""
-    with _known_secrets_lock:
-        _known_secrets.clear()
-
-
-def scrub_text(text: str, secrets: Sequence[str]) -> str:
-    """Replace every occurrence of each known secret with ``<redacted>``.
-
-    ``secrets`` must be ordered longest-first (``known_secret_values``
-    provides that) so a secret that is a substring of another cannot leave
-    fragments behind.
-    """
-    for secret in secrets:
-        if secret in text:
-            text = text.replace(secret, REDACTED_KNOWN)
-    return text
-
-
-def with_serialized_variants(secrets: Sequence[str]) -> tuple[str, ...]:
-    """Secrets plus their JSON-escaped forms, ordered longest-first.
-
-    FastMCP serializes a dict response into its text content block, so a
-    secret containing a quote, backslash, or newline appears there in its
-    JSON-escaped form (``abc\\"def``) — a raw-value scrub would miss it.
-    ToolError payloads are JSON strings with the same property.
-    """
-    variants = set(secrets)
-    for secret in secrets:
-        escaped = json.dumps(secret)[1:-1]
-        if escaped != secret:
-            variants.add(escaped)
-    return tuple(sorted(variants, key=len, reverse=True))
-
-
-def scrub_obj(obj: Any, secrets: Sequence[str]) -> Any:
-    """Recursively scrub known secret values from a JSON-shaped object.
-
-    Dict keys are scrubbed too (a key can carry a secret); when two scrubbed
-    keys collide, later ones get a deterministic ``#N`` suffix so no entry is
-    silently dropped.
-    """
-    if isinstance(obj, str):
-        return scrub_text(obj, secrets)
-    if isinstance(obj, dict):
-        out: dict[Any, Any] = {}
-        for key, value in obj.items():
-            # Keys are scrubbed via scrub_text directly: a dict key is
-            # always hashable, so a string is the only key shape that can
-            # carry a secret.
-            new_key = scrub_text(key, secrets) if isinstance(key, str) else key
-            if isinstance(new_key, str) and new_key in out:
-                suffix = 2
-                while f"{new_key}#{suffix}" in out:
-                    suffix += 1
-                new_key = f"{new_key}#{suffix}"
-            out[new_key] = scrub_obj(value, secrets)
-        return out
-    if isinstance(obj, list):
-        return [scrub_obj(item, secrets) for item in obj]
-    return obj
 
 
 class RedactSecretsMiddleware(Middleware):

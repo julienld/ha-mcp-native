@@ -538,7 +538,7 @@ async def test_set_helper_wait_resolves_via_component_no_dump_no_sleep() -> None
     with (
         patch_ws(ws, component_registry_lookup),
         patch(
-            "ha_mcp.tools.config_helpers.flow.asyncio.sleep", new_callable=AsyncMock
+            "ha_mcp.runtime.flows.helpers.asyncio.sleep", new_callable=AsyncMock
         ) as sleep_mock,
     ):
         entities, warnings = await _wait_for_flow_entities(

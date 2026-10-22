@@ -1,7 +1,7 @@
 """Helper semantic ports preserve the remote client's at-most-once boundary."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -213,6 +213,15 @@ async def test_snapshot_await_cannot_overwrite_a_newer_native_item(
 async def test_shared_helper_runs_one_native_utility_meter_flow(
     native: object, flows: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import sys
+
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.loader",
+        SimpleNamespace(
+            async_get_config_flows=AsyncMock(return_value={"utility_meter"})
+        ),
+    )
     hass = _hass(FakeCollection())
     authorize(hass)
     flow = SimpleNamespace(
@@ -234,7 +243,7 @@ async def test_shared_helper_runs_one_native_utility_meter_flow(
                 "result": {"entry_id": "meter-entry", "title": "Daily Meter"},
             }
         ),
-        async_abort=AsyncMock(),
+        async_abort=Mock(),
     )
     hass.config_entries = SimpleNamespace(flow=flow, async_entries=lambda domain: [])
     view = make_view(
@@ -287,6 +296,8 @@ async def test_same_public_flow_uses_existing_remote_flow_methods(
         ),
     )
     client = SimpleNamespace(
+        _request=AsyncMock(return_value=["utility_meter"]),
+        abort_config_flow=AsyncMock(return_value={}),
         send_websocket_message=AsyncMock(return_value={"success": True, "result": []}),
         start_config_flow=AsyncMock(
             return_value={
@@ -330,7 +341,11 @@ async def test_same_public_flow_uses_existing_remote_flow_methods(
         "title": "Daily Meter",
         "entity_ids": ["sensor.daily_meter"],
     }
-    client.start_config_flow.assert_awaited_once_with("utility_meter")
+    assert client.start_config_flow.await_args_list == [
+        call("utility_meter"),
+        call("utility_meter"),
+    ]
+    client.abort_config_flow.assert_awaited_once_with("flow")
     client.submit_config_flow_step.assert_awaited_once_with(
         "flow", {"name": "Daily Meter", "source": "sensor.energy", "cycle": "daily"}
     )

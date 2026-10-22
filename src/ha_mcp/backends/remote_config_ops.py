@@ -11,6 +11,7 @@ CONFIG_READ_OPERATIONS = frozenset(
         "config.automation.read",
         "config.script.read",
         "config.scene.read",
+        "config.scene.resolve",
         "config.entity_id",
         "entities.category.read",
         "zones.snapshot",
@@ -32,6 +33,13 @@ async def _read_item(
     identifier = arguments["identifier"]
     domain = operation.split(".")[1]
     try:
+        if operation == "config.scene.resolve":
+            resolution = await client._resolve_scene(arguments["identifier"])
+            return {
+                "storage_key": resolution.storage_key,
+                "registry_hit": resolution.registry_hit,
+                "platform": resolution.platform,
+            }
         if domain == "scene" and arguments.get("resolution") is not None:
             from ha_mcp.client.rest_client import SceneResolution
 
@@ -89,9 +97,18 @@ async def execute_config_operation(
             "config.automation.read",
             "config.script.read",
             "config.scene.read",
+            "config.scene.resolve",
         }:
             return await _read_item(client, operation, arguments)
         if operation == "config.entity_id":
+            if arguments["domain"] == "script":
+                from ha_mcp.tools.entity_registration import (
+                    resolve_entity_id_after_write,
+                )
+
+                return await resolve_entity_id_after_write(
+                    client, arguments["identifier"], "script", timeout=0
+                )
             if arguments["domain"] == "automation":
                 from ha_mcp.tools.tools_config_automations import AutomationConfigTools
 

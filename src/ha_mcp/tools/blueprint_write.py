@@ -19,22 +19,11 @@ from ..backup_manager import _CAPTURE_TRANSIENT_ERRORS, get_backup_manager
 from ..client.rest_client import HomeAssistantError
 from ..config import get_global_settings
 from ..errors import ErrorCode, create_error_response
+from ..runtime.blueprint_substitute import error_text as error_text
 from .blueprint_sources import parse_blueprint_body
 from .helpers import raise_tool_error
 
 logger = logging.getLogger(__name__)
-
-
-def error_text(response: dict[str, Any], fallback: str) -> str:
-    """Render Home Assistant's WebSocket error payload as a message string.
-
-    ``send_websocket_message`` surfaces the error either as a plain string or
-    as core's ``{"code": ..., "message": ...}`` envelope.
-    """
-    error = response.get("error", fallback)
-    if isinstance(error, dict):
-        return str(error.get("message", error) or fallback)
-    return str(error or fallback)
 
 
 def error_code(response: dict[str, Any]) -> str:

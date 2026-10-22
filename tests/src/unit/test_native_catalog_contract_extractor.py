@@ -26,7 +26,12 @@ def test_shared_method_reexports_keep_their_original_catalog_metadata() -> None:
         )
     }
     current = {tool["name"]: tool for tool in extractor.extract_tools()}
-    migrated = ("ha_get_state", "ha_list_services", "ha_list_floors_areas")
+    migrated = (
+        "ha_get_state",
+        "ha_list_services",
+        "ha_list_floors_areas",
+        "ha_manage_custom_tool",
+    )
     missing = [name for name in migrated if name not in current]
     assert not missing, (
         f"Shared tool reexports disappeared from the public catalog: {missing}"

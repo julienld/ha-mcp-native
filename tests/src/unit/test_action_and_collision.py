@@ -345,7 +345,7 @@ class TestBug12NameCollisionFlowHelper:
         # collision check fires before HA is called.
         with (
             patch(
-                "ha_mcp.tools.config_helpers.flow.create_flow_helper",
+                "ha_mcp.runtime.flows.helpers.create_flow_helper",
                 new_callable=AsyncMock,
                 return_value={
                     "entry_id": "shouldnotbecreated",
@@ -377,7 +377,7 @@ class TestBug12NameCollisionFlowHelper:
             )
         )
         with patch(
-            "ha_mcp.tools.config_helpers.flow.create_flow_helper",
+            "ha_mcp.runtime.flows.helpers.create_flow_helper",
             new_callable=AsyncMock,
             return_value={
                 "entry_id": "NEWENTRY",

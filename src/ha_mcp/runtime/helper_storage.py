@@ -7,26 +7,18 @@ from contextlib import asynccontextmanager
 from typing import Any, NoReturn
 
 from ha_mcp.errors import ErrorCode, create_error_response
-from ha_mcp.tool_api import BackendTools, UnsupportedOperation
+from ha_mcp.tool_api import BackendTools
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .errors import raise_failure
-from .helper_flow import create_single_form_helper
 from .helper_params import _prepare_typed_params
 from .helper_payload import check_core_gaps, merged_update, with_create_defaults
 from .helper_schema import (
     _CORE_HELPER_SCHEMAS,
-    _HELPER_SKILL_FILES,
     SIMPLE_HELPER_TYPES,
     _helper_response,
     _simple_helper_error_context,
 )
-from .registry_references import (
-    _raise_if_unknown_area,
-    _raise_if_unknown_category,
-    _raise_if_unknown_labels,
-)
-from .skill_content import apply_skill_content
 from .validation import validate_identifier_not_empty
 
 
@@ -34,9 +26,15 @@ class HelperStorageTools(BackendTools):
     _prepare_typed_params = staticmethod(_prepare_typed_params)
 
     async def _require_helper_type(self, helper_type: str) -> None:
-        if helper_type in SIMPLE_HELPER_TYPES or helper_type == "utility_meter":
+        if helper_type in SIMPLE_HELPER_TYPES:
             return
-        raise UnsupportedOperation(f"helpers.flow.{helper_type}")
+        result = await self.backend.execute(
+            "helpers.flow.types", {"helper_type": helper_type}, self.context
+        )
+        if helper_type not in result["types"]:
+            from .flows.helpers import _raise_unknown_helper_type
+
+            _raise_unknown_helper_type(helper_type, frozenset(result["types"]))
 
     async def _validate_action(
         self, action: str | None, helper_id: str | None, helper_type: str
@@ -115,40 +113,25 @@ class HelperStorageTools(BackendTools):
         *,
         fail_closed: bool,
     ) -> None:
-        requested = (
-            (["area"] if area_id else [])
-            + (["label"] if labels else [])
-            + (["category"] if any(categories.values()) else [])
-        )
-        if not requested:
-            return
-        rows = await self.backend.execute(
-            "helpers.registry.snapshot",
-            {"registries": requested, "category_scopes": list(categories)},
+        from .registry_references import validate_registry_ids
+
+        await validate_registry_ids(
+            self.backend,
             self.context,
+            area_id,
+            labels,
+            categories,
+            fail_closed=fail_closed,
         )
-        if area_id:
-            _raise_if_unknown_area(rows["areas"], area_id)
-        if labels:
-            _raise_if_unknown_labels(rows["labels"], labels)
-        for scope, category in categories.items():
-            if category:
-                _raise_if_unknown_category(rows["categories"][scope], category, scope)
 
     async def _attach_helper_skill(
         self, response: dict[str, Any], mandatory: bool
     ) -> None:
-        resolved = await self.backend.execute(
-            "skills.files",
-            {"references": list(_HELPER_SKILL_FILES) if mandatory else []},
-            self.context,
-        )
-        apply_skill_content(
-            response,
-            resolved["content"],
-            enabled=resolved["enabled"],
-            requested=mandatory,
-            vendor_missing=resolved["vendor_missing"],
+        from .flows.registry import _attach_helper_skill
+        from .flows.session import FlowSession
+
+        await _attach_helper_skill(
+            FlowSession(self.backend, self.context), response, mandatory
         )
 
     async def _create_simple(
@@ -312,35 +295,49 @@ class HelperStorageTools(BackendTools):
         icon: str | None,
         action: str | None,
     ) -> dict[str, Any]:
-        if action != "create":
-            raise UnsupportedOperation(f"helpers.flow.{helper_type}.update")
-        from ha_mcp.tools.coercion import parse_string_list_param
+        from .flows.helpers import _handle_flow_helper
+        from .flows.session import FlowSession
+        from .flows.settings import FlowSettings, bind_flow_settings
 
-        parsed_labels = parse_string_list_param(labels, "labels")
-        await self._validate_registry_ids(
-            area_id, parsed_labels, {"helpers": category}, fail_closed=True
+        session = FlowSession(
+            self.backend, self.context, helper_type=helper_type, capture_backup=True
         )
-        response = await create_single_form_helper(
-            self.backend, self.context, helper_type, name, config, wait=wait
-        )
-        registry = _registry_fields(icon, area_id, parsed_labels, category)
-        if registry and response["entity_ids"]:
-            result = await self.backend.execute(
-                "helpers.entities.update",
-                {"entity_ids": response["entity_ids"], "registry": registry},
-                self.context,
+        flags = await self.backend.execute("config.flow.settings", {}, self.context)
+        with bind_flow_settings(FlowSettings(lambda: flags["redact_secrets"])):
+            response = await _handle_flow_helper(
+                session,
+                helper_type,
+                name,
+                helper_id,
+                config,
+                area_id,
+                labels,
+                category,
+                wait,
+                icon=icon,
+                action=action,
             )
-            response["applied"] = result["applied"]
-            for key in registry:
-                applied = [row[key] for row in result["applied"] if key in row]
-                if applied:
-                    response[key] = applied[0]
-            if result.get("warnings"):
-                response.setdefault("warnings", []).extend(result["warnings"])
+        if session.warnings:
+            response.setdefault("warnings", []).extend(session.warnings)
         return response
 
     async def _set_config_subentry(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise UnsupportedOperation("helpers.subentry.orchestration")
+        from .flows.helpers import _handle_set_config_subentry
+        from .flows.session import FlowSession
+        from .flows.settings import FlowSettings, bind_flow_settings
+
+        session = FlowSession(
+            self.backend,
+            self.context,
+            helper_type="config_subentry",
+            capture_backup=True,
+        )
+        flags = await self.backend.execute("config.flow.settings", {}, self.context)
+        with bind_flow_settings(FlowSettings(lambda: flags["redact_secrets"])):
+            response = await _handle_set_config_subentry(session, *args, **kwargs)
+        if session.warnings:
+            response.setdefault("warnings", []).extend(session.warnings)
+        return response
 
     def _map_helper_error(
         self, error: Exception, action: str | None, helper_type: str

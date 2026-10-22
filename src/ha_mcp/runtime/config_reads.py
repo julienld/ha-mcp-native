@@ -275,7 +275,7 @@ class ScriptReadTools(ConfigReadTools):
 
 class SceneReadTools(ConfigReadTools):
     async def _fetch_scene_config_envelope(self, scene_id: str) -> dict[str, Any]:
-        from .config_read_errors import _raise_scene_not_storage_error
+        from .config_read_errors import raise_scene_config_missing
 
         result = await self.backend.execute(
             "config.scene.read", {"identifier": scene_id}, self.context
@@ -286,23 +286,7 @@ class SceneReadTools(ConfigReadTools):
                 "scene_id": result["storage_key"],
                 "config": result["config"],
             }
-        if result.get("not_in_storage"):
-            _raise_scene_not_storage_error(scene_id, result.get("platform"))
-        raise_failure(
-            create_error_response(
-                ErrorCode.ENTITY_NOT_FOUND,
-                f"Entity 'scene.{scene_id.removeprefix('scene.')}' not found",
-                context={
-                    "entity_id": f"scene.{scene_id.removeprefix('scene.')}",
-                    "scene_id": scene_id,
-                },
-                suggestions=[
-                    "Call ha_config_get_scene() without scene_id to discover scenes",
-                    "Check Home Assistant connection",
-                    "Use ha_get_skill_guide for help",
-                ],
-            )
-        )
+        raise_scene_config_missing(scene_id, result)
 
     async def _resolve_scene_entity_id(
         self, scene_id: str, *, allow_component: bool = False

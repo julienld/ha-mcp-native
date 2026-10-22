@@ -34,6 +34,7 @@ from ..runtime.config_normalize import (
     _normalize_trigger_keys as _normalize_trigger_keys,
 )
 from ..runtime.config_reads import AutomationReadTools
+from ..runtime.config_removals import AutomationRemovalTools
 from ..strict_bps import BestPracticeKeyParam
 from ..utils.config_hash import compute_config_hash
 from ..utils.python_sandbox import (
@@ -315,7 +316,7 @@ def _strip_redundant_identifier_echo(
     return {k: v for k, v in result.items() if k not in excluded}
 
 
-class AutomationConfigTools(AutomationReadTools):
+class AutomationConfigTools(AutomationRemovalTools):
     """Configuration management tools for Home Assistant automations."""
 
     def __init__(self, client: Any) -> None:
@@ -1657,90 +1658,40 @@ class AutomationConfigTools(AutomationReadTools):
                 )
             )
 
-    @tool(
+    ha_config_remove_automation = tool(
         name="ha_config_remove_automation",
         tags={"Automations"},
         annotations=write_hints(
             "Remove Automation", destructive=True, idempotent=True, open_world=False
         ),
+    )(
+        with_auto_backup(domain="automation", id_param="identifier")(
+            log_tool_usage(
+                legacy_errors(AutomationRemovalTools.ha_config_remove_automation)
+            )
+        )
     )
-    @with_auto_backup(domain="automation", id_param="identifier")
-    @log_tool_usage
-    async def ha_config_remove_automation(
-        self,
-        identifier: Annotated[
-            str,
-            Field(
-                description="Automation entity_id (e.g., 'automation.old_automation') or unique_id to delete"
-            ),
-        ],
-        wait: Annotated[
-            bool,
-            Field(
-                description="Wait for automation to be fully removed before returning.",
-                default=True,
-            ),
-        ] = True,
-    ) -> dict[str, Any]:
-        """Delete a Home Assistant automation permanently.
 
-        The returned `automation_id` is the resolved entity_id (canonical
-        form, e.g. `automation.morning_routine`) when the registry lookup
-        succeeded before the delete, falling back to the input
-        `identifier` otherwise.
+    async def _delete_automation(self, identifier: str) -> dict[str, Any]:
+        return await self._client.delete_automation_config(identifier)
 
-        EXAMPLES:
-        - Delete automation: ha_config_remove_automation("automation.old_automation")
-        - Delete by unique_id: ha_config_remove_automation("my_unique_id")
-        """
-        try:
-            # Empty/whitespace would surface as a misleading HA delete-failure.
-            validate_identifier_not_empty(
-                identifier,
-                "identifier",
-                suggestions=[
-                    "Use ha_search(domain_filter='automation') to find existing automations"
-                ],
-                context={"operation": "remove_automation"},
-            )
-            # Resolve entity_id for wait verification (identifier may be a unique_id)
-            entity_id_for_wait = await self._resolve_automation_entity_id(
-                identifier, allow_component=True
-            )
-            if not entity_id_for_wait:
-                logger.warning(
-                    f"Could not resolve unique_id '{identifier}' to entity_id -- wait verification will be skipped"
-                )
+    async def _verify_removed(self, entity_id: str, result: dict[str, Any]) -> None:
+        await verify_entity_removed(self._client, entity_id, result)
 
-            result = await self._client.delete_automation_config(identifier)
-
-            # Wait for entity to be removed
-            if wait and entity_id_for_wait:
-                await verify_entity_removed(self._client, entity_id_for_wait, result)
-
-            return {
-                "success": True,
-                "action": "delete",
-                "automation_id": (
-                    entity_id_for_wait or identifier or result.get("unique_id")
-                ),
-                **_strip_redundant_identifier_echo(result),
-            }
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            if isinstance(e, HomeAssistantAPIError) and e.status_code == 404:
-                await self._raise_automation_not_found(identifier)
-            exception_to_structured_error(
-                e,
-                context={"identifier": identifier, "action": "delete"},
-                suggestions=[
-                    "Verify automation exists using ha_search(domain_filter='automation')",
-                    "Use entity_id format: automation.morning_routine or unique_id",
-                    "Check Home Assistant connection",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
+    async def _map_remove_error(self, e: Exception, identifier: str) -> NoReturn:
+        if isinstance(e, ToolError):
+            raise e
+        if isinstance(e, HomeAssistantAPIError) and e.status_code == 404:
+            await self._raise_automation_not_found(identifier)
+        exception_to_structured_error(
+            e,
+            context={"identifier": identifier, "action": "delete"},
+            suggestions=[
+                "Verify automation exists using ha_search(domain_filter='automation')",
+                "Use entity_id format: automation.morning_routine or unique_id",
+                "Check Home Assistant connection",
+            ],
+        )
 
 
 def register_config_automation_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

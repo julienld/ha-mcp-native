@@ -5,6 +5,29 @@ from typing import Any
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
 
+async def read_flow_operation(
+    client: Any, operation: str, arguments: dict[str, Any]
+) -> Any:
+    if operation == "config.entries.read":
+        return await client.get_config_entry(arguments["entry_id"])
+    if operation == "config.subentries.list":
+        response = await client.list_config_subentries(arguments["entry_id"])
+        if not isinstance(response, dict) or response.get("success") is not True:
+            raise ToolFailure("RESOURCE_NOT_FOUND", "Could not list config subentries.")
+        return response["result"]
+    if operation == "config.flow.settings":
+        from ha_mcp.redaction import redaction_enabled
+
+        return {"redact_secrets": redaction_enabled()}
+    if operation == "helpers.flow.types":
+        from ha_mcp.tools.helper_flows import listed_helper_flows
+
+        return {
+            "types": sorted(await listed_helper_flows(client, arguments["helper_type"]))
+        }
+    raise UnsupportedOperation(operation)
+
+
 class RemoteFlows:
     def __init__(self, client: Any) -> None:
         self.client = client
@@ -27,6 +50,20 @@ class RemoteFlows:
                     status="not_started",
                 )
             kind = arguments.get("kind", "config")
+            expected = arguments.get("expected_modified_at")
+            if expected is not None and kind in {"options", "subentry"}:
+                entry_id = (
+                    arguments["handler"]
+                    if kind == "options"
+                    else arguments["handler"][0]
+                )
+                current = await self.client.get_config_entry(entry_id)
+                if current.get("modified_at") != expected:
+                    raise ToolFailure(
+                        "CONFIG_CONFLICT",
+                        "The config entry changed after its snapshot was read.",
+                        status="not_started",
+                    )
             result: dict[str, Any] = await self._start(kind, arguments)
             self._record(result, kind, context)
             return result
@@ -71,7 +108,10 @@ class RemoteFlows:
         if kind == "subentry":
             entry_id, subentry_type = arguments["handler"]
             result = await self.client.start_config_subentry_flow(
-                entry_id, subentry_type, subentry_id=arguments.get("subentry_id")
+                entry_id,
+                subentry_type,
+                subentry_id=arguments.get("subentry_id"),
+                show_advanced_options=arguments.get("show_advanced_options"),
             )
             return result
         raise UnsupportedOperation(f"config.flow.kind.{kind}")

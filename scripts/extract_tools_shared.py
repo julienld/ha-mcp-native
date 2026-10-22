@@ -117,8 +117,8 @@ class SharedToolExtractor:
                     return self.resolve_function(source, alias.name, seen)
         return None
 
-    def extract(self, node: ast.Assign, path: Path) -> dict | None:
-        """Resolve ``method = tool(...)(wrapper(SharedOwner.method))``."""
+    def extract(self, node: ast.Assign | ast.Expr, path: Path) -> dict | None:
+        """Resolve decorator application to a shared class or instance method."""
         bound = self._bound_method(node, path)
         if bound is None:
             return None
@@ -128,13 +128,17 @@ class SharedToolExtractor:
         return self.extract_tool(method, path.name, scope)
 
     def _bound_method(
-        self, node: ast.Assign, path: Path
+        self, node: ast.Assign | ast.Expr, path: Path
     ) -> tuple[ast.Call, ast.AsyncFunctionDef, Any] | None:
         value = node.value
         if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Call):
             return None
         decorator = value.func
-        if not isinstance(decorator.func, ast.Name) or decorator.func.id != "tool":
+        function = decorator.func
+        if not (
+            (isinstance(function, ast.Name) and function.id == "tool")
+            or (isinstance(function, ast.Attribute) and function.attr == "tool")
+        ):
             return None
         for reference in ast.walk(value):
             if not isinstance(reference, ast.Attribute) or not isinstance(
@@ -143,9 +147,42 @@ class SharedToolExtractor:
                 continue
             resolved = self._method(path, reference.value.id, reference.attr, set())
             if resolved is None:
+                owner = self._instance_owner(path, node, reference.value.id)
+                if owner is not None:
+                    resolved = self._method(path, owner, reference.attr, set())
+            if resolved is None:
                 continue
             method, scope = resolved
             return decorator, method, scope
         raise ValueError(
             f"Cannot resolve shared tool registration in {path.name}:{node.lineno}"
         )
+
+    @staticmethod
+    def _instance_owner(path: Path, registration: ast.AST, name: str) -> str | None:
+        """Resolve an unambiguous ``instance = SharedClass(...)`` in its scope."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        scopes = [
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and item.lineno <= registration.lineno <= (item.end_lineno or item.lineno)
+        ]
+        scope = (
+            min(scopes, key=lambda item: (item.end_lineno or item.lineno) - item.lineno)
+            if scopes
+            else tree
+        )
+        constructors = {
+            item.value.func.id
+            for item in ast.walk(scope)
+            if isinstance(item, ast.Assign)
+            and item.lineno < registration.lineno
+            and any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in item.targets
+            )
+            and isinstance(item.value, ast.Call)
+            and isinstance(item.value.func, ast.Name)
+        }
+        return next(iter(constructors)) if len(constructors) == 1 else None

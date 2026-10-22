@@ -29,6 +29,7 @@ from ..errors import (
     create_error_response,
 )
 from ..runtime.config_reads import SceneReadTools
+from ..runtime.config_removals import SceneRemovalTools
 from ..strict_bps import BestPracticeKeyParam
 from ..tool_api import ToolFailure
 from ..utils.config_hash import compute_config_hash
@@ -113,7 +114,7 @@ def _skip_scene_activation_backup(kwargs: dict[str, Any]) -> bool:
     )
 
 
-class ConfigSceneTools(SceneReadTools):
+class ConfigSceneTools(SceneRemovalTools):
     """Scene configuration management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
@@ -1206,110 +1207,41 @@ class ConfigSceneTools(SceneReadTools):
         )
         return response
 
-    @tool(
+    ha_config_remove_scene = tool(
         name="ha_config_remove_scene",
         tags={"Scenes"},
         annotations=write_hints(
             "Remove Scene", destructive=True, idempotent=True, open_world=False
         ),
+    )(
+        with_auto_backup(domain="scene", id_param="scene_id")(
+            log_tool_usage(legacy_errors(SceneRemovalTools.ha_config_remove_scene))
+        )
     )
-    @with_auto_backup(domain="scene", id_param="scene_id")
-    @log_tool_usage
-    async def ha_config_remove_scene(
-        self,
-        scene_id: Annotated[
-            str, Field(description="Scene identifier to delete (e.g., 'old_scene')")
-        ],
-        wait: Annotated[
-            bool,
-            Field(
-                description="Wait for scene to be fully removed before returning.",
-                default=True,
-            ),
-        ] = True,
-    ) -> dict[str, Any]:
-        """Delete a Home Assistant scene.
 
-        EXAMPLE: ha_config_remove_scene("old_scene")
+    async def _resolve_scene_config(self, scene_id: str) -> Any:
+        return await self._client._resolve_scene(scene_id)
 
-        Only scenes created via the Home Assistant UI can be deleted. Scenes
-        defined in YAML configuration files (scenes.yaml or configuration.yaml)
-        cannot be deleted through the API and return a 405 Method Not Allowed
-        error; edit the configuration file directly instead.
+    async def _delete_scene(self, scene_id: str, *, resolution: Any) -> dict[str, Any]:
+        return await self._client.delete_scene_config(scene_id, resolution=resolution)
 
-        WARNING: Deleting a scene that is referenced by automations or scripts
-        (via ``scene.turn_on``) may cause those to fail.
-        """
-        try:
-            # Issue #1168 R6 blocker 16: empty ``scene_id`` pre-flight before
-            # the resolver — keeps the error code/message aligned with the
-            # actual problem. Migrated to the shared
-            # ``validate_identifier_not_empty`` helper (#1314) — message
-            # and ``context["scene_id"]`` key preserved for callers.
-            validate_identifier_not_empty(
-                scene_id,
-                "scene_id",
-                message="scene_id must not be empty",
-                suggestions=[
-                    "Pass a non-empty scene identifier (e.g. 'old_scene')",
-                    "Use ha_search(domain_filter='scene') to find existing scene_ids",
-                ],
-                context={"scene_id": scene_id},
-            )
-            # Issue #1168 R3 blocker 6: resolve once up-front so every later
-            # callsite (entity_id resolver, delete call, response) uses the
-            # storage key consistently — outer ``scene_id`` matches the
-            # inner body regardless of whether the caller passed the
-            # entity_id slug or the storage key. The rich resolution also
-            # carries ``registry_hit``/``platform`` so a config-API 404 on a
-            # non-storage scene (Hue/vendor, raw-YAML) classifies as
-            # CONFIG_NOT_FOUND rather than the misleading generic 404 (#1971).
-            resolution = await self._client._resolve_scene(scene_id)
-            resolved_id = resolution.storage_key
+    async def _verify_removed(self, entity_id: str, result: dict[str, Any]) -> None:
+        await verify_entity_removed(self._client, entity_id, result)
 
-            # Resolve actual entity_id BEFORE delete — once the registry
-            # entry is gone, the unique_id lookup can no longer find it.
-            # Falls back to f"scene.{resolved_id}" if the registry has no
-            # matching unique_id (e.g. scene_id-as-entity-id slug case).
-            entity_id = await self._resolve_scene_entity_id(
-                resolved_id, allow_component=True
-            )
-
-            # Thread the resolution through so delete_scene_config reuses the
-            # storage key (no redundant re-resolve) and can classify a 404.
-            result = await self._client.delete_scene_config(
-                scene_id, resolution=resolution
-            )
-
-            if wait:
-                await verify_entity_removed(self._client, entity_id, result)
-
-            return {
-                "success": True,
-                "action": "delete",
-                **result,
-                "scene_id": resolved_id,
-            }
-        except ToolError:
-            raise
-        except SceneStorageConfigNotFoundError as e:
-            # Entity resolved but scenes.yaml has no config for it - a Hue/
-            # vendor or raw-YAML scene, not a genuinely missing entity (#1971).
+    async def _map_remove_error(self, e: Exception, scene_id: str) -> NoReturn:
+        if isinstance(e, ToolError):
+            raise e
+        if isinstance(e, SceneStorageConfigNotFoundError):
             _raise_scene_not_storage_error(e.scene_id, e.platform)
-        except Exception as e:
-            exception_to_structured_error(
-                e,
-                context={"scene_id": scene_id},
-                suggestions=[
-                    "Verify scene_id exists using ha_search(domain_filter='scene')",
-                    "Check if scene is being used by automations or scripts",
-                    "Use ha_get_skill_guide for help",
-                ],
-            )
-            # ``exception_to_structured_error`` always raises (NoReturn); this
-            # explicit raise makes the function's exit unambiguous (no implicit
-            # ``return None`` fall-through) and is never reached at runtime.
-            raise
+        exception_to_structured_error(
+            e,
+            context={"scene_id": scene_id},
+            suggestions=[
+                "Verify scene_id exists using ha_search(domain_filter='scene')",
+                "Check if scene is being used by automations or scripts",
+                "Use ha_get_skill_guide for help",
+            ],
+        )
 
 
 def register_config_scene_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

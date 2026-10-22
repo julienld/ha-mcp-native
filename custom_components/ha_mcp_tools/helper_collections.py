@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -245,8 +246,26 @@ def _apply_registry(
     return applied
 
 
+async def _write_collection_item(
+    collection: Any,
+    msg: dict[str, Any],
+    data: dict[str, Any],
+    writer: Callable[[Any, str, str | None, dict[str, Any]], Awaitable[Any]] | None,
+) -> Any:
+    if writer is not None:
+        return await writer(collection, msg["action"], msg.get("item_id"), data)
+    if msg["action"] == "create":
+        return await collection.async_create_item(data)
+    return await collection.async_update_item(msg["item_id"], data)
+
+
 async def async_write_item(
-    hass: HomeAssistant, registry: Any, msg: dict[str, Any]
+    hass: HomeAssistant,
+    registry: Any,
+    msg: dict[str, Any],
+    *,
+    writer: Callable[[Any, str, str | None, dict[str, Any]], Awaitable[Any]]
+    | None = None,
 ) -> dict[str, Any]:
     """Create or update a stored item, then apply its entity-registry fields.
 
@@ -264,10 +283,7 @@ async def async_write_item(
     # update), so an error once the data changed is not a rejection: it
     # propagates and the server reports an unknown outcome.
     try:
-        if msg["action"] == "create":
-            item = await collection.async_create_item(data)
-        else:
-            item = await collection.async_update_item(msg["item_id"], data)
+        item = await _write_collection_item(collection, msg, data, writer)
     except _item_not_found() as err:
         return _failure("not_found", f"{helper_type} config not found: {err}")
     except _INVALID_ERRORS as err:
