@@ -1,0 +1,7 @@
+{
+  "domain": "native_fixture",
+  "name": "Native migration CI fixture",
+  "version": "0.1.0",
+  "dependencies": ["http"],
+  "requirements": []
+}

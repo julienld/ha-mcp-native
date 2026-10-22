@@ -1,0 +1,324 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = ["httpx>=0.28.1,<0.29"]
+# ///
+
+"""Exercise the actual HACS candidate on a disposable Home Assistant Container."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+import time
+from pathlib import Path
+
+import httpx
+
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG = ROOT / "tests/native/.ha-test/config"
+OUT = ROOT / "tests/native/out"
+BASE = "http://127.0.0.1:8123"
+CONTAINER = "ha-mcp-native-migration"
+
+
+def docker(*arguments: str, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", *arguments], check=check, capture_output=True, text=True
+    )
+
+
+def unpack(response: httpx.Response) -> dict:
+    response.raise_for_status()
+    if "text/event-stream" in response.headers.get("content-type", ""):
+        messages = [
+            json.loads(line[5:].strip())
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        return next(
+            message
+            for message in reversed(messages)
+            if "result" in message or "error" in message
+        )
+    return response.json()
+
+
+def message(method: str, arguments: dict | None = None, *, modern: bool = True) -> dict:
+    params = dict(arguments or {})
+    if modern:
+        params["_meta"] = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+    return {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+
+
+async def wait_identities() -> dict:
+    target = CONFIG / "test-identities.json"
+    deadline = time.monotonic() + 240
+    while not target.exists():
+        if time.monotonic() > deadline:
+            raise TimeoutError("Home Assistant fixture startup")
+        await asyncio.sleep(1)
+    return json.loads(target.read_text())
+
+
+async def login(client: httpx.AsyncClient, identity: dict) -> dict:
+    client_id = BASE + "/"
+    response = await client.post(
+        BASE + "/auth/login_flow",
+        json={
+            "client_id": client_id,
+            "handler": ["homeassistant", None],
+            "redirect_uri": client_id,
+        },
+    )
+    response.raise_for_status()
+    response = await client.post(
+        BASE + "/auth/login_flow/" + response.json()["flow_id"],
+        json={
+            "client_id": client_id,
+            "username": identity["username"],
+            "password": identity["password"],
+        },
+    )
+    response.raise_for_status()
+    response = await client.post(
+        BASE + "/auth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": response.json()["result"],
+            "client_id": client_id,
+        },
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+class Checks:
+    def __init__(self, client: httpx.AsyncClient, credentials: dict) -> None:
+        self.client = client
+        self.credentials = credentials
+        self.path = ""
+        self.results: list[str] = []
+
+    def passed(self, name: str) -> None:
+        self.results.append(name)
+        print("PASS", name, flush=True)
+
+    def headers(
+        self, user: str = "alpha", *, method: str = "tools/list", name: str = ""
+    ) -> dict:
+        result = {
+            "Authorization": "Bearer " + self.credentials[user]["access_token"],
+            "Accept": "application/json, text/event-stream",
+            "Mcp-Method": method,
+        }
+        if name:
+            result["Mcp-Name"] = name
+        return result
+
+    async def control(self, operation: str, body: dict | None = None) -> dict:
+        url = BASE + "/api/native_fixture/" + operation
+        response = (
+            await self.client.get(url, headers=self.headers())
+            if body is None
+            else await self.client.post(url, headers=self.headers(), json=body)
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def ready(self) -> dict:
+        deadline = time.monotonic() + 90
+        while True:
+            probe = await self.control("probe")
+            if probe["ready"]:
+                self.path = probe["path"]
+                return probe
+            if time.monotonic() > deadline:
+                raise TimeoutError("Native entry startup")
+            await asyncio.sleep(0.5)
+
+    async def rpc(
+        self, method: str, params: dict | None = None, user: str = "alpha"
+    ) -> dict:
+        response = await self.client.post(
+            BASE + self.path,
+            headers=self.headers(
+                user, method=method, name=(params or {}).get("name", "")
+            ),
+            json=message(method, params),
+        )
+        return unpack(response)
+
+    async def call(self, name: str, arguments: dict | None = None) -> dict:
+        body = await self.rpc(
+            "tools/call", {"name": name, "arguments": arguments or {}}
+        )
+        assert "error" not in body, body
+        result = body["result"]
+        assert not result.get("isError"), result
+        if result.get("structuredContent") is not None:
+            return result["structuredContent"]
+        return json.loads(
+            next(
+                block["text"] for block in result["content"] if block["type"] == "text"
+            )
+        )
+
+
+async def create_entry(checks: Checks, owner: str) -> None:
+    url = BASE + "/api/config/config_entries/flow"
+    response = await checks.client.post(
+        url,
+        headers=checks.headers(),
+        json={
+            "handler": "ha_mcp_tools",
+            "show_advanced_options": False,
+        },
+    )
+    response.raise_for_status()
+    flow = response.json()
+    url += "/" + flow["flow_id"]
+    if flow["type"] == "menu":
+        response = await checks.client.post(
+            url, headers=checks.headers(), json={"next_step_id": "server"}
+        )
+        response.raise_for_status()
+        flow = response.json()
+    assert flow["step_id"] == "server", flow
+    response = await checks.client.post(
+        url,
+        headers=checks.headers(),
+        json={
+            "native_owner_user_id": owner,
+            "remote_access": "ha_auth",
+        },
+    )
+    response.raise_for_status()
+    assert response.json()["type"] == "create_entry", response.json()
+    await checks.ready()
+
+
+async def exercise(checks: Checks) -> dict:
+    probe = await checks.ready()
+    assert probe["manager_type"] == "NativeServerManager", probe
+    assert "admin_token" not in probe["entry_data_keys"], probe
+    checks.passed("new_native_entry_without_internal_admin_token")
+    assert checks.path.startswith("/api/webhook/"), checks.path
+    original_path = checks.path
+    catalog = (await checks.rpc("tools/list"))["result"]["tools"]
+    assert {"ha_get_state", "ha_list_services"} <= {tool["name"] for tool in catalog}
+    checks.passed("existing_webhook_URL_and_modern_MCP")
+    await checks.control("guard", {})
+    state = await checks.call("ha_get_state", {"entity_id": "sensor.native_fixture"})
+    assert "ready" in json.dumps(state), state
+    services = await checks.call("ha_list_services", {"domain": "input_boolean"})
+    assert "input_boolean" in json.dumps(services), services
+    checks.passed("shared_state_and_service_tools_on_Core")
+    for headers, expected in (({}, 401), (checks.headers("reader"), 403)):
+        response = await checks.client.post(
+            BASE + checks.path, headers=headers, json=message("tools/list")
+        )
+        assert response.status_code == expected, response.status_code
+    checks.passed("missing_and_non_admin_identity_rejected")
+    response = await checks.client.post(
+        BASE + checks.path,
+        headers=checks.headers(),
+        json=message(
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "native-legacy-ci", "version": "1"},
+            },
+            modern=False,
+        ),
+    )
+    assert "result" in unpack(response)
+    checks.passed("legacy_initialize")
+    await checks.control("configure", {})
+    await checks.ready()
+    result = await checks.control(
+        "llm",
+        {
+            "tool_name": "ha_get_state",
+            "arguments": {
+                "entity_id": "sensor.native_fixture",
+            },
+        },
+    )
+    assert not result["error"] and "ready" in json.dumps(result), result
+    checks.passed("shared_tool_exported_to_Assist")
+    imported = await checks.call("ha_native_llm_tools", {"api_id": "native_fixture"})
+    assert "native_fixture/NativeEcho" in json.dumps(imported), imported
+    reply = await checks.call(
+        "ha_native_llm_call",
+        {
+            "name": "native_fixture/NativeEcho",
+            "arguments": {"text": "native"},
+        },
+    )
+    assert "NATIVE" in json.dumps(reply), reply
+    checks.passed("native_LLM_API_import_with_original_validator")
+    await checks.control("reload", {})
+    final = await checks.ready()
+    assert checks.path == original_path
+    assert final["listeners"] == [8123], final
+    assert not final["server_threads"] and not final["remote_imports"], final
+    assert final["owned_tasks"] == 0 and final["loopback_attempts"] == 0, final
+    assert final["ticks"] > probe["ticks"], final
+    checks.passed("reload_single_listener_no_server_thread_remote_import_or_loopback")
+    return final
+
+
+async def main() -> None:
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
+    (CONFIG / "configuration.yaml").write_text(
+        "homeassistant:\n  name: Native migration CI\n  latitude: 0\n  longitude: 0\n"
+        "  elevation: 0\n  unit_system: metric\n  time_zone: UTC\n  auth_providers:\n"
+        "    - type: homeassistant\nhttp:\ninput_boolean:\n  native_light:\n"
+        "    name: Native Light\nnative_fixture:\n",
+        encoding="utf-8",
+    )
+    docker(
+        "run",
+        "-d",
+        "--name",
+        CONTAINER,
+        "-p",
+        "127.0.0.1:8123:8123",
+        "-v",
+        f"{CONFIG}:/config",
+        "--entrypoint",
+        "/bin/sh",
+        "ha-mcp-native-candidate",
+        "-c",
+        "mkdir -p /config/custom_components && cp -r /opt/native/custom_components/* "
+        "/config/custom_components/ && exec python -m homeassistant --config /config",
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            identities = await wait_identities()
+            credentials = {
+                name: await login(client, identity)
+                for name, identity in identities.items()
+            }
+            checks = Checks(client, credentials)
+            checks.passed("real_HA_authorization_code_flow")
+            await create_entry(checks, identities["alpha"]["user_id"])
+            evidence = await exercise(checks)
+            # Do not persist generated identities or access/refresh tokens.
+            evidence.pop("entry_id", None)
+            evidence["checks"] = checks.results
+            (OUT / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    finally:
+        logs = docker("logs", CONTAINER, check=False)
+        (OUT / "ha.log").write_text(logs.stdout + logs.stderr, encoding="utf-8")
+        docker("rm", "-f", CONTAINER, check=False)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

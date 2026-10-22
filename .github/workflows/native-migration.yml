@@ -31,10 +31,10 @@ jobs:
         with:
           submodules: true
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: '0.13.0'
+          version: "0.13.0"
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
@@ -54,3 +54,47 @@ jobs:
           path: tests/unit-results.xml
           if-no-files-found: ignore
           retention-days: 14
+
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.0"
+          python-version: '3.14'
+      - name: Build matching integration and library
+        env:
+          NATIVE_VERSION: 9.0.0.dev${{ github.run_number }}
+          NATIVE_TAG: native-ci-${{ github.run_id }}
+        run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG"
+      - name: Validate library against Home Assistant constraints
+        run: docker build -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+      - name: Exercise candidate on the real HA HTTP server
+        run: uv run -s tests/native/run_container.py
+      - name: Preserve sanitized native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-container-evidence
+          path: |
+            tests/native/out/evidence.json
+            tests/native/out/ha.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Preserve HACS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-hacs-candidate
+          path: dist/native/
+          retention-days: 14
+      - name: Stop disposable HA
+        if: always()
+        run: docker rm -f ha-mcp-native-migration 2>/dev/null || true
