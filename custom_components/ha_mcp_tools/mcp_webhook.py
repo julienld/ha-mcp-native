@@ -635,6 +635,17 @@ async def _async_handle_webhook(
     if auth_response is not None:
         return auth_response
 
+    if (native := cfg.get("native_manager")) is not None:
+        return await native.async_handle_http(request, cfg, read_only=read_only)
+
+    return await _relay_legacy_request(request, cfg, read_only=read_only)
+
+
+async def _relay_legacy_request(
+    request: web.Request, cfg: dict[str, Any], *, read_only: bool
+) -> web.StreamResponse:
+    """Keep the explicitly selected legacy runtime's HTTP forwarding contract."""
+
     target_url: str = (
         readonly_url(cfg["target_url"]) if read_only else cfg["target_url"]
     )
@@ -834,6 +845,7 @@ async def async_register_webhook(
     oauth_client_secret: str | None = None,
     oauth_signing_key: str | None = None,
     dcr_signing_key: str | None = None,
+    native_manager: Any = None,
 ) -> bool:
     """Register the ingress webhook (and, for ha_auth/legacy, the OAuth surface).
 
@@ -875,9 +887,13 @@ async def async_register_webhook(
     # Runs before the session opens so a raise here cannot leak it.
     _unregister_webhook(hass, webhook_id)
     target_url = f"http://127.0.0.1:{port}{secret_path}"
-    session = aiohttp.ClientSession(
-        timeout=_CLIENT_TIMEOUT,
-        connector=aiohttp.TCPConnector(keepalive_timeout=_RELAY_KEEPALIVE_SECONDS),
+    session = (
+        None
+        if native_manager is not None
+        else aiohttp.ClientSession(
+            timeout=_CLIENT_TIMEOUT,
+            connector=aiohttp.TCPConnector(keepalive_timeout=_RELAY_KEEPALIVE_SECONDS),
+        )
     )
     cimd_session: aiohttp.ClientSession | None = None
     if register_endpoint and auth_mode == WEBHOOK_AUTH_HA:
@@ -888,13 +904,14 @@ async def async_register_webhook(
         except Exception:
             # Creating the isolated pool is part of fail-closed ha_auth setup.
             # Do not leak the already-open relay session if it fails.
-            await session.close()
+            await _close_optional_session(session)
             raise
 
     cfg: dict[str, Any] = {
         "webhook_id": webhook_id,
         "target_url": target_url,
         "session": session,
+        "native_manager": native_manager,
         CFG_CIMD_SESSION: cimd_session,
         "auth_mode": auth_mode,
         "resource_server": None,
@@ -932,7 +949,7 @@ async def async_register_webhook(
             with suppress(Exception):
                 _unregister_webhook(hass, webhook_id)
             with suppress(Exception):
-                await session.close()
+                await _close_optional_session(session)
             if cimd_session is not None:
                 with suppress(Exception):
                     await cimd_session.close()
@@ -951,6 +968,11 @@ async def async_register_webhook(
 
     hass.data.setdefault(DOMAIN, {})[DATA_WEBHOOK] = cfg
     return oauth_restart_needed
+
+
+async def _close_optional_session(session: aiohttp.ClientSession | None) -> None:
+    if session is not None:
+        await session.close()
 
 
 async def async_unregister_webhook(hass: HomeAssistant) -> None:

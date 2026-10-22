@@ -417,6 +417,14 @@ DATA_OAUTH_SIGNING_KEY = "oauth_signing_key"
 # 2.0.0 gain one on their first reload after upgrade.
 DATA_DCR_SIGNING_KEY = "dcr_signing_key"
 DATA_SERVER_USER_ID = "server_user_id"
+DATA_NATIVE_OWNER_ID = "native_owner_user_id"
+# Native transport limits apply per config entry, without another listener.
+OPT_NATIVE_HTTP_LIMIT = "native_http_limit"
+OPT_NATIVE_STREAM_SECONDS = "native_stream_seconds"
+OPT_NATIVE_IMPORT_APIS = "native_import_apis"
+OPT_RUNTIME_MODE = "runtime_mode"
+RUNTIME_NATIVE = "native"
+RUNTIME_LEGACY = "legacy"
 DATA_REFRESH_TOKEN_ID = "refresh_token_id"
 # A long-lived access token of an administrator, supplied by the user (#2427).
 # The server runs with it; entries from older releases may instead carry the

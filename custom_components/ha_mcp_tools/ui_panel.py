@@ -334,6 +334,11 @@ class _ProxyView(HomeAssistantView):
         if cfg is None:
             return web.Response(status=503, text="The MCP server is not running")
 
+        if (native := cfg.get("native_manager")) is not None:
+            from .native_server import native_panel_response
+
+            return native_panel_response(native, request.method, path)
+
         target = f"{cfg['target_url']}/{path}"
         if request.query_string:
             target = f"{target}?{request.query_string}"

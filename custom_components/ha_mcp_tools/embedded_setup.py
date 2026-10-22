@@ -17,7 +17,7 @@ import asyncio
 import logging
 import secrets
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
@@ -50,8 +50,11 @@ from .const import (
     OPT_ENABLE_STARTUP_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
+    OPT_RUNTIME_MODE,
     OPT_SERVER_PORT,
     OPT_WEBHOOK_AUTH,
+    RUNTIME_LEGACY,
+    RUNTIME_NATIVE,
     SERVER_UPDATES_DOCS_URL,
     WEBHOOK_AUTH_LEGACY,
     WEBHOOK_AUTH_NONE,
@@ -81,10 +84,9 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
     """
     _clear_issues(hass)
 
-    manager = EmbeddedServerManager(hass, entry)
-    hass.data.setdefault(DOMAIN, {})[DATA_MANAGER] = manager
-
     try:
+        manager, native = _server_manager(hass, entry)
+        hass.data.setdefault(DOMAIN, {})[DATA_MANAGER] = manager
         await manager.async_start()
 
         # The package is installed and importable now: verify the running
@@ -114,7 +116,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
         oauth_restart_needed = await async_register_webhook(
             hass,
             entry,
-            port=manager.port,
+            port=0 if native else manager.port,
             secret_path=secret_path,
             auth_mode=auth_mode,
             register_endpoint=webhook_enabled,
@@ -122,6 +124,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
             oauth_client_secret=oauth_client_secret,
             oauth_signing_key=entry.data.get(DATA_OAUTH_SIGNING_KEY),
             dcr_signing_key=entry.data.get(DATA_DCR_SIGNING_KEY),
+            native_manager=manager if native else None,
         )
         _async_update_legacy_oauth_issue(hass, oauth_restart_needed)
         if not webhook_enabled:
@@ -152,9 +155,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
         # Advisory: registration failures are contained inside (logged, feature
         # absent) — the running server must never be taken down by them.
         if bool(entry.options.get(OPT_ENABLE_LLM_API, DEFAULT_ENABLE_LLM_API)):
-            await async_register_llm_api(
-                hass, entry, port=manager.port, secret_path=secret_path
-            )
+            await _register_entry_llm(hass, entry, manager, native, secret_path)
         else:
             _LOGGER.info(
                 "Conversation-agent LLM API disabled by option - the toolset "
@@ -191,6 +192,35 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
         _create_issue(hass, entry, "start", str(err))
 
 
+def _server_manager(hass: HomeAssistant, entry: ConfigEntry) -> tuple[Any, bool]:
+    """Existing entries retain their transport until native migration is chosen."""
+    mode = entry.options.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY)
+    if mode not in (RUNTIME_NATIVE, RUNTIME_LEGACY):
+        raise ValueError("Unknown HA-MCP runtime mode")
+    if mode == RUNTIME_NATIVE:
+        from .native_server import NativeServerManager
+
+        return NativeServerManager(hass, entry), True
+    return EmbeddedServerManager(hass, entry), False
+
+
+async def _register_entry_llm(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    manager: Any,
+    native: bool,
+    secret_path: str,
+) -> None:
+    if native:
+        from .native_llm import async_register_native_llm
+
+        await async_register_native_llm(hass, entry, manager)
+    else:
+        await async_register_llm_api(
+            hass, entry, port=manager.port, secret_path=secret_path
+        )
+
+
 async def async_teardown_server(hass: HomeAssistant) -> None:
     """Unregister the LLM API + webhook and stop the server thread (reload-safe,
     idempotent).
@@ -201,9 +231,10 @@ async def async_teardown_server(hass: HomeAssistant) -> None:
     """
     async_unregister_llm_api(hass)
     await async_unregister_webhook(hass)
-    manager = hass.data.get(DOMAIN, {}).pop(DATA_MANAGER, None)
-    if isinstance(manager, EmbeddedServerManager):
+    manager = hass.data.get(DOMAIN, {}).get(DATA_MANAGER)
+    if manager is not None:
         await manager.async_stop()
+        hass.data[DOMAIN].pop(DATA_MANAGER, None)
 
 
 async def async_revoke_credentials_on_remove(
@@ -357,6 +388,8 @@ def build_connect_urls(
     if not urls and webhook_id:
         urls.append(f"/api/webhook/{webhook_id}  (prefix with your Home Assistant URL)")
 
+    if entry.options.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY) == RUNTIME_NATIVE:
+        return urls
     port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
     bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
     secret_path = entry.data.get(DATA_SECRET_PATH)
