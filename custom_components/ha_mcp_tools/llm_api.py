@@ -34,9 +34,10 @@ read-only middleware exactly like any MCP client's call.
 This legacy adapter reaches the server's worker thread and loopback listener
 through real MCP. It shares the side-effect-free schema projection with the
 native adapter but never constructs the standalone runtime in HA. It uses
-loopback streamable HTTP with Home Assistant's shared ``mcp`` SDK (the manifest
-requires ``mcp>=1.24.0``, so 1.x or 2.x), never ha-mcp's vendored copy. Every SDK import here
-is lazy and the first one runs on the executor.
+loopback streamable HTTP with the bundled ``ha_mcp._vendor.mcp`` SDK. This
+keeps its requirements independent of Core's shared SDK. Every SDK import is
+lazy and the first one runs on the executor; no session or SDK class is cached
+across runtime generations.
 
 The tool list is fetched fresh on every ``async_get_api_instance`` call (once
 per conversation turn): exposure toggles and runtime-registered custom tools
@@ -127,8 +128,9 @@ if TYPE_CHECKING:
     import httpx
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.util.json import JsonObjectType
-    from mcp import types as mcp_types
-    from mcp.client.session import ClientSession
+
+    from ha_mcp._vendor.mcp import types as mcp_types
+    from ha_mcp._vendor.mcp.client.session import ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -164,6 +166,8 @@ def _transport_error_leaves() -> tuple[type[BaseException], ...]:
         ("httpx2", "HTTPError"),
         ("mcp", "McpError"),
         ("mcp", "MCPError"),
+        ("ha_mcp._vendor.mcp", "McpError"),
+        ("ha_mcp._vendor.mcp", "MCPError"),
     ):
         module = sys.modules.get(module_name)
         if module is None:
@@ -209,8 +213,8 @@ def _import_mcp_sdk() -> None:
     importable — the caller decides whether that skips registration or
     surfaces as a conversation error.
     """
-    importlib.import_module("mcp.client.session")
-    importlib.import_module("mcp.client.streamable_http")
+    importlib.import_module("ha_mcp._vendor.mcp.client.session")
+    importlib.import_module("ha_mcp._vendor.mcp.client.streamable_http")
     _schema_converter()
 
 
@@ -316,9 +320,9 @@ async def _mcp_session(
     The client is entered on the exit stack so it closes with the rest of
     the session.
     """
-    from mcp.client.session import ClientSession
+    from ha_mcp._vendor.mcp.client.session import ClientSession
 
-    sdk_transport = importlib.import_module("mcp.client.streamable_http")
+    sdk_transport = importlib.import_module("ha_mcp._vendor.mcp.client.streamable_http")
 
     async with AsyncExitStack() as stack:
         streamable_http_client = getattr(sdk_transport, "streamable_http_client", None)

@@ -59,15 +59,7 @@ def _make_entry(options: dict[str, Any] | None = None) -> MagicMock:
 
 
 def _spy_httpx_async_client(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Patch ``httpx.AsyncClient`` to record its constructor kwargs.
-
-    ``verify`` has no public accessor on a constructed client (it is only
-    reachable via private ``_transport`` internals), so pinning it needs
-    capturing the call itself rather than introspecting the result. Returns
-    the dict the next construction's kwargs land in; a real subclass (not a
-    bare Mock) so callers still get a fully functioning client, since
-    ``AsyncExitStack`` drives real ``__aenter__``/``aclose`` on it.
-    """
+    """Record constructor-only options while retaining a real AsyncClient."""
     import httpx
 
     captured: dict[str, Any] = {}
@@ -318,7 +310,7 @@ class TestSchemaConversionCompatibility:
 
         def _import_module(name):
             imports.append((name, threading.get_ident()))
-            if name.startswith("mcp."):
+            if name.startswith("ha_mcp._vendor.mcp."):
                 return SimpleNamespace()
             if name == "voluptuous_openapi":
                 return legacy
@@ -339,8 +331,8 @@ class TestSchemaConversionCompatibility:
         assert llm_api.convert_to_voluptuous(schema) == {"voluptuous_openapi": schema}
 
         assert [name for name, _ in imports] == [
-            "mcp.client.session",
-            "mcp.client.streamable_http",
+            "ha_mcp._vendor.mcp.client.session",
+            "ha_mcp._vendor.mcp.client.streamable_http",
             "voluptuous_openapi",
         ]
         assert all(thread_id != main_thread for _, thread_id in imports)
@@ -772,16 +764,9 @@ class TestLoopbackHttpClientTimeout:
         self, monkeypatch
     ):
         """_mcp_session's own client must carry the generous timeout, not httpx's default."""
-        # Regression test (kpop-timeout investigation): _mcp_session used to
-        # hand the SDK Home Assistant's shared httpx client
-        # (helpers.httpx_client.get_async_client). HA never configures that
-        # client with an explicit timeout, so it silently carried httpx's own
-        # hardcoded 5-second default — and the SDK applies no timeout of its
-        # own when a caller-provided client is passed, so that 5s became the
-        # REAL wire-level ceiling for every tool call regardless of how
-        # generous _CALL_TOOL_TIMEOUT_SECONDS looked. _mcp_session must
-        # instead build its own client with an explicit, generous timeout.
-        # Faked at the sys.modules level so _mcp_session's REAL wiring runs.
+        # A supplied client overrides the SDK's wire timeouts. HA's default
+        # client previously capped slow calls at 5s. Exercise real client
+        # construction, ownership and loopback proxy policy with a fake SDK.
         import sys
         from types import ModuleType
 
@@ -797,7 +782,7 @@ class TestLoopbackHttpClientTimeout:
             opened["http_client"] = http_client
             yield "read-stream", "write-stream", lambda: None
 
-        fake_transport = ModuleType("mcp.client.streamable_http")
+        fake_transport = ModuleType("ha_mcp._vendor.mcp.client.streamable_http")
         fake_transport.streamable_http_client = _canonical_client  # type: ignore[attr-defined]
 
         class _FakeClientSession:
@@ -818,11 +803,15 @@ class TestLoopbackHttpClientTimeout:
                 """Return a canned initialize result."""
                 return SimpleNamespace(instructions="hi")
 
-        fake_session_mod = ModuleType("mcp.client.session")
+        fake_session_mod = ModuleType("ha_mcp._vendor.mcp.client.session")
         fake_session_mod.ClientSession = _FakeClientSession  # type: ignore[attr-defined]
 
-        monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", fake_transport)
-        monkeypatch.setitem(sys.modules, "mcp.client.session", fake_session_mod)
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.streamable_http", fake_transport
+        )
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.session", fake_session_mod
+        )
 
         async with llm_api._mcp_session("http://127.0.0.1:9584/private_x"):
             used_client = opened["http_client"]
@@ -849,12 +838,8 @@ class TestLoopbackHttpClientTimeout:
 class TestPreRenameSdkFallback:
     async def test_falls_back_to_deprecated_client_name(self, monkeypatch):
         """On a pre-rename SDK, _mcp_session must fall back to the deprecated client name."""
-        # A third-party pin can force the shared mcp below 1.24, where
-        # mcp.client.streamable_http exposes only
-        # streamablehttp_client. _mcp_session must import-fall-back to it and
-        # wire the session identically. Faked at the sys.modules level so the
-        # REAL import selection in _mcp_session runs (the other tests patch
-        # _mcp_session wholesale and never exercise it).
+        # Preserve the older transport shape with the actual client factory
+        # and session selection, rather than replacing _mcp_session wholesale.
         import sys
         from types import ModuleType
 
@@ -867,7 +852,7 @@ class TestPreRenameSdkFallback:
             opened["httpx_client_factory"] = httpx_client_factory
             yield "read-stream", "write-stream", lambda: None
 
-        fake_transport = ModuleType("mcp.client.streamable_http")
+        fake_transport = ModuleType("ha_mcp._vendor.mcp.client.streamable_http")
         fake_transport.streamablehttp_client = _old_name_client  # type: ignore[attr-defined]
         # Deliberately NO streamable_http_client attribute.
 
@@ -884,11 +869,15 @@ class TestPreRenameSdkFallback:
             async def initialize(self):
                 return SimpleNamespace(instructions="from old SDK")
 
-        fake_session_mod = ModuleType("mcp.client.session")
+        fake_session_mod = ModuleType("ha_mcp._vendor.mcp.client.session")
         fake_session_mod.ClientSession = _FakeClientSession  # type: ignore[attr-defined]
 
-        monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", fake_transport)
-        monkeypatch.setitem(sys.modules, "mcp.client.session", fake_session_mod)
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.streamable_http", fake_transport
+        )
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.session", fake_session_mod
+        )
 
         async with llm_api._mcp_session("http://127.0.0.1:9584/private_x") as (
             session,
@@ -968,7 +957,7 @@ class TestPreRenameSdkFallback:
 
 
 class TestSdkV2Compat:
-    """Home Assistant's shared SDK may be on the 2.x line."""
+    """The bundled SDK uses the 2.x transport contract."""
 
     async def test_v2_transport_gets_an_httpx2_client(self, monkeypatch):
         import sys
@@ -983,7 +972,7 @@ class TestSdkV2Compat:
             opened["http_client"] = http_client
             yield "read-stream", "write-stream"  # 2.x yields two streams
 
-        fake_transport = ModuleType("mcp.client.streamable_http")
+        fake_transport = ModuleType("ha_mcp._vendor.mcp.client.streamable_http")
         fake_transport.streamable_http_client = _v2_client  # type: ignore[attr-defined]
         fake_transport.httpx2 = httpx2  # type: ignore[attr-defined]
 
@@ -1000,10 +989,14 @@ class TestSdkV2Compat:
             async def initialize(self):
                 return SimpleNamespace(instructions="v2")
 
-        fake_session_mod = ModuleType("mcp.client.session")
+        fake_session_mod = ModuleType("ha_mcp._vendor.mcp.client.session")
         fake_session_mod.ClientSession = _FakeClientSession  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", fake_transport)
-        monkeypatch.setitem(sys.modules, "mcp.client.session", fake_session_mod)
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.streamable_http", fake_transport
+        )
+        monkeypatch.setitem(
+            sys.modules, "ha_mcp._vendor.mcp.client.session", fake_session_mod
+        )
 
         async with llm_api._mcp_session("http://127.0.0.1:9584/private_x"):
             client = opened["http_client"]

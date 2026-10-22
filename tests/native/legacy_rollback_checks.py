@@ -78,9 +78,9 @@ async def _cleanup_rollback(
     except Exception as error:  # noqa: BLE001 - collected and reported below
         failures.append(("OAuth grant", error))
     if primary is not None:
-        for stage, error in failures:
+        for stage, cleanup_error in failures:
             primary.add_note(
-                f"Rollback {stage} cleanup also failed: {type(error).__name__}"
+                f"Rollback {stage} cleanup also failed: {type(cleanup_error).__name__}"
             )
     elif failures:
         raise ExceptionGroup(
@@ -117,6 +117,12 @@ async def exercise_legacy_rollback(checks: Any) -> None:
         assert legacy_read["data"]["state"] == state, (
             "Legacy changed or lost the real Core state"
         )
+        assisted = await checks.control("legacy_rollback", {"action": "assist"})
+        assert not assisted["error"], "Legacy Assist returned a tool error"
+        assert assisted["data"]["structuredContent"]["data"]["state"] == state, (
+            "Legacy Assist lost the MCP result envelope or actual Core state"
+        )
+        checks.passed("legacy_Assist_uses_the_bundled_MCP_client_and_preserves_results")
         renewed = await _refresh(checks, client_id, envelope)
         assert renewed.status_code == 200, (
             "Native grant did not survive rollback to legacy"

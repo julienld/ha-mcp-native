@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import psutil
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+from homeassistant.core import Context
 from homeassistant.helpers import llm
 
 from custom_components.ha_mcp_tools.const import (
@@ -236,6 +237,23 @@ async def _return_native(hass: Any, saved: _Rollback) -> None:
         raise AssertionError("Native entry setup refused after legacy teardown")
 
 
+async def _assist(hass: Any, user: Any, saved: _Rollback) -> dict[str, Any]:
+    if saved.phase != "legacy":
+        raise AssertionError("This Assist probe requires the legacy runtime")
+    context = llm.LLMContext(
+        platform=_FIXTURE,
+        context=Context(user_id=user.id),
+        language="en",
+        assistant="conversation",
+        device_id=None,
+    )
+    api = await llm.async_get_api(hass, f"ha_mcp_tools-{saved.entry_id}", context)
+    result = await api.async_call_tool(
+        llm.ToolInput(tool_name="ha_get_state", tool_args={"entity_id": _ENTITY})
+    )
+    return {"error": result.error, "data": result.data}
+
+
 async def legacy_rollback(hass: Any, user: Any, body: dict[str, Any]) -> dict[str, Any]:
     action = body.get("action")
     if action == "start":
@@ -246,6 +264,8 @@ async def legacy_rollback(hass: Any, user: Any, body: dict[str, Any]) -> dict[st
             raise AssertionError("No rollback state belongs to this fixture caller")
         if action == "return":
             await _return_native(hass, saved)
+        elif action == "assist":
+            return await _assist(hass, user, saved)
         elif action != "status":
             raise ValueError("Unknown rollback fixture action")
     return await _status(hass, saved)

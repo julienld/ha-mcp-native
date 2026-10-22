@@ -193,26 +193,24 @@ def test_building_the_server_loads_no_shared_fastmcp_or_mcp():
     assert shared == [], f"shared SDK modules loaded: {shared}"
 
 
-def test_legacy_component_adapters_do_not_import_the_native_protocol_stack():
+def test_component_adapters_do_not_import_cores_shared_protocol_stack():
     component = _REPO_ROOT / "custom_components" / "ha_mcp_tools"
     offenders = [
         str(path.relative_to(_REPO_ROOT))
         for path in component.rglob("*.py")
-        if not path.stem.startswith("native_")
-        if "native_operations" not in path.relative_to(component).parts
         if any(
             (
                 isinstance(node, ast.ImportFrom)
-                and (node.module or "").startswith("ha_mcp._vendor")
+                and (node.module or "").split(".")[0] in {"mcp", "fastmcp"}
             )
             or (
                 isinstance(node, ast.Import)
-                and any(a.name.startswith("ha_mcp._vendor") for a in node.names)
+                and any(a.name.split(".")[0] in {"mcp", "fastmcp"} for a in node.names)
             )
             for node in ast.walk(ast.parse(path.read_text("utf-8")))
         )
     ]
-    assert not offenders, f"legacy Core SDK adapters must stay isolated: {offenders}"
+    assert not offenders, f"component SDK adapters must use the private copy: {offenders}"
 
 
 def test_pyproject_declares_no_shared_fastmcp_or_mcp():
