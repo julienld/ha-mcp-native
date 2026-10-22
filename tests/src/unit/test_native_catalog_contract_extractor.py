@@ -7,6 +7,9 @@ import json
 import runpy
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+from .test_native_engine_backend import native as native
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -43,14 +46,23 @@ def test_shared_method_reexports_keep_their_original_catalog_metadata() -> None:
         )
 
 
-def test_inventory_recognizes_literal_batches_in_native_catalog() -> None:
-    from ha_mcp.runtime.catalog import build_initial_catalog
-
+def test_inventory_matches_the_composed_component_catalog(native: object) -> None:
+    component = __import__(
+        "custom_components.ha_mcp_tools.native_catalog",
+        fromlist=["build_native_catalog"],
+    )
     script = runpy.run_path(str(_ROOT / "scripts" / "native_inventory.py"))
     inventory = script["build_inventory"]()
     public = {tool["name"] for tool in inventory["tools"]}
     actual = {
-        definition.name for definition in build_initial_catalog(object())
+        definition.name
+        for definition in component.build_native_catalog(
+            SimpleNamespace(
+                backend=SimpleNamespace(_templates=None, hass=None, authorize=None),
+                hass=None,
+                snapshots=None,
+            )
+        )
     } & public
     scanned = {
         tool["name"]

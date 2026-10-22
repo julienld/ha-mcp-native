@@ -115,6 +115,7 @@ class NativeBackend:
         self.loop = asyncio.get_running_loop()
         self._commands: dict[str, tuple[Any, Any, Any]] = {}
         self._flows: Any = None
+        self._templates: Any = None
         self._reload_watches: Any = None
         self._entry_watches: Any = None
         selected = {command for command, _ in COMMAND_OPERATIONS.values()}
@@ -385,7 +386,12 @@ class NativeBackend:
     async def stop(self) -> None:
         """Called after engine drain; release only resources this backend owns."""
         errors = []
-        for owner in (self._flows, self._reload_watches, self._entry_watches):
+        for owner in (
+            self._flows,
+            self._reload_watches,
+            self._entry_watches,
+            self._templates,
+        ):
             if owner is not None:
                 try:
                     await owner.stop()

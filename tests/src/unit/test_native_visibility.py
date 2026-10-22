@@ -133,6 +133,49 @@ async def test_declutter_mode_keeps_direct_read_contract(
     assert result.data["entity_id"] == "sensor.secret" and not result.is_error
 
 
+@pytest.mark.parametrize(
+    "listeners,enforce,denied",
+    [
+        ({"all": True, "domains": [], "entities": []}, True, True),
+        ({"all": False, "domains": ["sensor"], "entities": []}, True, True),
+        ({"all": False, "domains": ["light"], "entities": []}, True, False),
+        ({"all": True, "domains": [], "entities": []}, False, False),
+    ],
+)
+async def test_template_scalar_uses_core_dependency_scope_before_disclosure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    listeners: dict,
+    enforce: bool,
+    denied: bool,
+) -> None:
+    payload = {
+        "success": True,
+        "result": "sensitive-derived-value",
+        "listeners": listeners,
+    }
+    _manager, engine, handler = runtime(
+        tmp_path, monkeypatch, "ha_eval_template", payload, enforce=enforce
+    )
+    result = await engine.call(
+        "ha_eval_template",
+        {
+            "template": "{{ states[domain] | map(attribute='state') | list }}",
+            "variables": {"domain": "sensor"},
+        },
+        CallContext("alice"),
+    )
+    assert result.is_error is denied
+    assert result.status == "confirmed"
+    handler.assert_awaited_once()
+    if denied:
+        assert result.data["error"]["code"] == "ENTITY_VISIBILITY_ENFORCED"
+        assert "sensor.secret" not in json.dumps(result.data)
+        assert "sensitive-derived-value" not in json.dumps(result.data)
+    else:
+        assert result.data == payload
+
+
 async def test_unported_discovery_declutter_fails_closed(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import wraps
 from typing import Annotated, Any, NoReturn
 
 from pydantic import Field
@@ -11,6 +12,8 @@ from ha_mcp.errors import ErrorCode, create_error_response
 from ha_mcp.tool_api import BackendTools, ToolFailure
 
 from .errors import raise_failure
+from .label_tools import LabelTools
+from .label_values import label_get_result
 from .validation import validate_identifier_not_empty
 
 logger = logging.getLogger(__name__)
@@ -31,33 +34,9 @@ class LabelDiscoveryTools(BackendTools):
         labels: list[dict[str, Any]] = result["labels"]
         return labels
 
-    async def ha_config_get_label(
-        self,
-        label_id: Annotated[
-            str | None,
-            Field(
-                description="ID of the label to retrieve.",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get label info - list all labels or get a specific one by ID.
-
-        Without a label_id: Lists all Home Assistant labels with their configurations.
-        With a label_id: Returns configuration for that specific label.
-
-        EXAMPLES:
-        - List all labels: ha_config_get_label()
-        - Get specific label: ha_config_get_label("my_label_id")
-
-        Use ha_config_set_label() to create or update labels.
-        Use ha_set_entity(labels=["label1", "label2"]) to assign labels to entities,
-        ha_set_device(labels=[...]) for devices, or
-        ha_set_area_or_floor(kind="area", labels=[...]) for areas.
-        """
+    @wraps(LabelTools.ha_config_get_label)
+    async def ha_config_get_label(self, label_id: Any = None) -> dict[str, Any]:
         try:
-            # ``None`` stays the documented "list-all" sentinel; explicit
-            # empty/whitespace is rejected by ``validate_identifier_not_empty``.
             if label_id is not None:
                 validate_identifier_not_empty(
                     label_id,
@@ -68,48 +47,13 @@ class LabelDiscoveryTools(BackendTools):
                     ],
                     context={"action": "get"},
                 )
-            labels = await self._list_labels(context={"label_id": label_id})
-
-            if label_id is None:
-                return {
-                    "success": True,
-                    "count": len(labels),
-                    "labels": labels,
-                    "message": f"Found {len(labels)} label(s)",
-                }
-
-            label = next(
-                (lbl for lbl in labels if lbl.get("label_id") == label_id), None
+            return label_get_result(
+                await self._list_labels(context={"label_id": label_id}), label_id
             )
-
-            if label:
-                return {
-                    "success": True,
-                    "label_id": label_id,
-                    "label": label,
-                    "message": f"Found label: {label.get('name', label_id)}",
-                }
-            else:
-                available_ids = [lbl.get("label_id") for lbl in labels[:10]]
-                raise_failure(
-                    create_error_response(
-                        ErrorCode.RESOURCE_NOT_FOUND,
-                        f"Label not found: {label_id}",
-                        context={
-                            "label_id": label_id,
-                            "available_label_ids": available_ids,
-                        },
-                        suggestions=[
-                            "Use ha_config_get_label() without label_id to see all labels"
-                        ],
-                    )
-                )
-
         except ToolFailure:
             raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting labels: {e}")
-            self._raise_read_error(e, {"label_id": label_id})
+        except Exception as error:  # noqa: BLE001 - preserve first-increment bridge errors
+            self._raise_read_error(error, {"label_id": label_id})
 
 
 class CategoryDiscoveryTools(BackendTools):

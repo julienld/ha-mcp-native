@@ -4,10 +4,15 @@
   "source_scope": "current working-tree AST; baseline_revision identifies the immutable preservation reference",
   "method": "AST module-level candidates; neither complete call graph nor effort estimate",
   "status_rule": "not_verified is the default; only matching implementation plus real Core evidence can establish parity",
+  "native_catalog_sources": [
+    "src/ha_mcp/runtime/catalog.py",
+    "custom_components/ha_mcp_tools/native_label_tools.py",
+    "custom_components/ha_mcp_tools/native_operations/templates.py"
+  ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 30,
+    "native_catalog_declarations": 36,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -296,7 +301,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_resources.py",
+      "shared_source": "src/ha_mcp/runtime/resource_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -309,42 +314,42 @@
       ],
       "client_call_candidates": [
         {
-          "line": 417,
+          "line": 145,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 770,
+          "line": 311,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 858,
+          "line": 392,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/info"
           ]
         },
         {
-          "line": 932,
+          "line": 466,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/update"
           ]
         },
         {
-          "line": 942,
+          "line": 476,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/create"
           ]
         },
         {
-          "line": 995,
+          "line": 496,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/delete"
@@ -613,51 +618,12 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": true,
-      "shared_source": "src/ha_mcp/runtime/labels.py",
-      "semantic_operation_candidates": [
-        "registries.snapshot"
-      ],
+      "shared_source": "src/ha_mcp/runtime/label_tools.py",
+      "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "config/area_registry/list",
-        "config/area_registry/update",
-        "config/label_registry/delete",
-        "config/label_registry/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 78,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/label_registry/list"
-          ]
-        },
-        {
-          "line": 139,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 394,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/update"
-          ]
-        },
-        {
-          "line": 681,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 749,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_config_get_scene",
@@ -790,7 +756,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_resources.py",
+      "shared_source": "src/ha_mcp/runtime/resource_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -803,42 +769,42 @@
       ],
       "client_call_candidates": [
         {
-          "line": 417,
+          "line": 145,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 770,
+          "line": 311,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 858,
+          "line": 392,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/info"
           ]
         },
         {
-          "line": 932,
+          "line": 466,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/update"
           ]
         },
         {
-          "line": 942,
+          "line": 476,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/create"
           ]
         },
         {
-          "line": 995,
+          "line": 496,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/delete"
@@ -1149,50 +1115,13 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_labels.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/label_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "config/area_registry/list",
-        "config/area_registry/update",
-        "config/label_registry/delete",
-        "config/label_registry/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 78,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/label_registry/list"
-          ]
-        },
-        {
-          "line": 139,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 394,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/update"
-          ]
-        },
-        {
-          "line": 681,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 749,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_config_remove_scene",
@@ -1538,7 +1467,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_resources.py",
+      "shared_source": "src/ha_mcp/runtime/resource_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1551,42 +1480,42 @@
       ],
       "client_call_candidates": [
         {
-          "line": 417,
+          "line": 145,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 770,
+          "line": 311,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources"
           ]
         },
         {
-          "line": 858,
+          "line": 392,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/info"
           ]
         },
         {
-          "line": 932,
+          "line": 466,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/update"
           ]
         },
         {
-          "line": 942,
+          "line": 476,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/create"
           ]
         },
         {
-          "line": 995,
+          "line": 496,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/resources/delete"
@@ -1698,50 +1627,13 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_labels.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/label_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "config/area_registry/list",
-        "config/area_registry/update",
-        "config/label_registry/delete",
-        "config/label_registry/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 78,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/label_registry/list"
-          ]
-        },
-        {
-          "line": 139,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 394,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/update"
-          ]
-        },
-        {
-          "line": 681,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 749,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_config_set_scene",
@@ -2021,8 +1913,8 @@
         "preserve result and error contracts"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_utility.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/templates.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2034,17 +1926,17 @@
       ],
       "client_call_candidates": [
         {
-          "line": 153,
+          "line": 130,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 291,
+          "line": 216,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 263,
+          "line": 188,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -2838,7 +2730,7 @@
         "stable item IDs"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/todo.py",
       "semantic_operation_candidates": [
         "todo.backup.capture",
@@ -4055,7 +3947,7 @@
         "stable item IDs"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/todo.py",
       "semantic_operation_candidates": [
         "todo.backup.capture",
@@ -4615,7 +4507,7 @@
         "stable item IDs"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/todo.py",
       "semantic_operation_candidates": [
         "todo.backup.capture",

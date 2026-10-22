@@ -33,6 +33,10 @@ envelopes. Those are reuse opportunities; they are not themselves a native backe
 `shared_source` and `semantic_operation_candidates` follow shared methods into
 their actual implementation module. `native_catalog_declaration` records only a
 declaration in the current native catalog; it never establishes verified parity.
+Its explicit source list includes the component's composed Core bindings and the
+initial migration catalog. Replaced getters count once. A contract test compares
+that static list with the actual component catalog, so adding a binding also
+requires updating the inventory sources.
 The working-tree scan evolves during porting while both baseline catalogs remain
 immutable preservation references.
 

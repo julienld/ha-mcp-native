@@ -10,6 +10,7 @@ from typing import Any
 from ha_mcp.runtime.helper_schema import SIMPLE_HELPER_TYPES
 from ha_mcp.runtime.snapshot_files import _flow_entry_id, _is_flow_helper_domain
 from ha_mcp.runtime.snapshot_payloads import (
+    BackupRestoreError,
     InvalidBackupSnapshotError,
     _flow_options,
     _FlowHelperReadError,
@@ -81,6 +82,16 @@ class NativeSnapshotDomains:
             # Core's YAML owner returns annotated nodes. Cross the same public
             # value boundary as NativeBackend before diffing or writing a snapshot.
             return json.loads(json_bytes(current))
+        if domain == "label":
+            config = data["config"]
+            if (
+                not isinstance(config, dict)
+                or config.get("label_id") != data["entity_id"]
+            ):
+                raise InvalidBackupSnapshotError(
+                    "Label snapshot does not match its identity"
+                )
+            return await self.labels(actor).read_snapshot(data["entity_id"])
         if domain in {"category", "area_or_floor"}:
             from ha_mcp.runtime.snapshot_registry_restore import current_registry
 
@@ -98,6 +109,30 @@ class NativeSnapshotDomains:
         if _is_flow_helper_domain(domain):
             return await self._flow(data)
         return (await self.storage_before(data, actor)).snapshot
+
+    def labels(self, actor: CallContext) -> Any:
+        from .native_operations.labels import NativeLabels
+
+        return NativeLabels(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    async def restore_label(
+        self, data: dict[str, Any], before: Any, actor: CallContext
+    ) -> dict[str, Any]:
+        try:
+            result: dict[str, Any] = await self.labels(actor).restore_snapshot(
+                data["entity_id"], data["config"], before
+            )
+            return result
+        except ToolFailure as error:
+            if error.code != "RESOURCE_NOT_FOUND":
+                raise
+            raise BackupRestoreError(
+                "The saved label no longer exists. This restore updates existing labels; "
+                "it cannot recreate the original label identity.",
+                reason="entry_deleted",
+            ) from error
 
     async def storage_before(
         self, data: dict[str, Any], actor: CallContext

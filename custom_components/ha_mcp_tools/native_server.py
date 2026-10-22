@@ -50,6 +50,7 @@ def _prewarm() -> bool:
     """Resolve SDK imports and terminal caches outside HA's event loop."""
     importlib.import_module("ha_mcp.runtime.catalog")
     importlib.import_module(f"{__package__}.native_backend")
+    importlib.import_module(f"{__package__}.native_catalog")
     importlib.import_module("ha_mcp._vendor.fastmcp")
     importlib.import_module("ha_mcp.settings_ui")
     importlib.import_module("ha_mcp.policy.handlers")
@@ -202,11 +203,11 @@ class NativeServerManager:
         from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity
         from ha_mcp.runtime import Engine
         from ha_mcp.runtime.best_practices import AcknowledgmentState
-        from ha_mcp.runtime.catalog import build_initial_catalog
         from ha_mcp.runtime.skills import SkillGuideReader
 
         from .native_approvals import NativeApprovalGate
         from .native_backend import NativeBackend
+        from .native_catalog import build_native_catalog
         from .native_code import NativeCode
         from .native_settings import NativeSettings
         from .native_snapshots import NativeSnapshots
@@ -235,7 +236,7 @@ class NativeServerManager:
         self.approval_gate = NativeApprovalGate(self)
         self.engine = Engine(
             self.backend,
-            tools=build_initial_catalog(self.backend),
+            tools=build_native_catalog(self),
             policy_guard=self.approval_gate,
             result_filter=self.filter_result,
         )

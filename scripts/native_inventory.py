@@ -31,6 +31,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "src" / "ha_mcp"
 OUTPUT = ROOT / "docs" / "native-migration"
 BASELINE = "2dc504fd97d8416f87b6ea7f2fd8ce0332615956"
+NATIVE_CATALOG_SOURCES = (
+    SOURCE / "runtime" / "catalog.py",
+    ROOT / "custom_components" / "ha_mcp_tools" / "native_label_tools.py",
+    ROOT / "custom_components" / "ha_mcp_tools" / "native_operations" / "templates.py",
+)
 TRANSPORT_METHODS = frozenset(
     {
         "send_websocket_message",
@@ -386,7 +391,7 @@ def _catalog_call_name(node: ast.AST) -> ast.AST | None:
     return None
 
 
-def _literal_batch_names(generator: ast.comprehension, name: str) -> set[str]:
+def _literal_batch_names(generator: ast.comprehension | ast.For, name: str) -> set[str]:
     names = set()
     if not isinstance(generator.target, (ast.Tuple, ast.List)) or not isinstance(
         generator.iter, (ast.Tuple, ast.List)
@@ -411,6 +416,11 @@ def _native_declarations(tree: ast.AST) -> set[str]:
         name = _catalog_call_name(node)
         if isinstance(name, ast.Constant) and isinstance(name.value, str):
             declarations.add(name.value)
+        if isinstance(node, ast.For):
+            for child in ast.walk(node):
+                name = _catalog_call_name(child)
+                if isinstance(name, ast.Name):
+                    declarations.update(_literal_batch_names(node, name.id))
         if not isinstance(node, (ast.GeneratorExp, ast.ListComp)):
             continue
         name = _catalog_call_name(node.elt)
@@ -429,10 +439,12 @@ def build_inventory() -> dict[str, Any]:
         extractor._extract_tool_from_node,
     )
     catalog = extractor.extract_tools()
-    native_catalog = ast.parse(
-        (SOURCE / "runtime" / "catalog.py").read_text(encoding="utf-8")
+    declarations = set().union(
+        *(
+            _native_declarations(ast.parse(path.read_text(encoding="utf-8")))
+            for path in NATIVE_CATALOG_SOURCES
+        )
     )
-    declarations = _native_declarations(native_catalog)
     tools = []
     module_cache: dict[str, dict[str, Any]] = {}
     for tool in sorted(catalog, key=lambda entry: entry["name"]):
@@ -468,6 +480,9 @@ def build_inventory() -> dict[str, Any]:
         "source_scope": "current working-tree AST; baseline_revision identifies the immutable preservation reference",
         "method": "AST module-level candidates; neither complete call graph nor effort estimate",
         "status_rule": "not_verified is the default; only matching implementation plus real Core evidence can establish parity",
+        "native_catalog_sources": [
+            path.relative_to(ROOT).as_posix() for path in NATIVE_CATALOG_SOURCES
+        ],
         "counts": {
             "decorated_tools": len(tools),
             "beta_tagged_tools": sum(tool["beta"] for tool in tools),

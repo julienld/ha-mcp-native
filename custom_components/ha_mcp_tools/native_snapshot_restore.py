@@ -67,6 +67,7 @@ class NativeRestoreOperations:
             "todo_item",
             "category",
             "area_or_floor",
+            "label",
         }:
             self.before = await self.snapshots.domains.current(self.data, self.actor)
             return self.before is not None
@@ -155,6 +156,10 @@ class NativeRestoreOperations:
             )
         if self.data["domain"] in {"automation", "script", "scene"}:
             return await self.snapshots.domains.apply_config(
+                self.data, self.before, self.actor
+            )
+        if self.data["domain"] == "label":
+            return await self.snapshots.domains.restore_label(
                 self.data, self.before, self.actor
             )
         if self.data["domain"] in {"category", "area_or_floor"}:

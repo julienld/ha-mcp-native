@@ -31,6 +31,19 @@ from ha_mcp.visibility.resolver import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _template_scope_overlaps_hidden(data: Any, hidden: frozenset[str]) -> bool:
+    """Use Core's render dependencies, including reads yielding only a scalar."""
+    listeners = data.get("listeners") if isinstance(data, dict) else None
+    if not hidden or not isinstance(listeners, dict):
+        # Condition checks do not provide a RenderInfo; their existing text
+        # barrier remains applicable, with its documented attribution limit.
+        return False
+    if listeners.get("all"):
+        return True
+    domains = listeners.get("domains") or ()
+    return any(entity_id.partition(".")[0] in domains for entity_id in hidden)
+
+
 def load_native_visibility(directory: Path) -> VisibilityConfig:
     """Only an absent file is disabled; permission/IO failures are not absence."""
     try:
@@ -195,6 +208,14 @@ class NativeVisibility:
                 result, data=enforcement_error(name, _FAIL_CLOSED_REASON), is_error=True
             )
         data = result.data
+        if name == "ha_eval_template" and _template_scope_overlaps_hidden(
+            data, matcher.hidden
+        ):
+            return replace(
+                result,
+                data=enforcement_error(name, _outbound_reason(name)),
+                is_error=True,
+            )
         if name == "ha_get_state":
             attempt = _scrub_state_representation(data, matcher)
             data = attempt.value

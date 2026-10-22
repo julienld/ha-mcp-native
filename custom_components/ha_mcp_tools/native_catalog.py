@@ -1,0 +1,18 @@
+"""Assemble canonical Core tools with the first migration increment's catalog."""
+
+from typing import Any
+
+from ha_mcp.runtime.catalog import build_initial_catalog
+from ha_mcp.tool_api import ToolDefinition
+
+from .native_label_tools import build_label_tools
+from .native_operations.templates import template_definition
+
+
+def build_native_catalog(manager: Any) -> list[ToolDefinition]:
+    bridge = [
+        definition
+        for definition in build_initial_catalog(manager.backend)
+        if definition.name != "ha_config_get_label"
+    ]
+    return [*bridge, *build_label_tools(manager), template_definition(manager.backend)]

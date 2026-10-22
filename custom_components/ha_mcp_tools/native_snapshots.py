@@ -332,6 +332,10 @@ class NativeSnapshots:
                     lock_domain, data["entity_id"], config
                 )
                 target = identity[f"{lock_domain}_id"]
+            if lock_domain == "label":
+                # The Core label service owns its mutation lock; it rechecks the
+                # captured before-image after acquiring it, so no lock is reentered.
+                lock_domain = "snapshot_restore:label"
             async with registry_update_lock(lock_domain, target):
                 return await restore_snapshot_data(
                     store,

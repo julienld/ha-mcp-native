@@ -5,6 +5,7 @@ from typing import Any
 
 
 async def exercise_llm(checks: Any) -> None:
+    await exercise_templates(checks)
     await checks.control("configure", {})
     await checks.ready()
     result = await checks.control(
@@ -55,3 +56,26 @@ async def exercise_llm(checks: Any) -> None:
     )
     assert state["data"]["state"] == "on", state
     checks.passed("Core_LLM_API_action_executed_from_MCP_without_loopback")
+
+
+async def exercise_templates(checks: Any) -> None:
+    rendered = await checks.call(
+        "ha_eval_template",
+        {
+            "template": "{{ states('sensor.' + suffix) }}",
+            "variables": {"suffix": "native_fixture"},
+        },
+    )
+    assert rendered["result"] == "ready", rendered
+    condition = await checks.call(
+        "ha_eval_template",
+        {
+            "condition": {
+                "condition": "state",
+                "entity_id": "sensor.native_fixture",
+                "state": "ready",
+            }
+        },
+    )
+    assert condition["result"] is True, condition
+    checks.passed("canonical_Core_template_render_and_condition_without_WebSocket")

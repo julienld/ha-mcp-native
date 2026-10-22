@@ -125,6 +125,13 @@ Native mutators recheck it and the actor after awaited validation or snapshot
 I/O, immediately before dispatch. Result filtering runs before all outward
 projections and retains execution status.
 
+Native template rendering also preserves Core's actual listener dependencies.
+With visibility enforcement active, a reported all-state read or a tracked
+domain containing hidden entities refuses the result before disclosure, including
+scalar results. Individual entity references retain their existing filtering.
+Condition checks do not provide this render-dependency contract: their existing
+argument/result checks remain, without a claim of complete dynamic attribution.
+
 ## Captures, concurrency and unknown outcomes
 
 Capture the exact target and before-image that informed the change. Pass those
