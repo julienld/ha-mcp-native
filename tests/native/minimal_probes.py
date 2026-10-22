@@ -17,41 +17,57 @@ class RejectSharedSDK(MetaPathFinder):
             raise AssertionError(f"Minimal runtime imported shared SDK {fullname}")
 
 
+async def _bootstrap_core(hass: Any) -> None:
+    from homeassistant.bootstrap import async_load_base_functionality
+    from homeassistant.config_entries import ConfigEntries
+    from homeassistant.loader import async_get_custom_components
+    from homeassistant.loader import async_setup as async_setup_loader
+
+    # The base owner initializes all registries/stores and ConfigEntries together,
+    # before AuthStore constructs its live device/entity permission lookup.
+    async_setup_loader(hass)
+    hass.config_entries = ConfigEntries(hass, {})
+    await async_get_custom_components(hass)
+    if not await async_load_base_functionality(hass):
+        raise RuntimeError("Core base functionality did not initialize")
+
+
 async def _native(config: Path) -> None:
     from homeassistant.auth import auth_manager_from_config
     from homeassistant.auth.const import GROUP_ID_ADMIN
     from homeassistant.core import HomeAssistant
-    from homeassistant.loader import async_setup as async_setup_loader
 
     hass = HomeAssistant(str(config))
-    async_setup_loader(hass)
-    hass.auth = await auth_manager_from_config(hass, [], [])
-    user = await hass.auth.async_create_user(
-        "Minimal fixture", group_ids=[GROUP_ID_ADMIN]
-    )
-    module = await asyncio.to_thread(
-        importlib.import_module, "custom_components.ha_mcp_tools.native_server"
-    )
-    await asyncio.to_thread(module._prewarm)
-    from custom_components.ha_mcp_tools.native_backend import NativeBackend
-    from ha_mcp.runtime import Engine
-    from ha_mcp.runtime.catalog import build_initial_catalog
-    from ha_mcp.tool_api import CallContext
-
-    backend = NativeBackend(hass)
-    engine = Engine(backend, build_initial_catalog(backend))
     try:
-        hass.states.async_set("sensor.minimal_fixture", "ready")
-        result = await engine.call(
-            "ha_get_state",
-            {"entity_id": "sensor.minimal_fixture"},
-            CallContext(user.id),
+        await _bootstrap_core(hass)
+        hass.auth = await auth_manager_from_config(hass, [], [])
+        user = await hass.auth.async_create_user(
+            "Minimal fixture", group_ids=[GROUP_ID_ADMIN]
         )
-        assert not result.is_error and result.data["data"]["state"] == "ready"
+        module = await asyncio.to_thread(
+            importlib.import_module, "custom_components.ha_mcp_tools.native_server"
+        )
+        await asyncio.to_thread(module._prewarm)
+        from custom_components.ha_mcp_tools.native_backend import NativeBackend
+        from ha_mcp.runtime import Engine
+        from ha_mcp.runtime.catalog import build_initial_catalog
+        from ha_mcp.tool_api import CallContext
+
+        backend = NativeBackend(hass)
+        engine = Engine(backend, build_initial_catalog(backend))
+        try:
+            hass.states.async_set("sensor.minimal_fixture", "ready")
+            result = await engine.call(
+                "ha_get_state",
+                {"entity_id": "sensor.minimal_fixture"},
+                CallContext(user.id),
+            )
+            assert not result.is_error and result.data["data"]["state"] == "ready"
+        finally:
+            await engine.stop()
+            await backend.stop()
     finally:
-        await engine.stop()
-        await backend.stop()
-        await hass.async_stop()
+        await hass.async_stop(force=True)
 
 
 async def _legacy_http() -> None:

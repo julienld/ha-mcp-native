@@ -99,7 +99,7 @@ async def install_declared_dependencies(
                 await async_get_integration_with_requirements(hass, domain)
                 await asyncio.to_thread(observe, f"manifest_{label}:{domain}")
     finally:
-        await hass.async_stop()
+        await hass.async_stop(force=True)
 
 
 def install(assets: Path, work: Path, output: Path) -> None:

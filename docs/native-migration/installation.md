@@ -223,12 +223,16 @@ keys, secret webhook paths, config-entry storage or real authentication receipts
 in build evidence or public issue reports.
 
 To switch runtime within the same installed candidate, select legacy in the
-entry options. An exact hashed manifest wheel can be reused only when its
-installed version and PEP 610 receipt prove the same URL and SHA-256. Receipt
-inspection runs off the HA loop. Overrides, explicit reinstall requests,
-conflicting distributions and unproven origins still require installation; after
+entry options. An exact hashed manifest wheel requires the installed version
+and PEP 610 URL to match. A conflicting archive hash is refused. If uv omitted
+the hash, the component's independent index must instead prove equality of the
+installed files; this does not invent an archive digest in the receipt.
+Receipt and payload inspection run off the HA loop. Overrides, explicit reinstall
+requests, conflicting distributions and unproven origins still require installation; after
 native bindings have loaded, that path requires a full Core restart. The
-receipt is installation metadata, not proof against local file tampering.
+receipt is installation metadata. The separate payload check establishes file
+equality at verification time, not a publisher signature or arbitrary in-memory
+code identity.
 
 To roll back code, select the previous published HACS version, retain its paired
 wheel/ZIP, and restart Home Assistant. Keep older releases available. Before

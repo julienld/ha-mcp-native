@@ -207,7 +207,7 @@ def test_declared_dependencies_use_core_owners_after_direct_requirements(
         "after_runtime_probes",
     ]
     assert "dependency-frontend" in proof["observations"][-1]["versions"]
-    minimal.hass.async_stop.assert_awaited_once()
+    minimal.hass.async_stop.assert_awaited_once_with(force=True)
 
 
 def test_after_dependency_cannot_hide_a_shared_core_upgrade(minimal: Any) -> None:
@@ -230,7 +230,7 @@ def test_after_dependency_cannot_hide_a_shared_core_upgrade(minimal: Any) -> Non
         == "2026.7.22"
     )
     minimal.probes.assert_not_awaited()
-    minimal.hass.async_stop.assert_awaited_once()
+    minimal.hass.async_stop.assert_awaited_once_with(force=True)
 
 
 def test_new_packages_are_allowed_but_disappearing_preinstalled_packages_fail() -> None:
@@ -281,14 +281,45 @@ async def test_real_private_sdk_http_client_exercises_lazy_state_store() -> None
     await minimal_probes._legacy_http()
 
 
-async def test_native_probe_initializes_core_loader_before_authentication(
-    minimal: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.fixture
+def native_base(minimal: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    entries = object()
+    minimal.entries_owner = Mock(return_value=entries)
+    minimal.base_owner = AsyncMock(return_value=True)
+    minimal.custom_components = AsyncMock(return_value={})
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.config_entries",
+        SimpleNamespace(ConfigEntries=minimal.entries_owner),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.bootstrap",
+        SimpleNamespace(async_load_base_functionality=minimal.base_owner),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.loader",
+        SimpleNamespace(
+            async_setup=minimal.loader_setup,
+            async_get_custom_components=minimal.custom_components,
+        ),
+    )
+    return minimal
+
+
+async def test_native_probe_loads_core_base_owners_before_authentication(
+    native_base: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     class InitializedCoreReached(Exception):
         pass
 
     async def auth(hass: Any, _providers: Any, _modules: Any) -> Any:
-        minimal.loader_setup.assert_called_once_with(hass)
+        native_base.loader_setup.assert_called_once_with(hass)
+        native_base.entries_owner.assert_called_once_with(hass, {})
+        assert hass.config_entries is native_base.entries_owner.return_value
+        native_base.custom_components.assert_awaited_once_with(hass)
+        native_base.base_owner.assert_awaited_once_with(hass)
         raise InitializedCoreReached
 
     monkeypatch.setitem(
@@ -301,3 +332,25 @@ async def test_native_probe_initializes_core_loader_before_authentication(
     )
     with pytest.raises(InitializedCoreReached):
         await minimal_probes._native(tmp_path)
+    native_base.hass.async_stop.assert_awaited_once_with(force=True)
+
+
+async def test_failed_core_base_bootstrap_stops_before_creating_an_actor(
+    native_base: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    native_base.base_owner.return_value = False
+    auth = AsyncMock(
+        side_effect=AssertionError("Auth must not run without Core owners")
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.auth",
+        SimpleNamespace(auth_manager_from_config=auth),
+    )
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.auth.const", SimpleNamespace(GROUP_ID_ADMIN="admin")
+    )
+    with pytest.raises(RuntimeError, match="base functionality"):
+        await minimal_probes._native(tmp_path)
+    auth.assert_not_awaited()
+    native_base.hass.async_stop.assert_awaited_once_with(force=True)
