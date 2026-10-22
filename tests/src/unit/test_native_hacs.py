@@ -566,8 +566,16 @@ def test_hacs_public_signatures_metadata_and_ctx_are_shared(hacs):
         shared = inspect.signature(getattr(HacsFacade, name))
         legacy = inspect.signature(getattr(HacsTools, name))
         assert set(shared.parameters) == set(legacy.parameters)
-        assert {key: value.default for key, value in shared.parameters.items()} == {
-            key: value.default for key, value in legacy.parameters.items()
+        # FastMCP replaces the hidden context default during registration.
+        # Public caller defaults remain identical before and after that binding.
+        assert {
+            key: value.default
+            for key, value in shared.parameters.items()
+            if key != "ctx"
+        } == {
+            key: value.default
+            for key, value in legacy.parameters.items()
+            if key != "ctx"
         }
         definition = hacs.engine.tools[name]
         assert (
