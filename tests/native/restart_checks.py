@@ -31,7 +31,13 @@ async def exercise_process_restart(checks: Any, docker: Any, container: str) -> 
         try:
             after = await checks.ready()
             break
-        except (httpx.ConnectError, httpx.RemoteProtocolError):
+        except (
+            httpx.ConnectError,
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+            httpx.WriteError,
+        ):
+            # A retained connection can reset while this idempotent GET is sent.
             pass
         except httpx.HTTPStatusError as error:
             if error.response.status_code not in {404, 503}:
