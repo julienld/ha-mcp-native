@@ -144,6 +144,10 @@ def _make_flow() -> cf.HaMcpToolsConfigFlow:
     """Build a flow with the HA framework methods stubbed to return markers."""
     flow = cf.HaMcpToolsConfigFlow()
     flow.hass = MagicMock(name="hass")
+    flow.hass.auth.async_get_users = AsyncMock(return_value=[SimpleNamespace(
+        id="selected-owner", name="Selected owner", is_active=True,
+        is_admin=True, system_generated=False,
+    )])
     flow.async_set_unique_id = AsyncMock(return_value=None)
     flow._abort_if_unique_id_configured = MagicMock(return_value=None)
     flow.async_show_menu = MagicMock(side_effect=lambda **kw: {"type": "menu", **kw})
@@ -607,6 +611,10 @@ class TestServerOptionsFlow:
         # (a default there would make them impossible to clear — see
         # test_clearing_an_override_field_sticks).
         saved = {
+            const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY,
+            const.OPT_NATIVE_IMPORT_APIS: ["assist"],
+            const.OPT_NATIVE_HTTP_LIMIT: 64,
+            const.OPT_NATIVE_STREAM_SECONDS: 1200,
             const.OPT_SERVER_PORT: 12345,
             const.OPT_BIND_HOST: const.BIND_HOST_LOOPBACK,
             const.OPT_WEBHOOK_AUTH: const.WEBHOOK_AUTH_HA,
@@ -651,6 +659,7 @@ class TestServerOptionsFlow:
             if key
             not in (
                 *text_fields,
+                const.DATA_NATIVE_OWNER_ID,
                 const.OPT_ADMIN_TOKEN_REPLACEMENT,
                 cf.server_credentials.ADMIN_USERNAME,
                 cf.server_credentials.ADMIN_PASSWORD,

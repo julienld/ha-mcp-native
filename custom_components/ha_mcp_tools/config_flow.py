@@ -292,7 +292,7 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             if user.is_active and user.is_admin and not user.system_generated
         ]
         if user_input is not None:
-            owner = user_input.get(DATA_NATIVE_OWNER_ID)
+            owner = self._setup_owner(user_input)
             if owner not in {user.id for user in users}:
                 errors[DATA_NATIVE_OWNER_ID] = "token_not_admin"
             else:
@@ -344,6 +344,17 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                 }
             ),
         )
+
+    def _setup_owner(self, values: Mapping[str, Any]) -> str | None:
+        """Accept the previous API setup payload without retaining its token."""
+        owner = values.get(DATA_NATIVE_OWNER_ID)
+        if owner:
+            return str(owner)
+        token = str(values.get(SETUP_ADMIN_TOKEN, "")).strip()
+        if not token:
+            return None
+        refresh = self.hass.auth.async_validate_access_token(token)
+        return str(refresh.user.id) if refresh is not None else None
 
 
 class HaMcpToolsInfoOptionsFlow(OptionsFlow):
@@ -692,6 +703,7 @@ class HaMcpServerOptionsFlow(OptionsFlow):
 
     @staticmethod
     def _runtime_schema(schema: vol.Schema, values: Mapping[str, Any]) -> vol.Schema:
+        schema = vol.Schema(dict(sorted(schema.schema.items(), key=lambda item: getattr(item[0], "schema", item[0]) != OPT_WEBHOOK_AUTH)))
         if values.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY) != RUNTIME_NATIVE:
             return schema
         legacy_fields = {
