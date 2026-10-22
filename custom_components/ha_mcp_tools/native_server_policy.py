@@ -106,6 +106,17 @@ class NativePolicy:
         return self.enabled(definition.name, source_module=definition.source_module)
 
 
+def load_initial_policy(directory: Path) -> NativePolicy:
+    """Perform the existing one-time migration only while starting an entry."""
+    policy = load_policy(directory)
+    if policy.flag("enable_tool_security_policies"):
+        from ha_mcp.policy.persistence import migrate_policy_any_semantics
+
+        migrate_policy_any_semantics(directory)
+        return load_policy(directory)
+    return policy
+
+
 def load_policy(directory: Path) -> NativePolicy:
     """File errors fail closed rather than re-enabling a user's hidden tools."""
     from ha_mcp.renamed_tools import rename_retired_keys
@@ -131,9 +142,7 @@ def load_policy(directory: Path) -> NativePolicy:
     security_policy = None
     if _flag(flags, "enable_tool_security_policies"):
         from ha_mcp.policy.persistence import load_policy as load_approval_policy
-        from ha_mcp.policy.persistence import migrate_policy_any_semantics
 
-        migrate_policy_any_semantics(directory)
         security_policy = load_approval_policy(directory)
     states = rename_retired_keys(
         tools_config.get("tools", {}), prefer=_more_restrictive_tool_state

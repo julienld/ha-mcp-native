@@ -28,6 +28,7 @@ from configuration_checks import (
     exercise_todo,
 )
 from dashboard_checks import exercise_dashboard_card_types, exercise_dashboards
+from developer_checks import exercise_developer_tools
 from device_checks import exercise_devices
 from energy_checks import exercise_energy
 from entity_checks import exercise_entities
@@ -431,6 +432,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_hacs_absence(checks)
     await exercise_apps(checks)
     await exercise_code_mode(checks, BASE)
+    await exercise_developer_tools(checks, BASE)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)

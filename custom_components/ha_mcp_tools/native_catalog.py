@@ -11,6 +11,7 @@ from .native_bulk_tools import bulk_definitions
 from .native_calendar_tools import build_calendar_tools
 from .native_camera_tools import camera_definition
 from .native_dashboard_tools import build_dashboard_tools
+from .native_dev_tools import dev_definitions
 from .native_device_tools import build_device_tools
 from .native_energy_tools import energy_definition
 from .native_entity_tools import entity_removal_definition, entity_write_definition
@@ -26,9 +27,11 @@ from .native_operations.templates import template_definition
 from .native_overview_tools import overview_definition
 from .native_pipeline_tools import pipeline_definition
 from .native_radio_tools import radio_definition
+from .native_report_tools import report_definition
 from .native_resource_tools import build_resource_tools
 from .native_screenshot_tools import screenshot_definition
 from .native_search_tools import search_definition
+from .native_security_policy_tools import security_policy_definition
 from .native_system_tools import system_definitions
 from .native_theme_tools import theme_definition
 from .native_trace_tools import trace_definition
@@ -45,6 +48,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
     return [
         *bridge,
         *app_definitions(manager),
+        *dev_definitions(manager),
         *build_label_tools(manager),
         *build_device_tools(manager),
         *bulk_definitions(manager),
@@ -59,8 +63,10 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         overview_definition(manager),
         pipeline_definition(manager),
         radio_definition(manager),
+        report_definition(manager),
         search_definition(manager),
         screenshot_definition(manager),
+        security_policy_definition(manager),
         health_definition(manager),
         *system_definitions(manager),
         theme_definition(manager),

@@ -444,6 +444,20 @@ redirects disabled. Neither opens a Home Assistant API connection. An uncertain
 dispatch is never replayed. Real local transport tests prove these guards;
 the Container bench proves Supervisor absence, not HAOS app execution.
 
+Native developer controls edit only the entry's native configuration through
+shared validators and locked patch producers. Editing one tool preserves its
+neighbours. Human-only approval and backup controls remain accessible through
+the UI or environment. `update_source` refuses before dispatch in native mode;
+install integration updates through HACS rather than pip in Core's process.
+Policy edits retain canonical validation, version comparison and explicit
+approval decisions. Reads do not migrate policy files; initial migration is
+owned by startup. A partial persistence or refresh failure identifies confirmed
+files or the committed policy and requires a fresh read before retrying.
+
+Native reports use bounded Engine operation records and Core's error log.
+Missing timestamps, startup collection and client identity are reported as
+unavailable. All three report types are returned for review without publishing.
+
 For each promised tool behavior, compare native and remote execution on a real,
 isolated Home Assistant. Exercise normal results, missing resources, future
 Core fields, actual validators, invalid inputs that reach Core, read-only and

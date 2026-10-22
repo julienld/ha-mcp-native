@@ -34,6 +34,7 @@ from .native_server_policy import (
     NativePolicy,
     catalogue_middleware,
     catalogue_transform,
+    load_initial_policy,
     load_policy,
 )
 from .runtime_version import require_native_version
@@ -278,7 +279,7 @@ class NativeServerManager:
         self.snapshots = NativeSnapshots(self)
         self.settings_ui = NativeSettings(self)
         self.policy = await self.settings_ui._io(
-            load_policy, self.settings_ui.directory
+            load_initial_policy, self.settings_ui.directory
         )
         self.code = NativeCode(self)
         self.backend = NativeBackend(

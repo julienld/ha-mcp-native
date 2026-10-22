@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 _SUPPORTED_FLAGS = (
     "read_only_mode",
     "enable_tool_security_policies",
+    "enable_security_policy_tool",
     "enable_mandatory_bps",
     "enable_strict_mandatory_bps",
     "enable_tool_search",
@@ -41,6 +43,8 @@ _BACKUP_SETTINGS = frozenset(
     {
         "enable_snapshot_actions",
         "backup_read_only",
+        "enable_snapshot_delete",
+        "snapshot_delete_min_age_days",
         "enable_auto_backup",
         "auto_backup_dir",
         "auto_backup_throttle_minutes",
@@ -48,6 +52,8 @@ _BACKUP_SETTINGS = frozenset(
     }
 )
 _ADVANCED = {
+    "enable_dev_mode": "HAMCP_ENABLE_DEV_MODE",
+    "dev_tools_security_policy_access": "HAMCP_DEV_SECURITY_POLICY_ACCESS",
     "enabled_tool_modules": "ENABLED_TOOL_MODULES",
     "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS",
     "code_mode_max_duration": "CODE_MODE_MAX_DURATION",
@@ -217,38 +223,16 @@ class NativeSettings:
         )
 
     def _save_tools(self, body: Any) -> dict[str, Any]:
-        from ha_mcp.settings_ui._handlers_tools import (
-            _coerce_llm_overrides,
-            _coerce_tool_states,
-        )
+        from ha_mcp.utils.config_write_lock import config_file_lock
 
-        if (
-            not isinstance(body, dict)
-            or not isinstance(body.get("states", {}), dict)
-            or not isinstance(body.get("llm_api", {}), dict)
-        ):
-            raise ValueError("states and llm_api must be JSON objects")
-        states = _coerce_tool_states(body.get("states", {}))
-        policy = load_policy(self.directory)
-        if (
-            policy.flag("enable_mandatory_bps")
-            and policy.flag("enable_strict_mandatory_bps")
-            and states.get("ha_get_skill_guide") == "disabled"
-            and policy.tool_states.get("ha_get_skill_guide") != "disabled"
-        ):
-            raise ValueError(
-                "The skill guide is required while strict best-practices mode is enabled"
-            )
-        pinned = env_tool_states()
-        if any(
-            name in states and states[name] != value for name, value in pinned.items()
-        ):
-            raise ValueError("Environment-pinned tools cannot be changed here")
-        persisted = {
-            name: value for name, value in states.items() if name not in pinned
-        }
-        llm_api = _coerce_llm_overrides(body.get("llm_api", {}))
-        self._merge("tool_config.json", {"tools": persisted, "llm_api": llm_api})
+        from .native_config_store import merge_config_locked, prepare_tool_values
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with config_file_lock(self.directory):
+            policy = load_policy(self.directory)
+            values = prepare_tool_values(self.directory, body)
+            merge_config_locked(self.directory, "tool_config.json", values)
+        persisted, llm_api = values["tools"], values["llm_api"]
         restart_required = (
             bool(getattr(self.manager, "search_enabled", False))
             and policy.pinned != load_policy(self.directory).pinned
@@ -312,7 +296,9 @@ class NativeSettings:
             }
         )
 
-    def _save_features(self, body: Any) -> dict[str, Any]:
+    def _save_features(
+        self, body: Any, *, before_write: Callable[[], None] | None = None
+    ) -> dict[str, Any]:
         from ha_mcp.config_registry import FEATURE_FLAG_FIELDS, SETTING_BOUNDS
 
         raw = body.get("flags") if isinstance(body, dict) else None
@@ -334,7 +320,7 @@ class NativeSettings:
             if env in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
         self._validate_bps_flags(raw)
-        self._merge("feature_flags.json", raw)
+        self._merge("feature_flags.json", raw, before_write=before_write)
         return {
             "success": True,
             "applied": raw,
@@ -425,7 +411,9 @@ class NativeSettings:
             rows.append(row)
         return rows
 
-    def _save_backup_config(self, body: Any) -> dict[str, Any]:
+    def _save_backup_config(
+        self, body: Any, *, before_write: Callable[[], None] | None = None
+    ) -> dict[str, Any]:
         from ha_mcp.config_backup_validation import _validate_backup_payload
 
         from .native_server_policy import environment_name
@@ -438,7 +426,7 @@ class NativeSettings:
                 raise ValueError(
                     f"Unsupported or environment-controlled native backup setting: {name}"
                 )
-        self._merge("backup_settings.json", clean)
+        self._merge("backup_settings.json", clean, before_write=before_write)
         return {
             "success": True,
             "applied": clean,
@@ -455,15 +443,22 @@ class NativeSettings:
         self._merge("theme_prefs.json", sanitized)
         return sanitized
 
-    def _merge(self, filename: str, updates: dict[str, Any]) -> None:
-        from ha_mcp.settings_ui._persistence import _atomic_write_json
+    def _merge(
+        self,
+        filename: str,
+        updates: dict[str, Any],
+        *,
+        before_write: Callable[[], None] | None = None,
+    ) -> None:
         from ha_mcp.utils.config_write_lock import config_file_lock
+
+        from .native_config_store import merge_config_locked
 
         self.directory.mkdir(parents=True, exist_ok=True)
         with config_file_lock(self.directory):
-            path = self.directory / filename
-            existing = _read_object(path)
-            _atomic_write_json(path, {**existing, **updates})
+            if before_write is not None:
+                before_write()
+            merge_config_locked(self.directory, filename, updates)
 
     async def _info(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -503,7 +498,8 @@ class NativeSettings:
         from ha_mcp.config_registry import ADVANCED_SETTINGS_FIELDS, SETTING_BOUNDS
         from ha_mcp.config_settings import Settings
 
-        values = load_policy(self.directory).flags
+        policy = load_policy(self.directory)
+        values = policy.flags
         fields = []
         for name, env, kind, section, _editable in ADVANCED_SETTINGS_FIELDS:
             if name not in _ADVANCED:
@@ -513,7 +509,9 @@ class NativeSettings:
                 "env_var": env,
                 "type": kind.__name__,
                 "section": section,
-                "value": kind(
+                "value": policy.flag(name)
+                if kind is bool
+                else kind(
                     os.environ.get(
                         env,
                         values.get(name, Settings.model_fields[name].default),
@@ -523,14 +521,16 @@ class NativeSettings:
                 "editable": env not in os.environ,
                 "multiline": name == "custom_instructions",
                 "restart_required": name.startswith("code_mode_")
-                or name == "tool_search_max_results",
+                or name in {"tool_search_max_results", "enable_dev_mode"},
             }
             if name in SETTING_BOUNDS:
                 row["min"], row["max"] = SETTING_BOUNDS[name]
             fields.append(row)
         return fields
 
-    def _save_advanced(self, body: Any) -> dict[str, Any]:
+    def _save_advanced(
+        self, body: Any, *, before_write: Callable[[], None] | None = None
+    ) -> dict[str, Any]:
         from ha_mcp.config_overrides import (
             _advanced_override_passes_constraints,
             _coerce_advanced_override_value,
@@ -550,13 +550,14 @@ class NativeSettings:
             if not valid or not _advanced_override_passes_constraints(name, coerced):
                 raise ValueError(f"Invalid native advanced setting: {name}")
             clean[name] = coerced
-        self._merge("feature_flags.json", clean)
+        self._merge("feature_flags.json", clean, before_write=before_write)
         return {
             "success": True,
             "applied": clean,
             "mode": "file",
             "restart_required": any(
-                name.startswith("code_mode_") or name == "tool_search_max_results"
+                name.startswith("code_mode_")
+                or name in {"tool_search_max_results", "enable_dev_mode"}
                 for name in clean
             ),
         }
@@ -578,32 +579,13 @@ class NativeSettings:
         )
 
     def _save_policy(self, body: Any) -> tuple[dict[str, Any], bool]:
-        from ha_mcp.policy.decision_pin import is_pin_set
-        from ha_mcp.policy.model import (
-            ALLOW_LIST_OMITTED_MESSAGE,
-            Policy,
-            drops_allow_list,
-            gates_differ,
-        )
-        from ha_mcp.policy.persistence import load_policy, save_policy
         from ha_mcp.utils.config_write_lock import config_file_lock
 
-        new = Policy.model_validate(body)
+        from .native_config_store import save_policy_locked
+
         self.directory.mkdir(parents=True, exist_ok=True)
         with config_file_lock(self.directory):
-            current = load_policy(self.directory)
-            if drops_allow_list(new, current):
-                raise ValueError(ALLOW_LIST_OMITTED_MESSAGE)
-            if new.event_decisions_enabled and not is_pin_set(self.directory):
-                raise ValueError("Set an approval PIN before enabling event decisions")
-            if new.version != current.version:
-                return {
-                    "error": "policy version mismatch",
-                    "current_version": current.version,
-                    "current_policy": current.model_dump(mode="json"),
-                }, False
-            save_policy(self.directory, new)
-        return {"saved": True, "version": new.version + 1}, gates_differ(current, new)
+            return save_policy_locked(self.directory, body)
 
     async def _pending(self, request: web.Request) -> web.Response:
         pending = self.manager.approval_gate.queue.list_pending()

@@ -182,6 +182,14 @@
     "array_patch": "One GET and one POST, serialized among our calls, without a conditional-write guarantee against other app clients. The before-image is detached before shared array edits.",
     "qualification": "Local real HTTP/WebSocket tests prove single request/command, dropped response and redirect refusal. Core Container proves explicit Supervisor absence; actual HAOS app management remains unqualified."
   },
+  "native_administration": {
+    "developer": "Entry-scoped native configuration only. Shared validators and locked patch producers preserve neighbouring settings and tool overrides. Human-only approval and backup controls remain UI/environment-only.",
+    "source_update": "Native update_source refuses before dispatch; install integration updates through HACS, never pip inside the shared Core process.",
+    "policy": "Canonical document validation, version comparison and explicit approval-queue decisions. Remembered decisions are invalidated after policy changes. Policy reads do not perform hidden migrations; startup owns initial migration.",
+    "reports": "Bounded Engine operation history and Core error-log observations; absent timestamps, startup collection and client identity remain explicit. Reports are returned for review and never published.",
+    "partial_persistence": "Confirmed files or a committed policy remain identified when later persistence, live refresh or authority checks fail. Inspect current state before retrying.",
+    "public_contract": "Original public arguments, coercion and safety annotations are retained; native source-update and diagnostic limits are disclosed."
+  },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
     {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},

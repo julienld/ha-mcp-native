@@ -34,12 +34,15 @@
     "custom_components/ha_mcp_tools/native_yaml_tools.py",
     "custom_components/ha_mcp_tools/native_screenshot_tools.py",
     "custom_components/ha_mcp_tools/native_hacs_tools.py",
-    "custom_components/ha_mcp_tools/native_app_tools.py"
+    "custom_components/ha_mcp_tools/native_app_tools.py",
+    "custom_components/ha_mcp_tools/native_dev_tools.py",
+    "custom_components/ha_mcp_tools/native_report_tools.py",
+    "custom_components/ha_mcp_tools/native_security_policy_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 81,
+    "native_catalog_declarations": 85,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -1822,8 +1825,8 @@
         "no self-deadlock on reload"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_dev.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/dev_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1834,29 +1837,29 @@
       ],
       "client_call_candidates": [
         {
-          "line": 440,
+          "line": 424,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
           ]
         },
         {
-          "line": 308,
+          "line": 292,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 506,
+          "line": 490,
           "call": "client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1903,
+          "line": 1531,
           "call": "self._client.get_config",
           "wire_literals": []
         },
         {
-          "line": 2100,
+          "line": 1728,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -1877,8 +1880,8 @@
         "no self-deadlock on reload"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_dev.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/dev_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1889,29 +1892,29 @@
       ],
       "client_call_candidates": [
         {
-          "line": 440,
+          "line": 424,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
           ]
         },
         {
-          "line": 308,
+          "line": 292,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 506,
+          "line": 490,
           "call": "client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1903,
+          "line": 1531,
           "call": "self._client.get_config",
           "wire_literals": []
         },
         {
-          "line": 2100,
+          "line": 1728,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -3350,8 +3353,8 @@
         "policy persistence"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_security_policy.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/security_policy_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3987,8 +3990,8 @@
         "external publication gate"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_bug_report.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/report_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3997,34 +4000,34 @@
       ],
       "client_call_candidates": [
         {
-          "line": 541,
+          "line": 479,
           "call": "client.get_error_log",
           "wire_literals": []
         },
         {
-          "line": 501,
+          "line": 439,
           "call": "http_client.get",
           "wire_literals": []
         },
         {
-          "line": 689,
+          "line": 561,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 741,
+          "line": 613,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
           ]
         },
         {
-          "line": 792,
+          "line": 664,
           "call": "self._client.get_config",
           "wire_literals": []
         },
         {
-          "line": 810,
+          "line": 682,
           "call": "self._client.get_states",
           "wire_literals": []
         }
