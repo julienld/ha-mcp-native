@@ -536,7 +536,10 @@ class HaMcpLlmApi(llm.API):
         return llm.APIInstance(self, prompt, llm_context, tools)
 
     def _convert_parameters(self, tool: Any, schema: Any) -> vol.Schema | None:
-        return convert_parameters(tool, schema, converter=convert_to_voluptuous)
+        return cast(
+            vol.Schema | None,
+            convert_parameters(tool, schema, converter=convert_to_voluptuous),
+        )
 
     def _mirror(self, tool: Any, parameters: vol.Schema) -> HaMcpTool:
         """Mirror one server tool with its title and safety hints."""

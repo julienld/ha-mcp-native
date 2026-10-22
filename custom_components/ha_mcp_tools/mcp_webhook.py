@@ -628,7 +628,10 @@ async def _async_handle_webhook(
         return auth_response
 
     if (native := cfg.get("native_manager")) is not None:
-        return await native.async_handle_http(request, cfg, read_only=read_only)
+        response: web.StreamResponse = await native.async_handle_http(
+            request, cfg, read_only=read_only
+        )
+        return response
 
     return await _relay_legacy_request(request, cfg, read_only=read_only)
 
