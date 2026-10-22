@@ -23,6 +23,7 @@ from configuration_checks import (
 )
 from device_checks import exercise_devices
 from entity_checks import exercise_entities
+from event_checks import exercise_events
 from history_checks import exercise_history
 from interop_checks import exercise_llm
 from log_checks import exercise_logs
@@ -397,6 +398,7 @@ async def exercise(checks: Checks) -> dict:
     await exercise_calendars(checks, BASE)
     await exercise_devices(checks, BASE)
     await exercise_entities(checks, BASE)
+    await exercise_events(checks)
     await exercise_resources(checks, BASE)
     await exercise_history(checks)
     await exercise_logs(checks)

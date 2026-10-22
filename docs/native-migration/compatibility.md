@@ -150,6 +150,14 @@ Single and bulk removals capture each existing target. An uncertain Core
 removal stops a native bulk call, returning its confirmed progress and explicit
 `not_attempted` targets without replaying a removal.
 
+Core can normalize an entity during its own callbacks, for example by adding
+a sensor's suggested display precision. Confirmation checks the durable UUID
+and explicitly written values instead of rejecting unrelated Core additions.
+Effective options and normalization warnings are returned; removing an option
+domain does not claim that Core left it absent if Core rematerialized fields.
+Changing a proposed value, including `false` to numeric `0`, remains an unknown
+outcome rather than a confirmed update.
+
 For state-only entities, `entity_exposure` snapshots preserve the actual Core
 exposure preferences. Missing preferences and explicit `false` remain distinct;
 restoring absence does not materialize disabled preferences. A registration

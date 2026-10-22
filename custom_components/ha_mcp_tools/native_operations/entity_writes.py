@@ -436,7 +436,10 @@ class NativeEntityWrites(NativeEntityRegistry):
             try:
                 written = self._write(plan.registry, entry, payload)
                 entry = self._confirmed_entry(
-                    plan.registry, entity_registry_identity(plan.before), written
+                    plan.registry,
+                    entity_registry_identity(plan.before),
+                    written,
+                    payload,
                 )
                 if (
                     payload.get("new_entity_id")
@@ -452,8 +455,11 @@ class NativeEntityWrites(NativeEntityRegistry):
             phase = payload.get("options_domain", "registry")
             plan.confirmed.append(phase)
             if "options_domain" in payload:
-                plan.options_succeeded[phase] = payload["options"]
-                plan.updates.append(f"options[{phase}]={payload['options']}")
+                effective, warning = self._effective_options(entry, payload)
+                plan.options_succeeded[phase] = effective
+                plan.updates.append(f"options[{phase}]={effective}")
+                if warning:
+                    plan.warnings.append(warning)
         self._commit_device(plan)
         self._commit_exposure(plan)
         row = registry_json(self._guard_phase(plan).extended_dict)
@@ -469,6 +475,8 @@ class NativeEntityWrites(NativeEntityRegistry):
         )
         if plan.warnings:
             result.setdefault("warnings", []).extend(plan.warnings)
+        if plan.options_succeeded:
+            result["options_succeeded"] = plan.options_succeeded
         return result
 
     def _commit_device(self, plan: _EntityPlan) -> None:

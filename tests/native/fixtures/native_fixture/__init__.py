@@ -94,6 +94,13 @@ class FixtureView(HomeAssistantView):
     async def get(self, request, operation):
         if not request["hass_user"].is_admin:
             return web.json_response({"error": "admin_required"}, status=403)
+        if operation == "event":
+            return web.json_response(
+                {
+                    "events": self.hass.data[DOMAIN]["events"],
+                    "request_user_id": request["hass_user"].id,
+                }
+            )
         if operation == "device":
             data = self.hass.data[DOMAIN]
             return web.json_response(
@@ -236,6 +243,9 @@ async def async_setup(hass, config):
         "remote_import_sites": [],
     }
     hass.data[DOMAIN] = data
+    from .events import observe_events
+
+    observe_events(hass)
     original_connect = socket.socket.connect
 
     def guarded_connect(sock, address):

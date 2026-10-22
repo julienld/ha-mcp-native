@@ -3,6 +3,8 @@
 import asyncio
 import copy
 import importlib
+import importlib.machinery
+import importlib.util
 import json
 import re
 import sys
@@ -46,7 +48,31 @@ class _SupervisorResponse:
 
 
 @pytest.fixture
-async def logs(native: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+def log_url_library(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """OAuth collection stubs may replace yarl with a URL lacking joinpath."""
+    previous = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "yarl" or name.startswith("yarl.")
+    }
+    spec = importlib.machinery.PathFinder.find_spec("yarl")
+    assert spec is not None and spec.loader is not None
+    package = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "yarl", package)
+    try:
+        spec.loader.exec_module(package)
+        yield package
+    finally:
+        for name in list(sys.modules):
+            if name == "yarl" or name.startswith("yarl."):
+                sys.modules.pop(name)
+        sys.modules.update(previous)
+
+
+@pytest.fixture
+async def logs(
+    native: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log_url_library: Any
+) -> Any:
     world = SimpleNamespace(
         entries=[
             {

@@ -14,12 +14,13 @@
     "custom_components/ha_mcp_tools/native_history_tools.py",
     "custom_components/ha_mcp_tools/native_log_tools.py",
     "custom_components/ha_mcp_tools/native_entity_tools.py",
+    "custom_components/ha_mcp_tools/native_event_tools.py",
     "custom_components/ha_mcp_tools/native_calendar_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 49,
+    "native_catalog_declarations": 50,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -70,28 +71,23 @@
       ],
       "client_call_candidates": [
         {
-          "line": 378,
+          "line": 380,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1292,
+          "line": 1288,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 951,
+          "line": 947,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1114,
+          "line": 1110,
           "call": "get_websocket_client",
-          "wire_literals": []
-        },
-        {
-          "line": 1720,
-          "call": "self._client.fire_event",
           "wire_literals": []
         }
       ]
@@ -112,8 +108,8 @@
         "arbitrary ws_command exception"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_service.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/event_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -123,28 +119,23 @@
       ],
       "client_call_candidates": [
         {
-          "line": 378,
+          "line": 380,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1292,
+          "line": 1288,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 951,
+          "line": 947,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1114,
+          "line": 1110,
           "call": "get_websocket_client",
-          "wire_literals": []
-        },
-        {
-          "line": 1720,
-          "call": "self._client.fire_event",
           "wire_literals": []
         }
       ]
@@ -180,28 +171,23 @@
       ],
       "client_call_candidates": [
         {
-          "line": 378,
+          "line": 380,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1292,
+          "line": 1288,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 951,
+          "line": 947,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1114,
+          "line": 1110,
           "call": "get_websocket_client",
-          "wire_literals": []
-        },
-        {
-          "line": 1720,
-          "call": "self._client.fire_event",
           "wire_literals": []
         }
       ]
@@ -2529,28 +2515,23 @@
       ],
       "client_call_candidates": [
         {
-          "line": 378,
+          "line": 380,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1292,
+          "line": 1288,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 951,
+          "line": 947,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1114,
+          "line": 1110,
           "call": "get_websocket_client",
-          "wire_literals": []
-        },
-        {
-          "line": 1720,
-          "call": "self._client.fire_event",
           "wire_literals": []
         }
       ]

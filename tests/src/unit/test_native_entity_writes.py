@@ -430,9 +430,18 @@ async def test_device_disabled_during_backup_blocks_entity_enable_before_dispatc
     assert registry.rows["sensor.first"].disabled_by == "user"
 
 
+@pytest.mark.parametrize(
+    "proposed,replaced",
+    [
+        ({"precision": 9}, {"precision": 99}),
+        ({"future_flag": False}, {"future_flag": 0}),
+    ],
+)
 async def test_entity_options_listener_cannot_make_unstored_requested_values_look_confirmed(
     native: Any,
     monkeypatch: pytest.MonkeyPatch,
+    proposed: dict,
+    replaced: dict,
 ) -> None:
     engine, _, registry, _, _, _, _ = _setup(native, monkeypatch)
     update = registry.async_update_entity_options
@@ -440,7 +449,7 @@ async def test_entity_options_listener_cannot_make_unstored_requested_values_loo
     def update_then_replace_options(entity_id: str, domain: str, values: Any) -> Any:
         written = update(entity_id, domain, values)
         replacement = copy.deepcopy(written)
-        replacement.options[domain] = {"precision": 99}
+        replacement.options[domain] = replaced
         registry.rows[entity_id] = replacement
         return written
 
@@ -449,13 +458,41 @@ async def test_entity_options_listener_cannot_make_unstored_requested_values_loo
     )
     result = await engine.call(
         "ha_set_entity",
-        {"entity_id": "sensor.first", "options": {"sensor": {"precision": 9}}},
+        {"entity_id": "sensor.first", "options": {"sensor": proposed}},
         CallContext("actor"),
     )
     assert result.is_error and result.status == "outcome_unknown", result.data
     assert result.data["options_succeeded"] == {}
-    assert registry.rows["sensor.first"].options["sensor"] == {"precision": 99}
+    assert registry.rows["sensor.first"].options["sensor"] == replaced
     assert len(registry.calls) == 1
+
+
+async def test_entity_options_accept_core_derived_precision_and_return_the_actual_domain(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, _, registry, _, _, _, _ = _setup(native, monkeypatch)
+    update = registry.async_update_entity_options
+
+    def update_with_core_suggestion(entity_id: str, domain: str, values: Any) -> Any:
+        written = update(entity_id, domain, values)
+        update(entity_id, domain, {**values, "suggested_display_precision": 3})
+        return written
+
+    monkeypatch.setattr(
+        registry, "async_update_entity_options", update_with_core_suggestion
+    )
+    result = await engine.call(
+        "ha_set_entity",
+        {"entity_id": "sensor.first", "options": {"sensor": {"display_precision": 2}}},
+        CallContext("actor"),
+    )
+    assert not result.is_error, result.data
+    actual = {"display_precision": 2, "suggested_display_precision": 3}
+    assert result.data["entity_entry"]["options"]["sensor"] == actual
+    assert result.data["options_succeeded"]["sensor"] == actual
+    assert any("Core" in warning for warning in result.data["warnings"])
+    assert len(registry.calls) == 2
 
 
 async def test_entity_listener_association_change_cannot_rename_the_previous_device(

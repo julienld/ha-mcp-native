@@ -695,13 +695,13 @@ class TestImportResolution:
     def test_an_aliased_name_is_bound_under_its_local_spelling(self):
         scope = extract_tools.ModuleScope({}, {})
         extract_tools._apply_imports(
-            extract_tools.TOOLS_DIR / "tools_logs.py",
+            extract_tools.PACKAGE_ROOT / "runtime" / "log_tools.py",
             ast.parse("from .log_common import MAX_LIMIT as CAP"),
             scope,
         )
 
         source_scope = extract_tools._module_scope(
-            extract_tools.TOOLS_DIR / "log_common.py"
+            extract_tools.PACKAGE_ROOT / "runtime" / "log_common.py"
         )
 
         assert scope.consts["CAP"] == source_scope.consts["MAX_LIMIT"]
@@ -778,7 +778,7 @@ class TestModuleScope:
     @pytest.fixture(scope="class")
     def logs_scope(self):
         return extract_tools._module_scope(
-            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_logs.py"
+            REPO_ROOT / "src" / "ha_mcp" / "runtime" / "log_tools.py"
         )
 
     def test_constants_are_pulled_through_relative_imports(self, logs_scope):

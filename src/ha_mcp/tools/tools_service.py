@@ -15,6 +15,7 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.remote_events import RemoteEvents
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantClient,
@@ -46,6 +47,7 @@ from ..runtime.action_params import (
     _parse_json_dict_param as _shared_parse_json_dict_param,
 )
 from ..runtime.actions import ServiceCallTools as SharedServiceCallTools
+from ..runtime.event_tools import EventTools as _EventContractTools
 from ..tool_api import ToolFailure
 from ..utils.entity_membership import normalize_member_entity_ids
 from .backup_access import guard_snapshot_route
@@ -605,12 +607,6 @@ class _AmbiguousDispatch:
 # outcome is never retried). Distinct from ``None`` (the component provably never
 # dispatched → a safe legacy first fire).
 _COMPONENT_DISPATCH_AMBIGUOUS = _AmbiguousDispatch()
-
-
-def _parse_event_data(data: str | dict[str, Any] | None) -> dict[str, Any] | None:
-    return _parse_json_dict_param(
-        data, type_error_message="Event data must be a JSON object (dict)"
-    )
 
 
 def _parse_json_dict_param(data: Any, *, type_error_message: str) -> Any:
@@ -1657,104 +1653,17 @@ class ServiceTools(SharedServiceCallTools):
         _attach_resolution_to_response(response, resolution)
         return response
 
-    @tool(
+    @property
+    def events(self) -> RemoteEvents:
+        return RemoteEvents(self._client)
+
+    ha_call_event = tool(
         name="ha_call_event",
         tags={"Service & Device Control"},
         annotations=write_hints(
             "Call Event", destructive=True, idempotent=False, open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_call_event(
-        self,
-        event_type: Annotated[
-            str,
-            Field(
-                description="Event type to fire, e.g. 'my_custom_event'.",
-            ),
-        ],
-        data: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Optional event payload, delivered to subscribers as the "
-                    "event's data (trigger.event.data in an automation)."
-                ),
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Execute a custom event on the Home Assistant event bus.
-
-        When NOT to use: for controlling entities (lights, switches, climate) — use
-        ha_call_service instead. To run an automation now, use
-        ha_config_set_automation(identifier=..., run_actions=True).
-
-        Use this to publish custom event types consumed by event-triggered automations,
-        Node-RED flows, or custom integrations that subscribe to specific event types.
-
-        Caveats: Events are fire-and-forget; this tool confirms the event was accepted
-        by the bus but does not verify whether any automation or subscriber acted on it.
-        """
-        # Validate event_type before hitting the wire — empty strings or path separators
-        # produce malformed URLs at POST /api/events/{event_type}.
-        if not event_type or not event_type.strip():
-            raise_tool_error(
-                create_validation_error(
-                    "event_type cannot be empty or whitespace",
-                    parameter="event_type",
-                )
-            )
-        if "/" in event_type or "\\" in event_type:
-            raise_tool_error(
-                create_validation_error(
-                    "event_type cannot contain path separators",
-                    parameter="event_type",
-                    details=f"Received: {event_type!r}",
-                )
-            )
-
-        parsed_data = _parse_event_data(data)
-
-        try:
-            response = await self._client.fire_event(event_type, parsed_data)
-        except HomeAssistantConnectionError as error:
-            if isinstance(error.__cause__, httpx.TimeoutException):
-                return {
-                    "success": True,
-                    "partial": True,
-                    "event_type": event_type,
-                    "message": (
-                        f"Event {event_type} was dispatched but Home Assistant "
-                        "did not respond within the timeout period."
-                    ),
-                    "warnings": [
-                        "Response timed out. The event was dispatched and may still "
-                        "have been delivered to subscribers."
-                    ],
-                }
-            exception_to_structured_error(
-                error,
-                context={"event_type": event_type},
-                suggestions=["Check Home Assistant connection"],
-            )
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            exception_to_structured_error(
-                e,
-                context={"event_type": event_type},
-                suggestions=[
-                    "Check Home Assistant connection",
-                    "Verify event_type is a valid identifier",
-                ],
-            )
-
-        return {
-            "success": True,
-            "event_type": event_type,
-            "message": response.get("message", f"Event {event_type} fired."),
-        }
+    )(log_tool_usage(legacy_errors(_EventContractTools.ha_call_event)))
 
 
 def register_service_tools(

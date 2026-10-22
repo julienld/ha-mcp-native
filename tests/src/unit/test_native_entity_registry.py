@@ -13,6 +13,7 @@ import pytest
 from ha_mcp.runtime import Engine
 from ha_mcp.tool_api import CallContext
 
+from .test_native_devices import _Devices
 from .test_native_devices import _setup as device_setup
 from .test_native_engine_backend import native as native
 
@@ -67,9 +68,7 @@ class _Registry:
             (row for row in self.rows.values() if row.id == entity_id), None
         )
 
-    def async_remove(self, entity_id: str) -> None:
-        self.calls.append(("remove", entity_id))
-        del self.rows[entity_id]
+    async_remove = _Devices.async_remove_device
 
     def async_update_entity(self, entity_id: str, **changes: Any) -> Any:
         previous = self.rows.pop(entity_id)
@@ -84,11 +83,12 @@ class _Registry:
     def async_update_entity_options(
         self, entity_id: str, domain: str, value: Any
     ) -> Any:
-        row = self.rows[entity_id]
+        row = _Entity(**copy.deepcopy(vars(self.rows[entity_id])))
         if value is None:
             row.options.pop(domain, None)
         else:
             row.options[domain] = copy.deepcopy(value)
+        self.rows[entity_id] = row
         self.calls.append(("options", entity_id, domain, value))
         return row
 
@@ -399,6 +399,39 @@ async def test_entity_restore_never_applies_later_options_to_a_listener_replacem
     assert result.is_error and result.status == "outcome_unknown", result.data
     assert registry.rows["sensor.first"].options == {"added": {"replacement": True}}
     assert [call[0] for call in registry.calls] == ["update"]
+
+
+async def test_entity_history_reports_effective_options_when_core_rematerializes_a_cleared_domain(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, manager, registry, _, _, owner = _setup(native, monkeypatch)
+    expected = registry.rows["sensor.first"].extended_dict
+    saved = {**expected, "options": {}}
+    update = registry.async_update_entity_options
+
+    def clear_then_suggest(entity_id: str, domain: str, value: Any) -> Any:
+        written = update(entity_id, domain, value)
+        if value is None:
+            update(entity_id, domain, {"suggested_display_precision": 3})
+        return written
+
+    monkeypatch.setattr(registry, "async_update_entity_options", clear_then_suggest)
+    service = owner.NativeEntityRegistry(
+        manager.hass, CallContext("actor"), authorize=manager.backend.authorize
+    )
+    result = await engine.call_owned(
+        "restore",
+        lambda: service.restore_snapshot("uuid-first", saved, expected),
+        CallContext("actor"),
+        writes=True,
+    )
+    assert not result.is_error, result.data
+    assert result.data["options"]["sensor"] == {"suggested_display_precision": 3}
+    assert (
+        result.data["options_succeeded"]["sensor"] == result.data["options"]["sensor"]
+    )
+    assert "Core" in result.data["warnings"][0]
 
 
 async def test_bulk_removal_yields_to_queued_revocation_before_the_next_target(

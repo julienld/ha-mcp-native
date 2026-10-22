@@ -314,16 +314,65 @@ class NativeEntityRegistry:
         return current
 
     def _confirmed_entry(
-        self, registry: Any, identity: dict[str, Any], written: Any
+        self,
+        registry: Any,
+        identity: dict[str, Any],
+        written: Any,
+        payload: dict[str, Any] | None = None,
     ) -> Any:
         current = self._current_entry(registry, identity)
-        if not json_values_equal(
-            registry_json(current.extended_dict), registry_json(written.extended_dict)
-        ):
+        actual = registry_json(current.extended_dict)
+        acknowledged = registry_json(written.extended_dict)
+        if not json_values_equal(entity_registry_identity(acknowledged), identity):
+            raise RuntimeError("Core acknowledged a different entity identity")
+        if payload is None:
+            matches = json_values_equal(actual, acknowledged)
+        elif "options_domain" in payload:
+            domain = payload["options_domain"]
+            expected_options = acknowledged["options"].get(domain)
+            current_options = actual["options"].get(domain)
+            # SensorEntity may synchronously rematerialize its suggested precision.
+            # Core owns added fields; an explicitly proposed value may not change.
+            matches = (
+                current_options is None or isinstance(current_options, dict)
+                if expected_options is None
+                else (
+                    isinstance(current_options, dict)
+                    and all(
+                        key in current_options
+                        and json_values_equal(current_options[key], value)
+                        for key, value in expected_options.items()
+                    )
+                )
+            )
+        else:
+            fields = {
+                "entity_id" if key == "new_entity_id" else key for key in payload
+            } - {"entity_id"}
+            if "new_entity_id" in payload:
+                fields.add("entity_id")
+            matches = all(
+                json_values_equal(actual.get(key), acknowledged.get(key))
+                for key in fields
+            )
+        if not matches:
             raise RuntimeError(
-                "The Core entity result was replaced by a listener before confirmation"
+                "An explicitly written entity value changed before confirmation"
             )
         return current
+
+    @staticmethod
+    def _effective_options(
+        entry: Any, payload: dict[str, Any]
+    ) -> tuple[Any, str | None]:
+        domain = payload["options_domain"]
+        effective = registry_json(entry.extended_dict)["options"].get(domain)
+        warning = (
+            f"Core enriched options[{domain}]; the response contains the effective options, including fields Core rematerialized."
+            if not json_values_equal(effective, payload["options"])
+            else None
+        )
+        return effective, warning
 
     async def restore_snapshot(
         self, identity: str, config: dict[str, Any], expected: Any
@@ -361,6 +410,8 @@ class NativeEntityRegistry:
                 self._check_enable(entry, payload)
             check_mutation_admission(self.actor)
             confirmed_phases = []
+            effective_options = {}
+            warnings = []
             try:
                 for payload in payloads:
                     entry = self._current_entry(
@@ -369,14 +420,24 @@ class NativeEntityRegistry:
                     check_mutation_admission(self.actor)
                     written = self._write(registry, entry, payload)
                     entry = self._confirmed_entry(
-                        registry, entity_registry_identity(before), written
+                        registry, entity_registry_identity(before), written, payload
                     )
                     confirmed_phases.append(payload.get("options_domain", "registry"))
-                return registry_json(
+                    if "options_domain" in payload:
+                        effective, warning = self._effective_options(entry, payload)
+                        effective_options[payload["options_domain"]] = effective
+                        if warning:
+                            warnings.append(warning)
+                result = registry_json(
                     self._current_entry(
                         registry, entity_registry_identity(before)
                     ).extended_dict
                 )
+                if warnings:
+                    result.update(
+                        warnings=warnings, options_succeeded=effective_options
+                    )
+                return result
             except Exception as error:  # noqa: BLE001 - earlier restore phases may have committed
                 registry_outcome_unknown(
                     "entity",
