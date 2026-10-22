@@ -32,12 +32,13 @@
     "custom_components/ha_mcp_tools/native_radio_tools.py",
     "custom_components/ha_mcp_tools/native_filesystem_tools.py",
     "custom_components/ha_mcp_tools/native_yaml_tools.py",
-    "custom_components/ha_mcp_tools/native_screenshot_tools.py"
+    "custom_components/ha_mcp_tools/native_screenshot_tools.py",
+    "custom_components/ha_mcp_tools/native_hacs_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 77,
+    "native_catalog_declarations": 79,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -2354,50 +2355,50 @@
         "external-content hints"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_hacs.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/hacs_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 56,
+          "line": 70,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 134,
+          "line": 162,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 402,
+          "line": 203,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 836,
+          "line": 569,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 458,
+          "line": 245,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 550,
+          "line": 310,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 643,
+          "line": 395,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 678,
+          "line": 430,
           "call": "ws_client.send_command",
           "wire_literals": []
         }
@@ -3209,50 +3210,50 @@
         "external-content hints"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_hacs.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/hacs_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 56,
+          "line": 70,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 134,
+          "line": 162,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 402,
+          "line": 203,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 836,
+          "line": 569,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 458,
+          "line": 245,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 550,
+          "line": 310,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 643,
+          "line": 395,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 678,
+          "line": 430,
           "call": "ws_client.send_command",
           "wire_literals": []
         }
