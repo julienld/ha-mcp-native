@@ -484,6 +484,12 @@ def _unscannable_reason(name: str, args: dict[str, Any]) -> str | None:
             "naming them in its input or response. It is unavailable while entity "
             "visibility enforcement has active hiding rules."
         )
+    if name == "ha_manage_radio":
+        return (
+            "Radio operations address devices, nodes, groups and networks outside "
+            "the entity visibility boundary; their access cannot be safely "
+            "constrained by scanning entity IDs."
+        )
     return None
 
 

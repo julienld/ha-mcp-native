@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from ha_mcp.runtime.radio_specs import THREAD
+
 from .base import (
-    ActionSpec,
     integration_not_found,
     integration_required,
     ok,
@@ -23,52 +24,7 @@ from .base import (
     ws_call,
 )
 
-SUPPORTED: dict[str, ActionSpec] = {
-    "network_status": ActionSpec(
-        "OTBR border-router status keyed by extended address (channel, active "
-        "dataset TLVs, extended PAN id, border agent id)."
-    ),
-    "list_datasets": ActionSpec(
-        "List stored Thread operational datasets (the preferred network + others)."
-    ),
-    "set_preferred_dataset": ActionSpec(
-        "Make a stored dataset preferred in Home Assistant. Does not change the "
-        "OTBR's active network; use set_network for that.",
-        required=("dataset_id",),
-    ),
-    "delete_dataset": ActionSpec(
-        "Delete a stored Thread dataset. To delete the preferred dataset, "
-        "make another dataset preferred first.",
-        destructive=True,
-        required=("dataset_id",),
-    ),
-    "discover_routers": ActionSpec(
-        "Start mDNS discovery of Thread border routers. Results arrive as an "
-        "out-of-band event stream; this kicks off the scan.",
-        long_running=True,
-    ),
-    "create_network": ActionSpec(
-        "Form a brand-new Thread network on the OTBR. Factory-resets the border "
-        "router and replaces its current dataset. Targets the only OTBR when "
-        "extended_address is omitted.",
-        destructive=True,
-    ),
-    "set_network": ActionSpec(
-        "Apply a stored dataset as the OTBR's active Thread network. Replaces "
-        "the current network, which can drop existing Thread devices.",
-        destructive=True,
-        required=("dataset_id",),
-    ),
-    "set_channel": ActionSpec(
-        "Migrate the OTBR's Thread network to a different radio channel.",
-        destructive=True,
-        required=("channel",),
-    ),
-    "add_dataset": ActionSpec(
-        "Import a Thread operational dataset (hex TLV) from a named source.",
-        required=("source", "tlv"),
-    ),
-}
+SUPPORTED = THREAD
 
 
 async def _resolve_extended_address(client: Any, args: dict[str, Any]) -> str | None:

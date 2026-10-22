@@ -134,22 +134,53 @@ async def test_declutter_mode_keeps_direct_read_contract(
 
 
 @pytest.mark.parametrize(
-    "action,enforce,denied",
-    [("process", True, True), ("list", True, False), ("process", False, False)],
+    "tool,arguments,enforce,denied",
+    [
+        (
+            "ha_manage_pipeline",
+            {"action": "process", "sentence": "What is happening in the house?"},
+            True,
+            True,
+        ),
+        ("ha_manage_pipeline", {"action": "list"}, True, False),
+        (
+            "ha_manage_pipeline",
+            {"action": "process", "sentence": "What is happening in the house?"},
+            False,
+            False,
+        ),
+        (
+            "ha_manage_radio",
+            {"radio": "matter", "action": "diagnostics", "device_id": "opaque-node"},
+            True,
+            True,
+        ),
+        (
+            "ha_manage_radio",
+            {"radio": "matter", "action": "diagnostics", "device_id": "opaque-node"},
+            False,
+            False,
+        ),
+    ],
 )
-async def test_opaque_conversation_cannot_bypass_hidden_entities_without_naming_them(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, action: str, enforce: bool, denied: bool
+async def test_opaque_operations_cannot_bypass_hidden_entities_without_naming_them(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    arguments: dict,
+    enforce: bool,
+    denied: bool,
 ) -> None:
     _manager, engine, handler = runtime(
         tmp_path,
         monkeypatch,
-        "ha_manage_pipeline",
+        tool,
         {"speech": "Someone is at home"},
         enforce=enforce,
     )
     result = await engine.call(
-        "ha_manage_pipeline",
-        {"action": action, "sentence": "What is happening in the house?"},
+        tool,
+        arguments,
         CallContext("alice"),
     )
     if denied:

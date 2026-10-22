@@ -28,12 +28,13 @@
     "custom_components/ha_mcp_tools/native_system_tools.py",
     "custom_components/ha_mcp_tools/native_theme_tools.py",
     "custom_components/ha_mcp_tools/native_pipeline_tools.py",
-    "custom_components/ha_mcp_tools/native_update_tools.py"
+    "custom_components/ha_mcp_tools/native_update_tools.py",
+    "custom_components/ha_mcp_tools/native_radio_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 69,
+    "native_catalog_declarations": 70,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -3305,8 +3306,8 @@
         "native response contracts"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_radio.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/radio_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3315,7 +3316,7 @@
       ],
       "client_call_candidates": [
         {
-          "line": 61,
+          "line": 60,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"

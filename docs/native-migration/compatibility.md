@@ -287,6 +287,23 @@ substitutes the caller or creates a token. Container covers real theme defaults
 and absent-renderer refusal; a real Supervisor/Puppet engine account remains
 outside this qualification.
 
+Native Radio uses the installed ZHA, Z-Wave JS, Matter and Thread/OTBR owners,
+with their original validators, published registries and provider methods.
+Public arguments and safety annotations remain unchanged. Missing hardware is
+explicitly unavailable; the component never falls back to a remote HA client.
+Cold or pending Thread storage is refused without initiating a migration.
+Thread discovery is bounded and reports partial results after releasing its
+listener; long-running actions await the provider's available receipt, which
+does not guarantee completion of physical commissioning or network changes.
+
+Radio operations are refused when entity-visibility enforcement has hiding
+rules: protocol node/device identifiers cannot safely be treated as entity IDs.
+Simple decluttering retains its existing behavior. Mutations pin the actual
+owner and authority before dispatch, stop queued work after uncertainty and
+never replay an unconfirmed operation. Core Container qualifies hardware-absent
+reads and write refusal for all four families. Physical devices and HAOS radio
+operations remain covered only by isolated owner tests and pinned Core source.
+
 Native Updates uses the published UpdateEntity owners, original update services
 and IssueRegistry callbacks. List/get preserve presentation and expose complete
 provider attributes; release notes come from the actual provider, with the shared

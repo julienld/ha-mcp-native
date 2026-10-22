@@ -37,6 +37,7 @@ from interop_checks import exercise_llm
 from log_checks import exercise_logs
 from overview_checks import exercise_overview
 from pipeline_checks import exercise_pipelines
+from radio_checks import exercise_radios
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
 from search_checks import exercise_search
@@ -414,6 +415,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_system_actions(checks)
     await exercise_pipelines(checks)
     await exercise_updates(checks)
+    await exercise_radios(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)
