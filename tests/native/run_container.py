@@ -21,6 +21,7 @@ from configuration_checks import (
     exercise_todo,
 )
 from interop_checks import exercise_llm
+from registry_checks import exercise_registries
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -384,6 +385,7 @@ async def exercise(checks: Checks) -> dict:
     receipt = await exercise_helpers(checks)
     await exercise_storage_families(checks, receipt)
     await exercise_configuration(checks, receipt, BASE)
+    await exercise_registries(checks, BASE)
     await exercise_flow_helpers(checks, receipt)
     await exercise_todo(checks, BASE)
     for headers in ({}, checks.headers("reader")):

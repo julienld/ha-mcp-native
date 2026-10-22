@@ -10,8 +10,8 @@ import pytest
 from ha_mcp.runtime import Engine
 from ha_mcp.tool_api import CallContext, ToolFailure
 
-from .test_component_helper_collections import FakeRegistry, ItemNotFound, _hass
-from .test_component_ws_search import _REAL_VOL, wsapi
+from .test_component_helper_collections import FakeRegistry, ItemNotFound, _hass, hc
+from .test_component_ws_search import wsapi
 from .test_native_engine_backend import authorize
 from .test_native_engine_backend import native as native
 from .test_native_helper_mutations import CoreStorage
@@ -157,9 +157,14 @@ async def test_schema_rejection_remains_before_the_core_dispatch_boundary(
     direct, monkeypatch
 ):
     collection, _user, backend, _engine = direct
+    # Other modules replace voluptuous during collection. This owner's schema
+    # exception was resolved when its validators were installed.
+    invalid_type = next(
+        error for error in hc._INVALID_ERRORS if error.__name__ == "Invalid"
+    )
 
     async def invalid(self, fields):
-        raise _REAL_VOL.Invalid("Rejected field")
+        raise invalid_type("Rejected field")
 
     monkeypatch.setattr(ImmediateStorage, "_process_create_data", invalid)
     result = await backend.execute(
