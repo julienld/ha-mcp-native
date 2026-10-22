@@ -428,6 +428,22 @@ These groups are runtime configuration: YAML and startup configuration remain
 authoritative after reload or restart. Snapshot restoration reports that limit
 instead of claiming persistent YAML changes.
 
+Native Apps uses the installed Core Supervisor owners, preserving unknown
+provider metadata and applying the shared option redaction. Every
+`ha_manage_app` mode requires write permission, including opaque HTTP GET;
+hidden-entity enforcement refuses app management. `ha_get_app` remains a read.
+The native path uses Supervisor's actual option validator instead of treating
+UI schema fields as a complete contract. Config readback says explicitly when
+the accepted values could not be verified. Array editing remains one GET and
+one POST, without an atomic guarantee against other app clients.
+
+HTTP borrows Core's session with a local guard against automatic retries.
+WebSocket uses Core's ingress URL and an ingress session created for the actor,
+with the existing WebSocket library's single-attempt mode and handshake
+redirects disabled. Neither opens a Home Assistant API connection. An uncertain
+dispatch is never replayed. Real local transport tests prove these guards;
+the Container bench proves Supervisor absence, not HAOS app execution.
+
 For each promised tool behavior, compare native and remote execution on a real,
 isolated Home Assistant. Exercise normal results, missing resources, future
 Core fields, actual validators, invalid inputs that reach Core, read-only and

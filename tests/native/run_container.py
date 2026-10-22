@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import httpx
+from app_checks import exercise_apps
 from blueprint_checks import exercise_blueprints
 from blueprint_source import blueprint_source
 from bulk_checks import exercise_bulk
@@ -425,6 +426,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_files_yaml(checks, BASE)
     await exercise_screenshots(checks, BASE)
     await exercise_hacs_absence(checks)
+    await exercise_apps(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)

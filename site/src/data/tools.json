@@ -46,7 +46,7 @@
   {
     "name": "ha_manage_app",
     "title": "Manage App (add-on)",
-    "description": "Manage Home Assistant apps (add-ons) or proxy an app API.\n\nFor app inventory, status, and Supervisor metadata, call ``ha_get_app``\nfirst; use proxy mode here for documented app-specific read APIs, and\ndo not infer private app API schemas.\n\nUse exactly one mode: lifecycle/store action, configuration fields,\n``path`` proxy, or ``path`` with ``array_patch``.\n\nRequires Home Assistant OS or Supervised. When ha-mcp itself runs as an\napp it cannot update its own running slug; update ha-mcp from the Home\nAssistant Apps UI. ``options`` merges top-level keys and one nested\nmapping level; supply complete values for deeper nested mappings\nbecause they are replaced. Prefer Ingress: direct-port access requires\na shared container network and may require weakening the target app\nauthentication. If a Supervisor lifecycle, configuration, or repository\nwrite has an unknown outcome, verify durable state with ``ha_get_app``\nbefore retrying. That cannot prove whether ``restart`` or ``rebuild``\nran; inspect Supervisor jobs and logs and do not automatically replay\nthem. For a proxy or array-patch write, query the target app's own read\nAPI before retrying.",
+    "description": "Manage Home Assistant apps (add-ons) or proxy an app API.\n\nFor app inventory, status, and Supervisor metadata, call ``ha_get_app``\nfirst; use proxy mode here for documented app-specific read APIs, and\ndo not infer private app API schemas.\n\nUse exactly one mode: lifecycle/store action, configuration fields,\n``path`` proxy, or ``path`` with ``array_patch``.\n\nIn the native Home Assistant component, every mode requires write\npermission, including proxy GET: an app API can have side effects\nregardless of its HTTP method. App management is unavailable while\nhidden-entity enforcement is active. Array editing is a GET followed\nby POST, without an atomic guarantee against other app clients.\n\nRequires Home Assistant OS or Supervised. When ha-mcp itself runs as an\napp it cannot update its own running slug; update ha-mcp from the Home\nAssistant Apps UI. ``options`` merges top-level keys and one nested\nmapping level; supply complete values for deeper nested mappings\nbecause they are replaced. Prefer Ingress: direct-port access requires\na shared container network and may require weakening the target app\nauthentication. If a Supervisor lifecycle, configuration, or repository\nwrite has an unknown outcome, verify durable state with ``ha_get_app``\nbefore retrying. That cannot prove whether ``restart`` or ``rebuild``\nran; inspect Supervisor jobs and logs and do not automatically replay\nthem. For a proxy or array-patch write, query the target app's own read\nAPI before retrying.",
     "inputSchema": {
       "properties": {
         "slug": {
@@ -146,7 +146,7 @@
         },
         "array_patch": {
           "type": "dict[str, Any] | None",
-          "description": "Array-patch mode: atomically GET a JSON array endpoint, apply ordered ops, then POST the mutated array back. Requires 'path'; mutually exclusive with body / websocket / offset / limit and config params. Use ha_get_skill_guide for operation shapes.",
+          "description": "Array-patch mode: GET a JSON array endpoint, apply ordered ops, then POST the mutated array back. Requires 'path'; mutually exclusive with body / websocket / offset / limit and config params. Use ha_get_skill_guide for operation shapes.",
           "default": null
         },
         "request_headers": {

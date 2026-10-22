@@ -33,12 +33,13 @@
     "custom_components/ha_mcp_tools/native_filesystem_tools.py",
     "custom_components/ha_mcp_tools/native_yaml_tools.py",
     "custom_components/ha_mcp_tools/native_screenshot_tools.py",
-    "custom_components/ha_mcp_tools/native_hacs_tools.py"
+    "custom_components/ha_mcp_tools/native_hacs_tools.py",
+    "custom_components/ha_mcp_tools/native_app_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 79,
+    "native_catalog_declarations": 81,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -1974,8 +1975,8 @@
         "external-content hints"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_addons.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/app_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1984,19 +1985,19 @@
       ],
       "client_call_candidates": [
         {
-          "line": 449,
+          "line": 302,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "supervisor/api"
           ]
         },
         {
-          "line": 521,
+          "line": 374,
           "call": "supervisor_client.request",
           "wire_literals": []
         },
         {
-          "line": 2356,
+          "line": 1626,
           "call": "http_client.request",
           "wire_literals": []
         }
@@ -2960,8 +2961,8 @@
         "external-content hints"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_addons.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/app_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2970,19 +2971,19 @@
       ],
       "client_call_candidates": [
         {
-          "line": 449,
+          "line": 302,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "supervisor/api"
           ]
         },
         {
-          "line": 521,
+          "line": 374,
           "call": "supervisor_client.request",
           "wire_literals": []
         },
         {
-          "line": 2356,
+          "line": 1626,
           "call": "http_client.request",
           "wire_literals": []
         }
