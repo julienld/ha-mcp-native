@@ -15,6 +15,11 @@ import time
 from pathlib import Path
 
 import httpx
+from configuration_checks import (
+    exercise_configuration,
+    exercise_flow_helpers,
+    exercise_todo,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -350,6 +355,9 @@ async def exercise(checks: Checks) -> dict:
     checks.passed("shared_state_and_service_tools_on_Core")
     receipt = await exercise_helpers(checks)
     await exercise_storage_families(checks, receipt)
+    await exercise_configuration(checks, receipt, BASE)
+    await exercise_flow_helpers(checks, receipt)
+    await exercise_todo(checks, BASE)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -434,9 +442,17 @@ async def main() -> None:
         "    - type: homeassistant\nhttp:\ninput_boolean:\n  native_light:\n"
         "    name: Native Light\ninput_button:\ninput_select:\ninput_number:\n"
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
-        "person:\ntag:\nnative_fixture:\n",
+        "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
+        "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
+        "native_fixture:\n",
         encoding="utf-8",
     )
+    for filename, empty in (
+        ("scripts.yaml", "{}\n"),
+        ("scenes.yaml", "[]\n"),
+        ("automations.yaml", "[]\n"),
+    ):
+        (CONFIG / filename).write_text(empty, encoding="utf-8")
     docker(
         "run",
         "-d",

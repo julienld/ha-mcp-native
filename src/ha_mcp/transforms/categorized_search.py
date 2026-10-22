@@ -318,7 +318,8 @@ def _admits(
                 writes = transform._effect_resolver(name, arguments or {})
             except Exception as error:
                 raise ToolError(
-                    "Tool arguments could not be validated for a read-only call"
+                    "Tool arguments could not be validated for a read-only call",
+                    log_level=TOOL_ERROR_LOG_LEVEL,
                 ) from error
             if writes is not None:
                 return writes is False

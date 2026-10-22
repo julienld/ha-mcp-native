@@ -45,6 +45,7 @@ from .script_writes import ScriptWriteTools
 from .services import ServiceDiscoveryTools
 from .skills import SkillGuideTools
 from .states import StateTools
+from .todo import TodoTools
 from .tool_effects import READ_ONLY_EXEMPT_TOOLS
 from .zone_writes import ZoneWriteTools
 from .zones import ZoneReadTools
@@ -179,6 +180,37 @@ def _integration_reader(backend: Backend) -> ToolDefinition:
 def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
     """Only complete migrated tools are advertised by the native entry."""
     return [
+        *(
+            define_tool(
+                backend,
+                TodoTools,
+                name,
+                source_module="tools_todo",
+                annotations=annotations,
+                tags=frozenset({"Todo Lists"}),
+            )
+            for name, annotations in (
+                ("ha_get_todo", read_only_hints("Get Todo", open_world=False)),
+                (
+                    "ha_set_todo_item",
+                    write_hints(
+                        "Set Todo Item",
+                        destructive=True,
+                        idempotent=False,
+                        open_world=False,
+                    ),
+                ),
+                (
+                    "ha_remove_todo_item",
+                    write_hints(
+                        "Remove Todo Item",
+                        destructive=True,
+                        idempotent=True,
+                        open_world=False,
+                    ),
+                ),
+            )
+        ),
         _integration_reader(backend),
         define_tool(
             backend,

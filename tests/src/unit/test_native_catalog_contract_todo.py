@@ -11,8 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_mcp.runtime import Engine
-from ha_mcp.runtime.catalog import define_tool
-from ha_mcp.runtime.todo import TodoTools
+from ha_mcp.runtime.catalog import build_initial_catalog
 from ha_mcp.tool_api import CallContext, ToolFailure
 
 from .test_component_ws_phase2_async import _call_hass, _FakeCallServices
@@ -79,13 +78,10 @@ def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, backup: Any = None) -> 
     engine = Engine(
         backend,
         [
-            define_tool(
-                backend,
-                TodoTools,
-                name,
-                annotations={"readOnlyHint": name == "ha_get_todo"},
-            )
-            for name in ("ha_get_todo", "ha_set_todo_item", "ha_remove_todo_item")
+            definition
+            for definition in build_initial_catalog(backend)
+            if definition.name
+            in {"ha_get_todo", "ha_set_todo_item", "ha_remove_todo_item"}
         ],
     )
     return engine, hass, services, user
