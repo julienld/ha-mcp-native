@@ -147,6 +147,13 @@ class FixtureView(HomeAssistantView):
     async def _observation(
         self, request: web.Request, operation: str
     ) -> web.Response | None:
+        if operation == "dependency_receipt":
+            from .dependency_receipt import observe_dependencies
+
+            component = Path(self.hass.config.path("custom_components/ha_mcp_tools"))
+            return web.json_response(
+                await self.hass.async_add_executor_job(observe_dependencies, component)
+            )
         observed = self._configuration_observation(request, operation)
         if observed is not None:
             return observed

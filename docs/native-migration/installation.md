@@ -175,6 +175,8 @@ no overwrite, deterministic ZIP bytes and the managed-install receipt decision.
 The disposable Core CI installs the matching wheel locally and replaces the
 unpublished URL with an exact version pin **only in its image**. Those tests do
 not prove GitHub delivery or a real HACS download of the public candidate.
+The [public-wheel qualification lane](../../tests/native/PUBLISHED.md) exercises
+Core's installer with the unchanged published manifest and checks its receipt.
 
 After publication, verify anonymously accessible ZIP/wheel assets, redirect/hash
 handling by Core's real installer, receipt contents, HACS pre-release selection,

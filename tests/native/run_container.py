@@ -214,7 +214,7 @@ class Checks:
         )
 
 
-async def create_entry(checks: Checks, owner: str) -> None:
+async def create_entry(checks: Checks, owner: str, *, published: bool = False) -> None:
     url = BASE + "/api/config/config_entries/flow"
     response = await checks.client.post(
         url,
@@ -223,6 +223,8 @@ async def create_entry(checks: Checks, owner: str) -> None:
             "handler": "ha_mcp_tools",
             "show_advanced_options": False,
         },
+        # Published mode includes Core's first real download and dependency install.
+        timeout=300 if published else 30,
     )
     response.raise_for_status()
     flow = response.json()
@@ -441,7 +443,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_overview(checks, BASE)
 
 
-async def exercise(checks: Checks) -> dict:
+async def exercise(checks: Checks, *, published_tag: str | None = None) -> dict:
     probe = await checks.ready()
     assert probe["manager_type"] == "NativeServerManager", probe
     assert "admin_token" not in probe["entry_data_keys"], probe
@@ -497,10 +499,17 @@ async def exercise(checks: Checks) -> dict:
     assert final["owned_tasks"] == 0 and final["loopback_attempts"] == 0, final
     assert final["ticks"] > 0, final
     checks.passed("reload_single_listener_no_server_thread_remote_import_or_loopback")
+    if published_tag:
+        from published_checks import exercise_published_install
+
+        await exercise_published_install(
+            checks, tag=published_tag, phase="after_restart"
+        )
+        final = await checks.ready()
     return final
 
 
-async def main() -> None:
+async def main(*, published_tag: str | None = None) -> None:
     CONFIG.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
     preferences = CONFIG / ".ha_mcp"
@@ -589,11 +598,19 @@ async def main() -> None:
             }
             checks = Checks(client, credentials)
             checks.passed("real_HA_authorization_code_flow")
-            await create_entry(checks, identities["alpha"]["user_id"])
+            await create_entry(
+                checks, identities["alpha"]["user_id"], published=bool(published_tag)
+            )
+            if published_tag:
+                from published_checks import exercise_published_install
+
+                await exercise_published_install(
+                    checks, tag=published_tag, phase="after_setup"
+                )
             await checks.control("guard", {})
             await exercise_external_clients(checks, identities["alpha"]["user_id"])
             await exercise_standard_proxy(checks)
-            evidence = await exercise(checks)
+            evidence = await exercise(checks, published_tag=published_tag)
             # Do not persist generated identities or access/refresh tokens.
             evidence.pop("entry_id", None)
             evidence.pop("path", None)
@@ -608,4 +625,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--published-tag")
+    asyncio.run(main(published_tag=parser.parse_args().published_tag))
