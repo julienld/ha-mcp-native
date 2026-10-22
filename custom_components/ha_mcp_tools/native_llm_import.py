@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 from contextvars import ContextVar
+from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.core import Context
 from homeassistant.helpers import llm
 from homeassistant.helpers.json import json_bytes
+
+from ha_mcp.tool_api import ToolFailure
 
 from .const import DOMAIN, OPT_NATIVE_IMPORT_APIS
 
@@ -54,7 +57,7 @@ def _schema(instance: Any, tool: Any) -> dict[str, Any]:
     import voluptuous as vol
 
     if isinstance(tool.parameters, (vol.Schema, dict)):
-        from voluptuous_openapi import convert
+        convert = import_module("voluptuous_openapi").convert
 
         return cast(
             dict[str, Any],
@@ -69,6 +72,18 @@ def _schema(instance: Any, tool: Any) -> dict[str, Any]:
 
 def _writes(tool: Any) -> bool:
     return getattr(getattr(tool, "annotations", None), "read_only", False) is not True
+
+
+def _validated_arguments(tool: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        validated: dict[str, Any] = tool.parameters(dict(arguments))
+        return validated
+    except Exception as error:
+        raise ToolFailure(
+            "INVALID_ARGUMENTS",
+            "The imported API rejected the tool arguments.",
+            status="not_started",
+        ) from error
 
 
 async def inspect_api(
@@ -99,7 +114,7 @@ async def call_imported(
 ) -> Any:
     """Revalidate owner, availability and original schema immediately before use."""
     from ha_mcp.runtime.mutation_guard import current_admission
-    from ha_mcp.tool_api import ToolFailure, ToolResult
+    from ha_mcp.tool_api import ToolResult
 
     await manager.backend.authorize(actor)
     if (visibility := getattr(manager, "visibility", None)) is not None:
@@ -131,9 +146,6 @@ async def call_imported(
                 or _writes(tool) != writes
             ):
                 raise PermissionError("LLM tool owner or capabilities changed")
-            # APIInstance historically validated parameters, but current Core does
-            # not. Calling the original validator supports both without a copy.
-            validated = tool.parameters(dict(arguments))
             await manager.backend.authorize(actor)
             if admission := current_admission.get():
                 admission.check_policy()
@@ -158,6 +170,9 @@ async def call_imported(
                 )
             ):
                 raise PermissionError("LLM API selection or owner changed")
+            # Current Core does not validate in APIInstance. Use its actual
+            # validator after the last await, before any tool callback starts.
+            validated = _validated_arguments(tool, arguments)
         except ToolFailure as error:
             raise ToolFailure(
                 error.code, str(error), data=error.data, status="not_started"
