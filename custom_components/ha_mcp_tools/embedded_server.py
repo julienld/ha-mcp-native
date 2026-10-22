@@ -84,6 +84,7 @@ from .dependency_diagnostics import (
     root_import_failure,
 )
 from .pip_compat import pip_kwargs
+from .runtime_generation import RESTART_REQUIRED, native_bound_version
 from .server_credentials import (
     CredentialNeeded,
     async_release_credentials,
@@ -552,38 +553,28 @@ class EmbeddedServerManager:
         return DIST_NAME_STABLE if target == DIST_NAME_DEV else DIST_NAME_DEV
 
     def _maybe_purge_stale_modules(self, ready_version: str | None) -> None:
-        """Purge cached ha_mcp modules unless doing so is unsafe or pointless.
+        """Preserve native class identity; refresh only a legacy-only generation.
 
-        The purge makes the next worker import the code that is on disk NOW.
-        Without it, a reload after a pip install keeps serving the OLD code
-        forever: all workers are threads of the one HA core process, and
-        Python resolves ``import ha_mcp`` from sys.modules — installs only
-        took effect after a full HA core restart (observed live: options
-        saves reinstalled the package, the web UI footer showed the new
-        on-disk version, yet the serving worker kept reporting the version
-        it was first imported with).
+        Native component classes keep SDK bases and tool-result types after
+        entry unload. A same-version switch must reuse those modules. Once
+        native bindings exist, changed/unknown versions require a Core restart,
+        and package replacement is refused earlier by the managed installer.
 
-        SKIPPED while any previous worker may still be importing — ripping
-        entries out of sys.modules under a live importer corrupts its import
-        in progress. Two guards cover that: the per-manager orphan (a worker
-        this manager's stop could not join), and the process-global
-        ``_IMPORTING_WORKERS`` registry, because every bring-up constructs a
-        FRESH manager (async_bring_up_server) and an entry reload during a
-        slow cold import otherwise hands the purge to a manager that has
-        never heard of the still-importing worker — which then crashed
-        mid-import with KeyError: 'ha_mcp.config' (issue #1904, live on
-        1.1.1-dev.107). The post-start staleness check surfaces the
-        consequence (old code possibly serving) instead.
-
-        Also skipped when the cached modules already ARE the generation on
-        disk: purging on every attempt made each retry pay the full cold
-        import again, so slow hardware that missed the readiness window once
-        could never recover (#1904). Never skipped under a pip-spec override
-        — the one workflow where a reinstall can change the code without
-        changing the version string (re-pointed tarball/pin), which a
-        version-keyed skip would serve stale; every released or dev build
-        carries a distinct version.
+        A legacy-only process retains its update workflow: do not purge while
+        an orphan or another worker is importing; reuse a known equal version
+        without an override; otherwise reload the worker's package modules.
+        An override may change source without changing its version. Purging
+        the worker cannot hot-reload references retained by HA components.
         """
+        native_version = native_bound_version()
+        if native_version is not None:
+            if (
+                native_version == "unknown"
+                or ready_version is None
+                or native_version != ready_version
+            ):
+                raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
+            return
         orphan = self._orphaned_thread
         if orphan is not None and not orphan.is_alive():
             self._orphaned_thread = orphan = None
@@ -616,6 +607,11 @@ class EmbeddedServerManager:
             )
         else:
             _purge_ha_mcp_modules()
+
+    @staticmethod
+    def _check_package_generation(reason: str | None) -> None:
+        if reason is not None and native_bound_version() is not None:
+            raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
 
     async def _async_run_tracked_install_job(
         self, func: Callable[[], object]
@@ -794,6 +790,7 @@ class EmbeddedServerManager:
                 conflicting=conflicting if conflict_present else None,
             )
         )
+        self._check_package_generation(reason)
         deferred = False
         if reason is None:
             pass
@@ -2037,14 +2034,16 @@ def _purge_ha_mcp_modules() -> None:
     The in-process server runs as a thread of the HA core Python process, and
     Python resolves imports from the process-wide ``sys.modules`` cache — so
     after a pip install the next worker would silently reuse the OLD code
-    unless the cache is purged first. Safe here because ``ha_mcp`` is pure
-    Python and is only ever imported inside worker threads, and the caller's
-    gate guarantees no registered worker is mid-import when this runs (a
-    worker past its imports keeps its already-bound modules regardless);
+    unless the cache is purged first. This operation is restricted to a
+    legacy-only process; native bindings reject it even after entry unload.
+    The caller also guarantees no registered worker is mid-import (a worker
+    past its imports keeps its already-bound modules regardless);
     third-party dependencies are deliberately NOT purged (they are shared
     with the rest of Home Assistant), so a dependency-version change still
     needs an HA core restart.
     """
+    if native_bound_version() is not None:
+        raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
     global _CACHED_IMPORT_VERSION
     _CACHED_IMPORT_VERSION = None
     # Snapshot the keys: sys.modules can be mutated by concurrent imports on

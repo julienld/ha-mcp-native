@@ -25,6 +25,12 @@ in generated evidence. Keeping old credential fields for rollback does not mean
 using the administrator token for native calls. Revoke only credentials the
 component issued, with the existing ownership rules; never delete a human user.
 
+Native Core bindings retain their library and SDK classes after entry unload.
+A switch to the legacy runtime reuses that same loaded generation. Once native
+bindings have loaded, the legacy installer refuses package replacement and a
+changed or ambiguous installed version requires a full Home Assistant restart.
+Purging Python modules cannot safely update references retained by Core.
+
 The new runtime can add a native-owner ID for secret-URL and legacy-OAuth modes.
 It must validate that owner is still active and authorized. In `ha_auth` mode,
 the calling human administrator is a separately authenticated principal.

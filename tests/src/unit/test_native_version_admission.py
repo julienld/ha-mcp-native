@@ -11,6 +11,13 @@ from .test_config_flow import _make_flow, _make_options_flow, cf, const
 from .test_native_server import manager as native_manager
 
 
+@pytest.fixture(autouse=True)
+def isolate_native_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.ha_mcp_tools import runtime_generation
+
+    monkeypatch.setattr(runtime_generation, "_NATIVE_VERSION", None)
+
+
 @pytest.mark.parametrize("version", ["2026.8.0", "2026.10.1", "unknown"])
 async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
     monkeypatch: pytest.MonkeyPatch, version: str

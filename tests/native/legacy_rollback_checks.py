@@ -61,6 +61,33 @@ async def _native_image(checks: Any) -> None:
     )
 
 
+async def _cleanup_rollback(
+    checks: Any, envelope: str, *, restore: bool, primary: BaseException | None
+) -> None:
+    failures: list[tuple[str, Exception]] = []
+    if restore:
+        try:
+            await checks.control("legacy_rollback", {"action": "return"})
+        except Exception as error:  # noqa: BLE001 - collected and reported below
+            failures.append(("native return", error))
+    try:
+        revoked = await checks.client.post(_OAUTH + "/revoke", data={"token": envelope})
+        assert revoked.status_code == 200, (
+            f"Rollback test grant cleanup failed (HTTP {revoked.status_code})"
+        )
+    except Exception as error:  # noqa: BLE001 - collected and reported below
+        failures.append(("OAuth grant", error))
+    if primary is not None:
+        for stage, error in failures:
+            primary.add_note(
+                f"Rollback {stage} cleanup also failed: {type(error).__name__}"
+            )
+    elif failures:
+        raise ExceptionGroup(
+            "Rollback cleanup failed", [error for _, error in failures]
+        )
+
+
 async def exercise_legacy_rollback(checks: Any) -> None:
     path = checks.path
     before = await checks.call(
@@ -74,6 +101,7 @@ async def exercise_legacy_rollback(checks: Any) -> None:
     envelope = response.json()["refresh_token"]
     started = False
     returned = False
+    primary: BaseException | None = None
     try:
         started = True
         await checks.control("legacy_rollback", {"action": "start"})
@@ -125,8 +153,10 @@ async def exercise_legacy_rollback(checks: Any) -> None:
         checks.passed(
             "legacy_to_native_preserves_entry_artifacts_state_grants_and_rich_results_without_internal_token"
         )
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        if started and not returned:
-            await checks.control("legacy_rollback", {"action": "return"})
-        revoked = await checks.client.post(_OAUTH + "/revoke", data={"token": envelope})
-        assert revoked.status_code == 200, "Rollback test grant cleanup failed"
+        await _cleanup_rollback(
+            checks, envelope, restore=started and not returned, primary=primary
+        )

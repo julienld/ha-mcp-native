@@ -37,6 +37,7 @@ from .native_server_policy import (
     load_initial_policy,
     load_policy,
 )
+from .runtime_generation import bind_native_generation, reserve_native_generation
 from .runtime_version import require_native_version
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ _MAX_BODY = 1_048_576
 
 def _prewarm() -> bool:
     """Resolve SDK imports and terminal caches outside HA's event loop."""
+    bind_native_generation()
     importlib.import_module("ha_mcp.runtime.catalog")
     importlib.import_module(f"{__package__}.native_backend")
     importlib.import_module(f"{__package__}.native_catalog")
@@ -258,6 +260,7 @@ class NativeServerManager:
     async def async_start(self) -> None:
         """Start on HA's loop; enter and exit lifespan from one supervisor task."""
         require_native_version(HA_VERSION)
+        reserve_native_generation()
         self.skill_available = await self.hass.async_add_executor_job(_prewarm)
         from ha_mcp._vendor.fastmcp import FastMCP
         from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity
