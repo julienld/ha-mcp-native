@@ -13,7 +13,7 @@ async def exercise_process_restart(checks: Any, docker: Any, container: str) -> 
     path = checks.path
     started = json.loads(docker("inspect", container).stdout)[0]["State"]["StartedAt"]
     scheduled = await checks.call("ha_restart", {"confirm": True})
-    assert scheduled["scheduled"] and scheduled["restarted"] is False, scheduled
+    assert scheduled["scheduled"] and scheduled["requested"], scheduled
     checks.passed("native_restart_replies_scheduled_before_Core_process_exit")
     deadline = time.monotonic() + 120
     while True:

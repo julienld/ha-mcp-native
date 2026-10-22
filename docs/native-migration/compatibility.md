@@ -393,8 +393,8 @@ Container fixture exercises real UpdateEntity services and Repairs callbacks;
 it does not qualify a Supervisor or OS update. Public schemas and safety hints
 remain unchanged, with the native scheduling limit stated in the shared prose.
 
-Native restart and self-reload responses report a scheduled request, with
-`restarted=false` or `reloaded=false`. Before handoff, the pending request
+Native restart and self-reload responses report a scheduled request. Restart
+returns `requested=true`; self-reload retains `reloaded=false`. Before handoff, the pending request
 rechecks its actor, credential, unchanged policy and target. Core then owns the
 job with a fresh actor Context and no inherited MCP admission context. Shutdown
 cancels pending handoffs before draining tools, avoiding a self-reload cycle.
