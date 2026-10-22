@@ -313,7 +313,7 @@ async def exercise_external_clients(checks: Checks, user_id: str) -> None:
             CONTAINER,
             "python",
             "-c",
-            source + "\nasyncio.run(probe())\n",
+            source,
         ],
         input=json.dumps(
             {

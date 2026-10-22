@@ -283,3 +283,28 @@ async def test_cancelled_config_writer_keeps_core_lock_until_executor_finishes(
     assert second is not None and second.result()["result"] == "ok"
     assert len(writes) == 2 and owner.current[0]["alias"] == "Second"
     assert owner.post_write_hook.await_count == 2
+
+
+async def test_core_config_cas_does_not_equate_boolean_and_number(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, hass, _, writes, tasks, module = _mutation_setup(monkeypatch, "automation")
+    owner.current[0]["enabled"] = False
+    expected = copy.deepcopy(owner.current[0])
+    owner.current[0]["enabled"] = 0
+    backend = native.NativeBackend(hass)
+    context = CallContext("actor")
+    mutations = module.NativeConfigMutations(hass, backend.authorize)
+    result = await Engine(backend).call_owned(
+        "delete-config",
+        lambda: mutations.execute(
+            "config.automation.delete",
+            {"storage_key": "uid", "expected_config": expected},
+            context,
+        ),
+        context,
+        writes=True,
+    )
+    await asyncio.gather(*tasks)
+    assert result.is_error and result.data["error"]["code"] == "CONFIG_CONFLICT"
+    assert writes == [] and type(owner.current[0]["enabled"]) is int

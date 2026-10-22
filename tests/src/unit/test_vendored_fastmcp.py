@@ -31,6 +31,9 @@ _VENDORED_DISTRIBUTIONS = {"fastmcp", "fastmcp-slim", "mcp", "mcp-types", "rich"
 _NOT_DECLARED = {"websockets"}
 # These drive the component's LLM-API client, which uses HA's shared SDK.
 _SHARED_SDK_USERS = {
+    # The external compatibility probe deliberately exercises Core's unchanged
+    # SDK 1.x against the private modern server in a separate client process.
+    "tests/native/legacy_client_probe.py",
     "tests/src/unit/test_llm_api.py",
     "tests/src/unit/test_llm_tool_metadata.py",
     "tests/src/e2e/workflows/embedded/test_embedded_server.py",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from importlib import import_module
 from typing import Any, NoReturn
 
@@ -16,10 +16,12 @@ from homeassistant.helpers.json import json_bytes
 from ha_mcp.errors import create_validation_error
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.owned_executor import await_owned_io
 
 from ..helper_collections import _INVALID_ERRORS
 from .core_views import config_view
+from .owner import CoreOperationOwner
 
 CONFIG_MUTATION_OPERATIONS = {
     f"config.{domain}.{action}": (domain, action)
@@ -28,16 +30,15 @@ CONFIG_MUTATION_OPERATIONS = {
 }
 
 
-class NativeConfigMutations:
+class NativeConfigMutations(CoreOperationOwner):
     """A bounded semantic operation, never a request/view/WS impersonation."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        authorize: Callable[[CallContext], Awaitable[None]],
-    ) -> None:
-        self.hass = hass
-        self.authorize = authorize
+    hook_runner: (
+        Callable[
+            [str, Coroutine[Any, Any, None], CallContext], Coroutine[Any, Any, None]
+        ]
+        | None
+    ) = None
 
     async def execute(
         self, operation: str, arguments: dict[str, Any], context: CallContext
@@ -65,7 +66,9 @@ class NativeConfigMutations:
         async with owner.mutation_lock:
             current = await owner.read_config(self.hass)
             previous = owner._get_value(self.hass, current, key)
-            if json.loads(json_bytes(previous)) != arguments["expected_config"]:
+            if not json_values_equal(
+                json.loads(json_bytes(previous)), arguments["expected_config"]
+            ):
                 raise ToolFailure(
                     "CONFIG_CONFLICT",
                     "The config changed after its snapshot was read; no mutation was sent.",
@@ -90,14 +93,15 @@ class NativeConfigMutations:
             )
         hook = owner.post_write_hook
         if hook is not None:
-            self.hass.async_create_task(
-                hook(
-                    constants.ACTION_DELETE
-                    if action == "delete"
-                    else constants.ACTION_CREATE_UPDATE,
-                    key,
-                )
+            hook_operation = hook(
+                constants.ACTION_DELETE
+                if action == "delete"
+                else constants.ACTION_CREATE_UPDATE,
+                key,
             )
+            if self.hook_runner is not None:
+                hook_operation = self.hook_runner(domain, hook_operation, context)
+            self.hass.async_create_task(hook_operation)
         if interrupted is not None:
             raise interrupted
         # Core acknowledges persisted content and schedules its hook. A caller

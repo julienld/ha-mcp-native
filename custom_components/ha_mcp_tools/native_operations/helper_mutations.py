@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
@@ -12,33 +11,34 @@ from homeassistant.helpers.json import json_bytes
 
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import canonical_json
 
 from ..helper_collections import async_write_item
+from .owner import CoreOperationOwner
 
 
 def _fingerprint(value: Any) -> str:
-    return json.dumps(
-        json.loads(json_bytes(value)), sort_keys=True, separators=(",", ":")
-    )
+    return canonical_json(json.loads(json_bytes(value)))
 
 
-class NativeHelperMutations:
-    def __init__(
-        self, hass: Any, authorize: Callable[[CallContext], Awaitable[None]]
-    ) -> None:
-        self.hass = hass
-        self.authorize = authorize
-
+class NativeHelperMutations(CoreOperationOwner):
     async def execute(
         self, arguments: dict[str, Any], actor: CallContext
     ) -> dict[str, Any]:
         from homeassistant.helpers import entity_registry as er
 
+        writer = partial(self._write, actor, arguments.get("expected_item"))
+        if arguments["helper_type"] == "tag":
+            from .tag_mutations import write_tag
+
+            writer = partial(
+                write_tag, actor, self._admit, arguments.get("expected_item")
+            )
         return await async_write_item(
             self.hass,
             er.async_get(self.hass),
             arguments,
-            writer=partial(self._write, actor, arguments.get("expected_item")),
+            writer=writer,
         )
 
     async def _admit(self, actor: CallContext) -> None:
@@ -132,7 +132,9 @@ class NativeHelperMutations:
                         change,
                         item_id,
                         item,
-                        collection._hash_item(collection._serialize_item(item_id, item)),
+                        collection._hash_item(
+                            collection._serialize_item(item_id, item)
+                        ),
                     )
                 ]
             )

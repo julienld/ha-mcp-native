@@ -1,5 +1,6 @@
 """Executed in a separate client process using the image's unchanged Core SDK."""
 
+import asyncio
 import importlib.metadata
 import json
 import os
@@ -87,3 +88,7 @@ async def probe() -> None:
         await engine.stop()
         await remote.close()
     print("PASS shared_tool_bodies_over_real_remote_REST_and_WebSocket", flush=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(probe())
