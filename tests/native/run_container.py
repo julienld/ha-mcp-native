@@ -312,6 +312,8 @@ async def main() -> None:
             evidence = await exercise(checks)
             # Do not persist generated identities or access/refresh tokens.
             evidence.pop("entry_id", None)
+            evidence.pop("path", None)
+            evidence["llm_api_count"] = len(evidence.pop("llm_apis", []))
             evidence["checks"] = checks.results
             (OUT / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     finally:
