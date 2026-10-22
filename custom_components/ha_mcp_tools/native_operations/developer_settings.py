@@ -29,7 +29,7 @@ from ..native_server_policy import (
     load_policy,
     setting_value,
 )
-from ..native_settings import _ADVANCED, _SUPPORTED_FLAGS
+from ..native_settings_fields import ADVANCED_SETTINGS, FEATURE_FLAGS
 from .developer_store import patch_tool, require_dev_write
 from .policy_document import NativePolicyDocument
 from .registry_access import authorize_actor
@@ -129,13 +129,13 @@ class NativeDeveloperSettings:
         kinds = {name: kind for name, _env, kind in FEATURE_FLAG_FIELDS}
         kinds.update({name: kind for name, _env, kind, *_ in ADVANCED_SETTINGS_FIELDS})
         rows = []
-        for name in (*_SUPPORTED_FLAGS, *_ADVANCED):
+        for name in (*FEATURE_FLAGS, *ADVANCED_SETTINGS):
             env, kind = environment_name(name), kinds[name]
             row = {
                 "setting": name,
                 "env_var": env,
                 "type": kind.__name__,
-                "registry": "features" if name in _SUPPORTED_FLAGS else "advanced",
+                "registry": "features" if name in FEATURE_FLAGS else "advanced",
                 "value": policy.flag(name)
                 if kind is bool
                 else kind(setting_value(policy.flags, name)),
@@ -174,7 +174,7 @@ class NativeDeveloperSettings:
                 f"{name} is human-only; change it in the UI or environment",
                 status="not_started",
             )
-        if name not in (*_SUPPORTED_FLAGS, *_ADVANCED):
+        if name not in (*FEATURE_FLAGS, *ADVANCED_SETTINGS):
             raise ValueError(f"Unknown or unsupported native setting: {name!r}")
         assert name is not None
         if environment_name(name) in os.environ:
@@ -217,7 +217,7 @@ class NativeDeveloperSettings:
             self.ui._save_features(
                 {"flags": {name: coerced}}, before_write=before_write
             )
-            if name in _SUPPORTED_FLAGS
+            if name in FEATURE_FLAGS
             else self.ui._save_advanced({name: coerced}, before_write=before_write)
         )
         return {

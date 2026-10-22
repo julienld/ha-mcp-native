@@ -17,28 +17,10 @@ from aiohttp import web
 from .const import COMPONENT_VERSION, SERVER_CONFIG_SUBDIR
 from .native_server_policy import _read_object, env_tool_states, load_policy
 from .native_settings_backups import NativeBackupSettings
+from .native_settings_fields import ADVANCED_SETTINGS, FEATURE_FLAGS
 from .native_settings_files import NativeFileSettings
 
 _LOGGER = logging.getLogger(__name__)
-_SUPPORTED_FLAGS = (
-    "read_only_mode",
-    "enable_tool_security_policies",
-    "enable_security_policy_tool",
-    "enable_mandatory_bps",
-    "enable_strict_mandatory_bps",
-    "enable_tool_search",
-    "tool_search_max_results",
-    "redact_secrets",
-    "enable_beta_features",
-    "enable_code_mode",
-    "enable_dashboard_screenshot",
-    "enable_filesystem_tools",
-    "enable_yaml_config_editing",
-    "enable_yaml_edit_confirm",
-    "enable_yaml_packages_automation",
-    "enable_yaml_packages_script",
-    "enable_yaml_packages_scene",
-)
 _BACKUP_SETTINGS = frozenset(
     {
         "enable_snapshot_actions",
@@ -51,19 +33,6 @@ _BACKUP_SETTINGS = frozenset(
         "auto_backup_retain_per_entity",
     }
 )
-_ADVANCED = {
-    "enable_dev_mode": "HAMCP_ENABLE_DEV_MODE",
-    "dev_tools_security_policy_access": "HAMCP_DEV_SECURITY_POLICY_ACCESS",
-    "enabled_tool_modules": "ENABLED_TOOL_MODULES",
-    "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS",
-    "code_mode_max_duration": "CODE_MODE_MAX_DURATION",
-    "code_mode_max_memory": "CODE_MODE_MAX_MEMORY",
-    "code_mode_max_recursion": "CODE_MODE_MAX_RECURSION",
-    "code_mode_max_invocations": "CODE_MODE_MAX_INVOCATIONS",
-    "code_mode_saved_tools_path": "CODE_MODE_SAVED_TOOLS_PATH",
-    "extra_yaml_write_keys": "HA_MCP_EXTRA_YAML_KEYS",
-    "dashboard_screenshot_engine_url": "HAMCP_DASHBOARD_SCREENSHOT_ENGINE_URL",
-}
 
 
 class NativeSettings:
@@ -262,7 +231,7 @@ class NativeSettings:
         policy = self.manager.policy
         flags: dict[str, dict[str, Any]] = {}
         for name, env, kind in FEATURE_FLAG_FIELDS:
-            if name not in _SUPPORTED_FLAGS:
+            if name not in FEATURE_FLAGS:
                 continue
             flags[name] = {
                 "value": policy.flag(name)
@@ -290,7 +259,7 @@ class NativeSettings:
             {
                 "flags": flags,
                 "beta_sub_flags": [
-                    name for name in _SUPPORTED_FLAGS if name in BETA_FEATURE_FIELDS
+                    name for name in FEATURE_FLAGS if name in BETA_FEATURE_FIELDS
                 ],
                 "is_addon": False,
             }
@@ -306,7 +275,7 @@ class NativeSettings:
             raise ValueError("flags must be a nonempty JSON object")
         fields = {name: (env, kind) for name, env, kind in FEATURE_FLAG_FIELDS}
         for name, value in raw.items():
-            if name not in _SUPPORTED_FLAGS:
+            if name not in FEATURE_FLAGS:
                 raise ValueError(f"Unsupported native feature setting: {name}")
             env, kind = fields[name]
             if type(value) is not kind or (
@@ -502,7 +471,7 @@ class NativeSettings:
         values = policy.flags
         fields = []
         for name, env, kind, section, _editable in ADVANCED_SETTINGS_FIELDS:
-            if name not in _ADVANCED:
+            if name not in ADVANCED_SETTINGS:
                 continue
             row = {
                 "field": name,
@@ -542,9 +511,9 @@ class NativeSettings:
         kinds = {name: kind for name, _env, kind, *_rest in ADVANCED_SETTINGS_FIELDS}
         clean = {}
         for name, value in body.items():
-            if name not in _ADVANCED:
+            if name not in ADVANCED_SETTINGS:
                 raise ValueError(f"Unsupported native advanced setting: {name}")
-            if _ADVANCED[name] in os.environ:
+            if ADVANCED_SETTINGS[name] in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
             valid, coerced = _coerce_advanced_override_value(name, kinds[name], value)
             if not valid or not _advanced_override_passes_constraints(name, coerced):
