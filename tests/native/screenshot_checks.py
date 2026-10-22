@@ -18,6 +18,11 @@ async def exercise_screenshots(checks: Any, base: str) -> None:
         },
     )
     assert response.status_code == 200, response.text
+    response = await checks.client.post(
+        base + "/api/ha_mcp_tools/ui/app/api/settings/tools",
+        json={"llm_api": {"ha_get_dashboard_screenshot": True}},
+    )
+    assert response.status_code == 200, response.text
     catalog = (await checks.rpc("tools/list"))["result"]["tools"]
     definition = next(
         tool for tool in catalog if tool["name"] == "ha_get_dashboard_screenshot"
