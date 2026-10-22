@@ -209,6 +209,21 @@ class NativeSnapshots:
             domain, payload["backup_id"], payload["current_config"], source
         )
 
+    async def dashboard_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        from .native_operations.dashboard_restore import stored_dashboard
+
+        source = payload.get("source_tool")
+        if source not in {"ha_config_set_dashboard", "ha_config_delete_dashboard"}:
+            raise ValueError("Unsupported native dashboard snapshot source")
+        if not self.manager.policy.flag("enable_auto_backup"):
+            return None
+        identifier, config = payload["url_path"], payload["current_config"]
+        stored_dashboard(
+            {"entity_id": identifier, "config": config, "kind": "dashboard_settings"}
+        )
+        return await self._capture_value("dashboard", identifier, config, source)
 
     async def resource_backup(
         self, payload: dict[str, Any], context: CallContext
@@ -384,6 +399,7 @@ class NativeSnapshots:
                 "label",
                 "device",
                 "dashboard_resource",
+                "dashboard",
                 "entity_registry",
                 "entity_exposure",
             }:

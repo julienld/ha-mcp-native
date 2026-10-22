@@ -221,6 +221,21 @@ policy therefore requires write admission while the collection is unloaded;
 loaded collections and YAML mode permit read-only listing. Its original
 `openWorldHint=true` and the standalone annotations remain unchanged.
 
+`ha_config_get_dashboard` uses the same three conservative native hints when
+describing a custom card or listing card types. Those inspections can initialize
+the actual Core resource owner and migrate resources. Its argument policy keeps
+ordinary dashboard config/list/search reads and inspection of already loaded
+resources available in read-only mode. Its `openWorldHint=true`, public schemas
+and standalone annotations remain unchanged.
+
+Dashboard capture is optional and requires an explicitly configured renderer
+or the existing Supervisor app. Only that renderer's own credential is sent to
+its associated URL; the native component creates no long-lived HA token and
+does not reuse HA authority for the renderer. HTTP, cleanup and revocation paths
+have unit coverage; this Core Container bench does not exercise an external
+renderer. An accessory-image failure preserves primary data and outcomes with
+a warning. It does not establish image support in Assist.
+
 `ha_get_integration` has the same conservative native safety hints. Its explicit
 options/subentry schema requests initialize real Core flows; password-field
 redaction also probes an options flow when options are returned. Such flows can

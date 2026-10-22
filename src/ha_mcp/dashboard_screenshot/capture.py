@@ -15,19 +15,27 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, Literal, NoReturn, Protocol, cast
 from urllib.parse import quote
 
 import httpx
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.backends.legacy import legacy_errors_sync
+from ha_mcp.runtime.dashboard_routes import _FORBIDDEN_PATH_BITS as _FORBIDDEN_PATH_BITS
+from ha_mcp.runtime.dashboard_routes import (
+    _normalize_dashboard_path as _pure_dashboard_path,
+)
+from ha_mcp.tool_api import MAX_RESULT_IMAGE_BYTES, MAX_TOOL_IMAGE_BYTES
 
 from ..errors import ErrorCode, create_error_response
-from ..tools.helpers import raise_tool_error
-from .provision import TOKEN_HINT, resolve_engine
+from ..utils.tool_errors import raise_tool_error
+from .provision import TOKEN_HINT, EngineTarget, resolve_engine
 from .theme_guard import ThemeGuard
 
 logger = logging.getLogger(__name__)
+
+_normalize_dashboard_path = legacy_errors_sync(_pure_dashboard_path)
 
 ScreenshotFormat = Literal["png", "jpeg", "webp", "bmp"]
 ViewportPreset = Literal["mobile", "tablet", "desktop"]
@@ -81,16 +89,24 @@ MAX_RENDER_TIMEOUT_SECONDS = 300.0
 # Bound raw response bytes before FastMCP base64-encodes them. These are server
 # safety limits, not claims about a particular MCP client's smaller vision or
 # context-window limits.
-MAX_IMAGE_PAYLOAD_BYTES = 20 * 1024 * 1024
-MAX_BATCH_PAYLOAD_BYTES = 40 * 1024 * 1024
+MAX_IMAGE_PAYLOAD_BYTES = MAX_TOOL_IMAGE_BYTES
+MAX_BATCH_PAYLOAD_BYTES = MAX_RESULT_IMAGE_BYTES
 MAX_ENGINE_ERROR_BODY_BYTES = 300
+
+
+class CaptureThemeObserver(Protocol):
+    warnings: list[str]
+
+    async def take_snapshot(self) -> None: ...
+
+    async def detect_change(self) -> None: ...
+
 
 # Characters/sequences that would let an LLM-supplied path escape the
 # dashboard route and reshape the engine request (scheme, authority,
 # query/fragment, traversal, backslash). The engine renders whatever path it
 # is handed with a full-HA credential, so the path must stay a plain
 # frontend route segment.
-_FORBIDDEN_PATH_BITS = ("://", "//", "..", "@", "\\", "?", "#")
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,53 +156,6 @@ class _ViewportRequest:
     width: int
     height: int | Literal["auto"]
     orientation: Orientation | None
-
-
-def _normalize_dashboard_path(dashboard_path: str) -> str:
-    """Return a safe, stripped, unencoded dashboard path or raise ToolError.
-
-    Rejects URL syntax, traversal, and control characters. External raw-path
-    callers must additionally verify the first segment against Home
-    Assistant's registered Lovelace dashboards; structured and config-tool
-    callers derive it from dashboard configuration instead.
-    """
-    raw = (dashboard_path or "").strip()
-    if not raw:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_MISSING_PARAMETER,
-                "dashboard_path is required (e.g. 'lovelace/0' or 'my-dashboard').",
-                suggestions=["Pass a Lovelace path such as 'lovelace/0'"],
-            )
-        )
-    if any(bit in raw for bit in _FORBIDDEN_PATH_BITS) or any(
-        ord(c) < 0x20 for c in raw
-    ):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Invalid dashboard_path {dashboard_path!r}: pass a plain "
-                "Lovelace path like 'lovelace/0' or 'my-dashboard/kitchen'.",
-                details="Path may not contain URLs, query strings, fragments, "
-                "'..' segments, backslashes, or control characters.",
-                context={"dashboard_path": dashboard_path},
-            )
-        )
-    segments = [seg for seg in raw.strip("/").split("/") if seg not in ("", ".")]
-    if not segments:
-        # e.g. "/" or "/." — the engine would serve its config/UI HTML for the
-        # root path, not a dashboard PNG, which would be a confusing silent
-        # failure. Require a concrete view path.
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Invalid dashboard_path {dashboard_path!r}: cannot be empty or "
-                "the root path.",
-                details="Pass a specific Lovelace view, e.g. 'lovelace/0'.",
-                context={"dashboard_path": dashboard_path},
-            )
-        )
-    return "/".join(segments)
 
 
 def _validate_dashboard_path(dashboard_path: str) -> str:
@@ -848,6 +817,8 @@ async def capture_dashboard_images(
     partial_failures: list[dict[str, Any]] | None = None,
     client: Any | None = None,
     capture_warnings: list[str] | None = None,
+    engine_target: EngineTarget | None = None,
+    theme_observer: CaptureThemeObserver | None = None,
 ) -> list[DashboardImageCapture]:
     """Render one or more ordered dashboard images via the screenshot engine.
 
@@ -880,7 +851,8 @@ async def capture_dashboard_images(
     )
     viewports = _capture_viewports(options)
 
-    engine_target = await resolve_engine()
+    if engine_target is None:
+        engine_target = await resolve_engine()
     engine = engine_target.url
     url = f"{engine}/{path}"
     mime_type = _MIME_TYPES[options.image_format]
@@ -892,7 +864,11 @@ async def capture_dashboard_images(
     # this tool issues no writes and stays read-only (#1991). Armed for every
     # capture, not just themed ones: the upstream fix that would spare the
     # no-parameter case is unreleased as of Puppet 2.6.0.
-    guard = ThemeGuard.for_capture(engine_target.addon_credential, client)
+    guard = (
+        theme_observer
+        if theme_observer is not None
+        else ThemeGuard.for_capture(engine_target.addon_credential, client)
+    )
     await guard.take_snapshot()
     batch_error: ToolError | None = None
     try:

@@ -70,6 +70,28 @@ def _changed_inputs(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     return changes
 
 
+def test_unstructured_return_does_not_advertise_a_schema_but_dict_return_keeps_one() -> (
+    None
+):
+    from ha_mcp.runtime.catalog import define_tool
+
+    class Outputs:
+        async def unstructured(self) -> Any:
+            return None
+
+        async def object_result(self) -> dict[str, Any]:
+            return {}
+
+    unstructured, object_result = (
+        define_tool(MagicMock(), Outputs, name, annotations={})
+        for name in ("unstructured", "object_result")
+    )
+    assert unstructured.output_schema is None
+    assert (
+        object_result.output_schema and object_result.output_schema["type"] == "object"
+    )
+
+
 def test_native_migration_keeps_preexisting_mcp_call_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,7 +161,14 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         "ha_config_list_helpers",
         "ha_get_integration",
         "ha_config_list_dashboard_resources",
+        "ha_config_get_dashboard",
     }
+    assert overrides["ha_config_get_dashboard"]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+    }
+    assert overrides["ha_config_get_dashboard"]["reason"]
     assert overrides["ha_config_list_dashboard_resources"]["annotations"] == {
         "readOnlyHint": False,
         "destructiveHint": True,

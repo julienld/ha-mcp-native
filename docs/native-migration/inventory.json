@@ -18,12 +18,13 @@
     "custom_components/ha_mcp_tools/native_camera_tools.py",
     "custom_components/ha_mcp_tools/native_overview_tools.py",
     "custom_components/ha_mcp_tools/native_health_tools.py",
+    "custom_components/ha_mcp_tools/native_dashboard_tools.py",
     "custom_components/ha_mcp_tools/native_calendar_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 53,
+    "native_catalog_declarations": 56,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -210,8 +211,8 @@
         "frontend/custom-card discovery"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/dashboard_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -226,54 +227,54 @@
       ],
       "client_call_candidates": [
         {
-          "line": 178,
+          "line": 219,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1049,
+          "line": 488,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/list"
           ]
         },
         {
-          "line": 1254,
+          "line": 693,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 938,
+          "line": 377,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1911,
+          "line": 1134,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 2257,
+          "line": 1415,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3147,
+          "line": 2003,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3182,
+          "line": 2038,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3390,
+          "line": 2231,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3733,
+          "line": 2532,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/delete"
@@ -527,8 +528,8 @@
         "frontend/custom-card discovery"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/dashboard_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -543,54 +544,54 @@
       ],
       "client_call_candidates": [
         {
-          "line": 178,
+          "line": 219,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1049,
+          "line": 488,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/list"
           ]
         },
         {
-          "line": 1254,
+          "line": 693,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 938,
+          "line": 377,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1911,
+          "line": 1134,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 2257,
+          "line": 1415,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3147,
+          "line": 2003,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3182,
+          "line": 2038,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3390,
+          "line": 2231,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3733,
+          "line": 2532,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/delete"
@@ -1376,8 +1377,8 @@
         "frontend/custom-card discovery"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/dashboard_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1392,54 +1393,54 @@
       ],
       "client_call_candidates": [
         {
-          "line": 178,
+          "line": 219,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1049,
+          "line": 488,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/list"
           ]
         },
         {
-          "line": 1254,
+          "line": 693,
           "call": "client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 938,
+          "line": 377,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1911,
+          "line": 1134,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 2257,
+          "line": 1415,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3147,
+          "line": 2003,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3182,
+          "line": 2038,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3390,
+          "line": 2231,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 3733,
+          "line": 2532,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "lovelace/dashboards/delete"
@@ -4938,7 +4939,7 @@
       "functions": [
         {
           "name": "command_specs",
-          "line": 79,
+          "line": 15,
           "async": false
         }
       ],

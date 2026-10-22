@@ -22,6 +22,7 @@ from configuration_checks import (
     exercise_flow_helpers,
     exercise_todo,
 )
+from dashboard_checks import exercise_dashboard_card_types, exercise_dashboards
 from device_checks import exercise_devices
 from entity_checks import exercise_entities
 from event_checks import exercise_events
@@ -403,7 +404,9 @@ async def exercise(checks: Checks) -> dict:
     await exercise_entities(checks, BASE)
     await exercise_events(checks)
     await exercise_camera(checks)
+    await exercise_dashboards(checks, BASE)
     await exercise_resources(checks, BASE)
+    await exercise_dashboard_card_types(checks)
     await exercise_history(checks)
     await exercise_logs(checks)
     await exercise_health(checks)

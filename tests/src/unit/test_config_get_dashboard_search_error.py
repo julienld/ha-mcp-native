@@ -306,7 +306,7 @@ class TestResolvedUrlPathInErrorContext:
             {"result": {"views": []}},
         ]
         monkeypatch.setattr(
-            "ha_mcp.tools.tools_config_dashboards.compute_config_hash",
+            "ha_mcp.runtime.dashboard_values.compute_config_hash",
             MagicMock(side_effect=RuntimeError("boom")),
         )
 

@@ -63,6 +63,9 @@ def _prewarm() -> bool:
         "native_snapshot_restore",
         "native_snapshot_flows",
         "native_snapshot_storage",
+        "card_descriptions",
+        "native_screenshots",
+        "native_operations.dashboard_restore",
     ):
         importlib.import_module(f"{__package__}.{module}")
     for module in (

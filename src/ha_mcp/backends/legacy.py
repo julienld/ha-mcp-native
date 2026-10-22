@@ -72,7 +72,7 @@ def legacy_errors_sync(function: Callable[..., Any]) -> Callable[..., Any]:
 
     @functools.wraps(function)
     def invoke(*args: Any, **kwargs: Any) -> Any:
-        from ha_mcp.tools.helpers import raise_tool_error
+        from ha_mcp.utils.tool_errors import raise_tool_error
 
         try:
             return function(*args, **kwargs)

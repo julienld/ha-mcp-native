@@ -68,6 +68,10 @@
     "missing_registration": "explicit unsupported recreation; restoring history does not recreate an integration-owned entity"
   },
   "native_annotation_overrides": {
+    "ha_config_get_dashboard": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Describing a custom card or listing card types can initialize the actual Core resource owner and migrate resources on first inspection. Native argument policy permits ordinary config/list/search reads and subsequent inspection of loaded resources in read-only mode. The original openWorldHint=true and the standalone annotations remain unchanged."
+    },
     "ha_config_list_dashboard_resources": {
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
       "reason": "The first Core resource-storage read can migrate and persist dashboard/resource data. Native list discovery discloses that effect and requires write admission while the collection is not loaded; subsequent loaded reads and YAML mode remain read-only. The standalone catalog retains its original annotations."

@@ -73,6 +73,8 @@ class NativeSnapshotDomains:
         domain = data["domain"]
         if domain == "calendar_event":
             return await self.calendar_restore(data, actor).current()
+        if domain == "dashboard":
+            return await self.dashboard_restore(data, actor).comparison()
         if domain == "dashboard_resource":
             return await self._resource_current(data, actor)
         if domain in {"automation", "script", "scene"}:
@@ -191,6 +193,16 @@ class NativeSnapshotDomains:
         )
         return NativeCalendarRestore(service, data["entity_id"], data["config"])
 
+    def dashboard_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
+        from .native_operations.dashboard_restore import NativeDashboardRestore
+        from .native_operations.dashboard_storage import DashboardStorage
+
+        return NativeDashboardRestore(
+            DashboardStorage(
+                self.manager.hass, actor, authorize=self.manager.backend.authorize
+            ),
+            data,
+        )
 
     def labels(self, actor: CallContext) -> Any:
         from .native_operations.labels import NativeLabels

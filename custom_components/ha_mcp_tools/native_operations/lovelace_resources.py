@@ -39,6 +39,7 @@ from .storage_api import require_non_suspending
 
 _CURRENT = object()
 type ResourceChange = tuple[dict[str, Any] | None, list[str]]
+type ResourceItems = list[dict[str, Any]]
 
 
 def resources_need_loading(hass: Any) -> bool:
@@ -128,11 +129,17 @@ class NativeResources:
             status="not_started",
         )
 
-    async def _loaded(self) -> tuple[Any, str]:
+    async def _loaded(self, *, allow_initialize: bool = True) -> tuple[Any, str]:
         async with registry_update_lock("lovelace_resources", "load"):
             await self._authorize()
             owner, mode = self._owner()
             if not owner.loaded:
+                if not allow_initialize:
+                    raise ToolFailure(
+                        "RESOURCE_NOT_READY",
+                        "Dashboard resources have not been loaded; implicit initialization is disabled for this inspection",
+                        status="not_started",
+                    )
                 await await_owned_io(self._initialize(owner))
                 await self._authorize()
             if self._owner()[0] is not owner or not owner.loaded:
@@ -245,6 +252,15 @@ class NativeResources:
             )
             if warnings:
                 result["warnings"] = warnings
+            return result
+        except Exception as error:
+            raise self._failure(error) from error
+
+    async def inspection_items(self, *, allow_initialize: bool = True) -> ResourceItems:
+        """Detach admitted Core rows before a frontend inspection outlives its caller."""
+        try:
+            owner, _mode = await self._loaded(allow_initialize=allow_initialize)
+            result: ResourceItems = self._plain(owner.async_items())
             return result
         except Exception as error:
             raise self._failure(error) from error

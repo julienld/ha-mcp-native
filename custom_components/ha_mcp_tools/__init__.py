@@ -2300,7 +2300,7 @@ def _build_edit_yaml_config_handler(
         yaml_path = call.data["yaml_path"]
         content = call.data.get("content")
 
-        normalized = os.path.normpath(rel_path)  # noqa: ASYNC240
+        normalized = posixpath.normpath(rel_path)
         is_package, is_theme, target_err = await _classify_edit_yaml_target(
             hass, rel_path, normalized
         )

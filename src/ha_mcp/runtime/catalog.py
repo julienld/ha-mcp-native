@@ -108,8 +108,10 @@ def define_tool(
         input_schema,
         handler or invoke,
         annotations,
-        output_schema=_without_schema_titles(
-            TypeAdapter(hints.get("return", Any)).json_schema()
+        output_schema=(
+            _without_schema_titles(TypeAdapter(hints["return"]).json_schema())
+            if hints.get("return", Any) is not Any
+            else None
         ),
         validate=validate,
         tags=tags,
