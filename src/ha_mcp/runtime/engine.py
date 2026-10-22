@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from typing import Any
@@ -44,6 +45,7 @@ class Engine:
     ) -> None:
         if min(max_operations, operation_timeout, max_records) <= 0:
             raise ValueError("Operation limits must be positive")
+        _validate_timeout(operation_timeout)
         if min(drain_timeout, cancel_timeout) < 0:
             raise ValueError("Drain limits must be nonnegative")
         self.backend = backend
@@ -130,6 +132,12 @@ class Engine:
         """Own an invocation; admin UI may ignore catalogue visibility, never actor policy."""
         await self.backend.authorize(context)
         self._check_policy(name, context, writes, enforce_catalogue=enforce_catalogue)
+        timeout = self.operation_timeout
+        definition = self.tools.get(name)
+        if definition is not None and definition.operation_timeout is not None:
+            selected = definition.operation_timeout(arguments or {})
+            if selected is not None:
+                timeout = _validate_timeout(selected)
         if len(self.tasks) >= self.max_operations:
             raise ToolFailure("OPERATION_LIMIT", "Too many in-flight operations.")
         operation_id = uuid4().hex
@@ -150,6 +158,7 @@ class Engine:
                 writes,
                 arguments or {},
                 enforce_catalogue,
+                timeout,
             ),
             name=f"ha-mcp-operation-{operation_id}",
         )
@@ -173,11 +182,11 @@ class Engine:
         writes: bool,
         arguments: dict[str, Any],
         enforce_catalogue: bool,
+        timeout: float,
     ) -> ToolResult:
         record = self.operations[operation_id]
-        deadline = asyncio.get_running_loop().time() + self.operation_timeout
         try:
-            async with asyncio.timeout_at(deadline):
+            async with asyncio.timeout(timeout):
                 raw = await self._invoke_authorized(
                     name, arguments, context, writes, record, invoke, enforce_catalogue
                 )
@@ -209,7 +218,7 @@ class Engine:
             result = ToolResult(
                 data, is_error=True, status=status, operation_id=operation_id
             )
-        return await self._filter_result(name, arguments, context, result, deadline)
+        return await self._filter_result(name, arguments, context, result)
 
     async def _filter_result(
         self,
@@ -217,14 +226,14 @@ class Engine:
         arguments: dict[str, Any],
         context: CallContext,
         result: ToolResult,
-        deadline: float,
     ) -> ToolResult:
         if result.is_error or result.status in {"not_started", "pending", "denied"}:
             result = replace(result, images=())
         if self.result_filter is None:
             return result
         try:
-            async with asyncio.timeout_at(deadline):
+            # A completed job or timeout still needs a bounded safety projection.
+            async with asyncio.timeout(min(self.operation_timeout, 10.0)):
                 filtered = await self.result_filter(name, arguments, context, result)
             return replace(
                 filtered,
@@ -312,3 +321,14 @@ class Engine:
             _, survivors = await asyncio.wait(pending, timeout=self.cancel_timeout)
             if survivors:
                 raise RuntimeError("owned_operations_not_drained")
+
+
+def _validate_timeout(value: float) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("Operation timeout must be a finite positive number")
+    return float(value)

@@ -27,6 +27,10 @@ from ha_mcp._vendor.fastmcp.tools import tool
 from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
 from ha_mcp.runtime import backup_values as _backup_values
 from ha_mcp.runtime.backup_hints import BACKUP_HINTS
+from ha_mcp.runtime.backup_limits import BACKUP_MAX_WAIT_S as _BACKUP_MAX_WAIT_S
+from ha_mcp.runtime.backup_limits import (
+    SAFETY_BACKUP_MAX_WAIT_S as _SAFETY_BACKUP_MAX_WAIT_S,
+)
 from ha_mcp.runtime.backup_tools import BackupFacade, backup_description
 
 from ..backup_manager import (
@@ -80,33 +84,7 @@ _pure_check_snapshot_deletable = legacy_errors_sync(
 
 logger = logging.getLogger(__name__)
 
-# Poll window for full HA backups. HA's own frontend imposes no timeout at
-# all on backup creation — it subscribes to `backup/subscribe_events` and
-# waits however long the job takes. Our poll-based design still needs a
-# finite bound per tool call, so this mirrors _SAFETY_BACKUP_MAX_WAIT_S (the
-# codebase's existing "generous but bounded" ceiling) rather than inventing a
-# third number.
-#
-# Two distinct problems, both fixed in the same PR, by different mechanisms:
-# the client-side abort reported in #1861 (an MCP client that received no
-# progress notifications for 300s concluded the connection was dead) is
-# fixed by the ctx.report_progress heartbeats in _poll_backup_completion,
-# not by this constant. Raising it from 300 to 1800 instead fixes *our own*
-# poll loop giving up on a legitimately >5-minute backup — the job keeps
-# running server-side after our loop times out, so a too-tight ceiling here
-# means _poll_backup_completion raises TIMEOUT_OPERATION on a backup that
-# would otherwise have succeeded. 120s before that underfit slow HA
-# instances too (#1433: poll loop exited while HA was still in
-# state="create_backup", the wrapper treated that as failure, retried, and
-# produced duplicate backups).
-_BACKUP_MAX_WAIT_S = 1800
 _BACKUP_POLL_INTERVAL_S = 2
-# The pre-restore safety backup is a *full* backup (include_database=True, plus
-# all add-ons on Supervised), unlike the fast create_backup path. A multi-GB
-# full backup on constrained hardware (~2.1 GB on a Pi 5, #1681) can run well
-# past the fast-backup window, so its completion poll gets a larger budget —
-# timing out here aborts the restore and the retry spawns another full backup.
-_SAFETY_BACKUP_MAX_WAIT_S = 1800
 # Clock-skew tolerance when filtering backup entries by date vs job-start.
 _BACKUP_DATE_FILTER_TOLERANCE_S = 5
 # Minimum spacing between in-loop MCP progress heartbeats during a backup

@@ -93,7 +93,7 @@ class NativeCode:
         async def invoke(arguments: dict[str, Any], actor: CallContext) -> Any:
             return await self.run(arguments, actor)
 
-        return define_tool(
+        definition = define_tool(
             self.manager.backend,
             CodeSession,
             _NAME,
@@ -111,6 +111,12 @@ class NativeCode:
                 }
             },
         )
+        return replace(definition, operation_timeout=self._operation_timeout)
+
+    def _operation_timeout(self, arguments: dict[str, Any]) -> float | None:
+        if arguments.get("code") is not None or arguments.get("run_saved") is not None:
+            return float(self.settings.code_mode_max_duration) + 120
+        return None
 
     async def _registry_call(
         self, method: str, *args: Any, actor: CallContext | None = None

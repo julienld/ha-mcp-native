@@ -127,6 +127,9 @@ class ToolDefinition:
     writes: Callable[[dict[str, Any]], bool] | None = field(
         default=None, repr=False, compare=False
     )
+    operation_timeout: Callable[[dict[str, Any]], float | None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def read_only(self) -> bool:

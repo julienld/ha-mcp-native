@@ -17,7 +17,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
-from .app_actions import AppActions
+from .app_actions import WEBSOCKET_TIMEOUT, AppActions
 from .app_routes import AppRoute, routing_identity
 from .app_transport import http_exchange, ws_exchange
 
@@ -120,7 +120,7 @@ class NativeApps(AppActions, AppDispatch):
             lambda: ws_exchange(
                 route, body, message_limit, message_offset, wait_for_close
             ),
-            budget=145,
+            budget=WEBSOCKET_TIMEOUT,
         )
         result: dict[str, Any] = await self._project(
             _build_ws_result,

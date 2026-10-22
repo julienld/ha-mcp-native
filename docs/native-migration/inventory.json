@@ -3019,62 +3019,62 @@
       ],
       "client_call_candidates": [
         {
-          "line": 172,
+          "line": 150,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 237,
+          "line": 215,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 841,
+          "line": 819,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 894,
+          "line": 872,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1030,
+          "line": 1008,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1353,
+          "line": 1331,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1418,
+          "line": 1396,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 287,
+          "line": 265,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 486,
+          "line": 464,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 574,
+          "line": 552,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 766,
+          "line": 744,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1193,
+          "line": 1171,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "backup/info"

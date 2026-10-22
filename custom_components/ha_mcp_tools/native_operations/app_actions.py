@@ -33,6 +33,8 @@ _ACTIONS = {
     "restart": ("addons", "restart_addon", 120),
     "uninstall": ("addons", "uninstall_addon", 120),
 }
+STORE_RELOAD_TIMEOUT = 300
+WEBSOCKET_TIMEOUT = 145
 _CONFIG_FIELDS = (
     "slug",
     "version",
@@ -42,6 +44,18 @@ _CONFIG_FIELDS = (
     "auto_update",
     "watchdog",
 )
+
+
+def app_operation_timeout(arguments: dict[str, Any]) -> float | None:
+    """Allow the provider's job window plus preparation and readback."""
+    action = str(arguments.get("action") or "").strip().lower()
+    if action in _ACTIONS:
+        return _ACTIONS[action][2] + 120
+    if action == "check_updates":
+        return STORE_RELOAD_TIMEOUT + 120
+    if arguments.get("websocket"):
+        return WEBSOCKET_TIMEOUT + 120
+    return None
 
 
 class AppActions(NativeAppReads):
@@ -147,7 +161,9 @@ class AppActions(NativeAppReads):
             await self.admit()
             warnings: list[str] = []
             before = await self._versions(warnings, "before")
-            await self.write(self.supervisor.client.store.reload, budget=300)
+            await self.write(
+                self.supervisor.client.store.reload, budget=STORE_RELOAD_TIMEOUT
+            )
             after = await self._versions(warnings, "after")
             await self.observe()
             return store_refresh_result(before, after, warnings)

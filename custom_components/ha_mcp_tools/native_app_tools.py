@@ -8,6 +8,7 @@ from ha_mcp.runtime.catalog import define_tool
 from ha_mcp.tool_api import CallContext, ToolDefinition, ToolHandler
 from ha_mcp.tools.tool_hints import read_only_hints, write_hints
 
+from .native_operations.app_actions import app_operation_timeout
 from .native_operations.apps import NativeApps
 from .native_operations.registry_access import registry_failure
 
@@ -60,7 +61,7 @@ def app_definitions(manager: Any) -> list[ToolDefinition]:
     # The factory preserves legacy proxy-GET exemptions by default. Native
     # opaque app requests are always writes, including catalogue filtering.
     return [
-        replace(definition, writes=None)
+        replace(definition, writes=None, operation_timeout=app_operation_timeout)
         if definition.name == "ha_manage_app"
         else definition
         for definition in definitions

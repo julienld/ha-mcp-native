@@ -1,9 +1,10 @@
 # Native candidate installation and rollback
 
-Status checked 2026-10-22: the public fork is
-[`julienld/ha-mcp-native`](https://github.com/julienld/ha-mcp-native), its default
-branch is `master`, and it has no published release. The instructions below
-prepare a candidate; they do not announce an installable release. Publication,
+The public fork is
+[`julienld/ha-mcp-native`](https://github.com/julienld/ha-mcp-native).
+Choose a reviewed version from its [published releases](https://github.com/julienld/ha-mcp-native/releases)
+before installation. The preparation commands below create local artifacts;
+they do not publish an installable release. Publication,
 including a draft release or a pushed distribution tag, needs a separate final
 approval. Legacy compatibility has not been deprecated.
 

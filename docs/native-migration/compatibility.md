@@ -31,6 +31,13 @@ bindings have loaded, the legacy installer refuses package replacement and a
 changed or ambiguous installed version requires a full Home Assistant restart.
 Purging Python modules cannot safely update references retained by Core.
 
+Long Apps, full-backup and configured Code executions receive finite Engine
+budgets derived from their existing domain limits. Ordinary operations retain
+the default budget. Result filtering has a separate bounded window, so an
+expired operation remains an unknown outcome rather than being replaced by an
+already-expired filtering deadline. Cancellation still drains owned work and
+never replays a dispatched mutation.
+
 The new runtime can add a native-owner ID for secret-URL and legacy-OAuth modes.
 It must validate that owner is still active and authorized. In `ha_auth` mode,
 the calling human administrator is a separately authenticated principal.
