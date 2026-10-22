@@ -7,10 +7,8 @@ lifecycle, and — most importantly — the open-redirect gate layered on top of
 :func:`oauth_redirect_allowlist.is_redirect_allowed` (only callbacks on the
 administrator's allowlist are redirected to; anything else is refused in place).
 
-Home Assistant / aiohttp are stubbed via ``_embedded_stubs``. ``yarl`` (an
-aiohttp dependency also absent here) is stubbed with the tiny
-``URL.update_query`` surface ``_redirect_with`` uses — same convention as
-``test_oauth_legacy_component.py``.
+Home Assistant is stubbed. HTTP-level cases use real aiohttp/yarl clients,
+isolated from the stubs used by the direct view tests.
 """
 
 from __future__ import annotations
@@ -270,6 +268,7 @@ async def unified_view_client_factory():
             cimd_session: object | None = None,
             dcr_key: bytes | None = None,
             allowlist: list[str] | None = None,
+            prepare_hass=lambda _hass, _app: None,
         ):
             cfg = _mode_cfg(
                 mode,
@@ -292,6 +291,7 @@ async def unified_view_client_factory():
                     app.router.add_post(view.url, view.post)
 
             hass.http.register_view = register_view
+            prepare_hass(hass, app)
             aa.bind_autoapprove_views(hass)
 
             client = test_utils.TestClient(test_utils.TestServer(app))

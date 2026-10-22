@@ -36,12 +36,15 @@ from hacs_checks import exercise_hacs_absence
 from health_checks import exercise_health
 from history_checks import exercise_history
 from interop_checks import exercise_llm
+from legacy_rollback_checks import exercise_legacy_rollback
 from log_checks import exercise_logs
+from oauth_checks import exercise_oauth
 from overview_checks import exercise_overview
 from pipeline_checks import exercise_pipelines
 from radio_checks import exercise_radios
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
+from restart_checks import exercise_process_restart
 from screenshot_checks import exercise_screenshots
 from search_checks import exercise_search
 from system_checks import exercise_system_actions, exercise_system_self_reload
@@ -439,6 +442,7 @@ async def exercise(checks: Checks) -> dict:
     assert {"ha_get_state", "ha_list_services"} <= {tool["name"] for tool in catalog}
     checks.passed("existing_webhook_URL_and_modern_MCP")
     await checks.control("guard", {})
+    await exercise_oauth(checks)
     state = await checks.call("ha_get_state", {"entity_id": "sensor.native_fixture"})
     assert "ready" in json.dumps(state), state
     services = await checks.call("ha_list_services", {"domain": "input_boolean"})
@@ -472,12 +476,16 @@ async def exercise(checks: Checks) -> dict:
     checks.passed("legacy_initialize")
     await exercise_system_self_reload(checks)
     await exercise_llm(checks)
+    before_restart = await checks.ready()
+    assert before_restart["ticks"] > probe["ticks"], before_restart
+    await exercise_legacy_rollback(checks)
+    await exercise_process_restart(checks, docker, CONTAINER)
     final = await checks.ready()
     assert checks.path == original_path
     assert final["listeners"] == [8123], final
     assert not final["server_threads"] and not final["remote_imports"], final
     assert final["owned_tasks"] == 0 and final["loopback_attempts"] == 0, final
-    assert final["ticks"] > probe["ticks"], final
+    assert final["ticks"] > 0, final
     checks.passed("reload_single_listener_no_server_thread_remote_import_or_loopback")
     return final
 

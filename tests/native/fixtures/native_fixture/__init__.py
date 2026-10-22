@@ -242,8 +242,12 @@ class FixtureView(HomeAssistantView):
             "pipeline_seed",
             "seed_updates",
             "file_external_edit",
+            "oauth_code",
+            "legacy_rollback",
         }:
-            return web.json_response(await self._seed_data(operation, manager))
+            return web.json_response(
+                await self._seed_data(operation, manager, user, body)
+            )
         elif operation == "seed_resources":
             from homeassistant.components.lovelace.const import LOVELACE_DATA
 
@@ -296,7 +300,17 @@ class FixtureView(HomeAssistantView):
             return web.json_response({"error": "admin_identity_required"}, status=403)
         return web.json_response({"data": result.data, "error": result.error})
 
-    async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+    async def _seed_configuration(
+        self, operation: str, user: Any, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        if operation == "legacy_rollback":
+            from .legacy_rollback import legacy_rollback
+
+            return await legacy_rollback(self.hass, user, body)
+        if operation == "oauth_code":
+            from .oauth_support import issue_oauth_code
+
+            return issue_oauth_code(self.hass, user, body)
         if operation == "file_external_edit":
             from .file_support import external_yaml_edit
 
@@ -310,6 +324,19 @@ class FixtureView(HomeAssistantView):
 
             seed_pipeline_fixture(self.hass)
             return {}
+        raise ValueError("Unknown fixture configuration operation")
+
+    async def _seed_data(
+        self, operation: str, manager: Any, user: Any, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        if operation in {
+            "oauth_code",
+            "file_external_edit",
+            "seed_updates",
+            "pipeline_seed",
+            "legacy_rollback",
+        }:
+            return await self._seed_configuration(operation, user, body)
         if operation == "seed_system_actions":
             from .system_actions import seed_system_actions
 
@@ -381,19 +408,9 @@ async def async_setup(hass, config):
                 data["remote_import_sites"].append(stack)
 
     sys.meta_path.insert(0, ImportTrace())
-    provider = hass.auth.get_auth_provider("homeassistant", None)
-    users = {}
-    for name, group in (
-        ("alpha", GROUP_ID_ADMIN),
-        ("beta", GROUP_ID_ADMIN),
-        ("reader", GROUP_ID_USER),
-    ):
-        password = secrets.token_urlsafe(24)
-        await provider.async_add_auth(name, password)
-        credential = await provider.async_get_or_create_credentials({"username": name})
-        user = await hass.auth.async_create_user(name, group_ids=[group])
-        await hass.auth.async_link_user(user, credential)
-        users[name] = {"username": name, "password": password, "user_id": user.id}
+    from .identities import fixture_users
+
+    users = await fixture_users(hass)
     await async_setup_component(hass, "mcp_server", {})
     llm.async_register_api(
         hass, FixtureAPI(hass=hass, id=DOMAIN, name="Separate native fixture API")
