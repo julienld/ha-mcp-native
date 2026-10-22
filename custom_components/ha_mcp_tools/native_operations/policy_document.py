@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 from ha_mcp.errors import ErrorCode, create_error_response
@@ -16,6 +17,8 @@ from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.utils.owned_executor import await_owned_io
 
+from ..native_server_policy import NativePolicy
+from ..native_server_policy import load_policy as load_native_policy
 from .registry_access import authorize_actor
 
 
@@ -32,25 +35,34 @@ class NativePolicyDocument:
 
     async def guard(self, writes: bool = False) -> None:
         await authorize_actor(self.actor, self.manager.backend.authorize)
+        if writes:
+            check_mutation_admission(self.actor)
+        self._check_policy(self.manager.policy, writes)
+
+    def _check_policy(self, policy: NativePolicy, writes: bool) -> None:
         gate = "enable_dev_mode" if self.developer else "enable_security_policy_tool"
-        if not self.manager.policy.flag(gate):
+        if not policy.flag(gate):
             raise ToolFailure(
                 "FEATURE_DISABLED", f"{gate} is disabled", status="not_started"
             )
         if writes:
-            check_mutation_admission(self.actor)
-            if self.actor.read_only or self.manager.policy.read_only:
+            if self.actor.read_only or policy.read_only:
                 raise ToolFailure(
                     "READ_ONLY", "Policy writes are disabled", status="not_started"
                 )
-            if self.developer and not self.manager.policy.flag(
-                "dev_tools_security_policy_access"
-            ):
+            if self.developer and not policy.flag("dev_tools_security_policy_access"):
                 raise ToolFailure(
                     "AUTH_INSUFFICIENT_PERMISSIONS",
                     "Dev tools security policy access is disabled; only a person may enable it in settings or the environment",
                     status="not_started",
                 )
+
+    def _before_write(self) -> None:
+        # The worker may wait behind an administrator's settings change.
+        # This loader is pure and does not reacquire the held file lock.
+        self._check_policy(
+            load_native_policy(self.manager.settings_ui.directory), writes=True
+        )
 
     def live(self) -> bool:
         return bool(
@@ -109,7 +121,9 @@ class NativePolicyDocument:
 
         async def persist() -> Any:
             await self.guard(True)
-            return await ui._io(ui._save_policy, body)
+            return await ui._io(
+                partial(ui._save_policy, before_write=self._before_write), body
+            )
 
         try:
             result, changed = await await_owned_io(persist())

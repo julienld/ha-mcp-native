@@ -578,13 +578,17 @@ class NativeSettings:
             result, status=409 if "current_version" in result else 200
         )
 
-    def _save_policy(self, body: Any) -> tuple[dict[str, Any], bool]:
+    def _save_policy(
+        self, body: Any, *, before_write: Callable[[], None] | None = None
+    ) -> tuple[dict[str, Any], bool]:
         from ha_mcp.utils.config_write_lock import config_file_lock
 
         from .native_config_store import save_policy_locked
 
         self.directory.mkdir(parents=True, exist_ok=True)
         with config_file_lock(self.directory):
+            if before_write is not None:
+                before_write()
             return save_policy_locked(self.directory, body)
 
     async def _pending(self, request: web.Request) -> web.Response:

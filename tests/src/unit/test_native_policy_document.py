@@ -1,5 +1,7 @@
 """Policy tools preserve CAS and authority at the actual settings writer."""
 
+import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -22,6 +24,7 @@ def document(panel):
 
     manager = settings.manager
     manager.settings_ui = settings
+    settings._save_features({"flags": {"enable_security_policy_tool": True}})
     manager.policy.flags["enable_security_policy_tool"] = True
     manager.approval_gate = SimpleNamespace(
         queue=SimpleNamespace(clear_remember_cache=MagicMock())
@@ -46,8 +49,8 @@ async def test_native_policy_conflict_withholds_current_document_after_revocatio
     await owner.set({"rules": []}, None)
     save = settings._save_policy
 
-    def conflict(*args):
-        value = save(*args)
+    def conflict(*args, **kwargs):
+        value = save(*args, **kwargs)
         owner.manager.backend.authorize.side_effect = PermissionError("revoked")
         return value
 
@@ -143,3 +146,65 @@ async def test_policy_feature_off_refuses_even_a_read(document):
     with pytest.raises(ToolFailure, match="disabled") as raised:
         await owner.get()
     assert raised.value.status == "not_started"
+
+
+@pytest.mark.parametrize(
+    ("developer", "flag", "value", "code"),
+    [
+        (False, "enable_security_policy_tool", False, "FEATURE_DISABLED"),
+        (False, "read_only_mode", True, "READ_ONLY"),
+        (True, "enable_dev_mode", False, "FEATURE_DISABLED"),
+        (
+            True,
+            "dev_tools_security_policy_access",
+            False,
+            "AUTH_INSUFFICIENT_PERMISSIONS",
+        ),
+        (True, "read_only_mode", True, "READ_ONLY"),
+    ],
+)
+async def test_policy_write_rechecks_local_authority_after_waiting_for_file_lock(
+    document, monkeypatch, developer, flag, value, code
+):
+    import ha_mcp.utils.config_write_lock as locks
+    from custom_components.ha_mcp_tools.native_operations.policy_document import (
+        NativePolicyDocument,
+    )
+    from custom_components.ha_mcp_tools.native_server_policy import (
+        load_policy as load_native_policy,
+    )
+    from ha_mcp.policy.persistence import load_policy
+
+    original_owner, settings = document
+    settings._save_features({"flags": {"enable_security_policy_tool": True}})
+    settings._save_advanced(
+        {"enable_dev_mode": True, "dev_tools_security_policy_access": True}
+    )
+    manager = original_owner.manager
+    manager.policy = load_native_policy(settings.directory)
+    owner = NativePolicyDocument(manager, CallContext("owner"), developer=developer)
+    original = locks.config_file_lock
+
+    @contextmanager
+    def revoke_while_waiting(directory):
+        with original(directory):
+            path = directory / "feature_flags.json"
+            flags = json.loads(path.read_text())
+            flags[flag] = value
+            path.write_text(json.dumps(flags))
+            yield
+
+    monkeypatch.setattr(locks, "config_file_lock", revoke_while_waiting)
+    with pytest.raises(ToolFailure) as raised:
+        await owner.set({"rules": []}, None)
+    assert raised.value.code == code and raised.value.status == "not_started"
+    assert load_policy(settings.directory).version == 0
+
+
+def test_human_policy_editor_does_not_inherit_the_agent_write_gates(document):
+    _owner, settings = document
+    settings._save_features(
+        {"flags": {"enable_security_policy_tool": False, "read_only_mode": True}}
+    )
+    result, _changed = settings._save_policy({"rules": []})
+    assert result["saved"] and result["version"] == 1
