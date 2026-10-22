@@ -471,7 +471,7 @@ async def main() -> None:
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
         "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
-        "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\n"
+        "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\nhistory:\n"
         "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nfrontend:\nnative_fixture:\n"
         "camera:\n  - platform: native_fixture\n",
         encoding="utf-8",
