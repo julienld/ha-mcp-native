@@ -19,6 +19,7 @@ from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .command_validation import _validated_payload
+from .device_updates import commit_device_update, prepare_device_update
 from .registry_access import (
     Authorize,
     Capture,
@@ -125,8 +126,6 @@ class NativeDevices:
         expected: Any = _CURRENT,
         capture: bool = True,
     ) -> tuple[dict[str, Any], list[str]]:
-        from homeassistant.helpers import device_registry as dr
-        from homeassistant.helpers import label_registry as lr
 
         device_id = payload["device_id"]
         async with registry_update_lock("device", device_id):
@@ -158,26 +157,10 @@ class NativeDevices:
             await admit_registry_write(self.actor, self.authorize)
             device = self._check_current(registry, device_id, before)
             self._check_references(validated)
-            if validated.get("disabled_by") is not None:
-                validated["disabled_by"] = dr.DeviceEntryDisabler(
-                    validated["disabled_by"]
-                )
-            if "labels" in validated:
-                labels = set(validated["labels"])
-                validated["labels"] = labels - lr.async_get_missing_label_ids(
-                    self.hass, labels
-                )
+            validated = prepare_device_update(self.hass, validated)
             check_mutation_admission(self.actor)
             try:
-                callback = (
-                    registry.async_update_child_device
-                    if isinstance(device, dr.ChildDeviceEntry)
-                    else registry.async_update_device
-                )
-                written = callback(**validated)
-                row = registry_json(written.dict_repr)
-                if row.get("id") != device_id:
-                    raise ValueError("Core returned a device with a different identity")
+                row = commit_device_update(registry, device, validated)
                 return row, warnings
             except Exception as error:  # noqa: BLE001 - owner/listeners/serializer may fail after mutation
                 registry_outcome_unknown("device", "update", error)

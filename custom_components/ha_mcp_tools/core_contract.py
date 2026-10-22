@@ -178,14 +178,20 @@ async def statistics_metadata(
     hass: HomeAssistant, msg: dict[str, Any]
 ) -> dict[str, Any]:
     """Resolve default and explicit output with Core's converter selection."""
-    from homeassistant.components.recorder.statistics import (
-        _get_unit_converter,
-        async_list_statistic_ids,
-    )
-    from homeassistant.components.recorder.websocket_api import UNIT_SCHEMA
+    from homeassistant.components.recorder.statistics import async_list_statistic_ids
 
     records = await async_list_statistic_ids(hass, set(msg["statistic_ids"]))
-    units = UNIT_SCHEMA(msg["units"])
+    return {"records": resolve_statistics_units(records, msg["units"])}
+
+
+def resolve_statistics_units(
+    records: list[dict[str, Any]], requested_units: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Use Core's converter with metadata already acquired by its recorder owner."""
+    from homeassistant.components.recorder.statistics import _get_unit_converter
+    from homeassistant.components.recorder.websocket_api import UNIT_SCHEMA
+
+    units = UNIT_SCHEMA(requested_units)
     for record in records:
         stored = record.get("statistics_unit_of_measurement")
         converter = _get_unit_converter(record.get("unit_class"), stored)
@@ -198,4 +204,4 @@ async def statistics_metadata(
             output = requested if requested in converter.VALID_UNITS else stored
         record["output_unit_of_measurement"] = output
         record["conversion_unit_class"] = converter.UNIT_CLASS if converter else None
-    return {"records": records}
+    return records

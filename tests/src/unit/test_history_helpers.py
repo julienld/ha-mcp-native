@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp.tools import tools_history
+from ha_mcp.runtime import history_policy
 from ha_mcp.tools.tools_history import (
     _RELATIVE_TIME_UNIT_SECONDS,
     _parse_time_range,
@@ -26,7 +26,7 @@ def frozen_now(monkeypatch: pytest.MonkeyPatch) -> None:
         def now(cls, tz: tzinfo | None = None) -> datetime:
             return NOW
 
-    monkeypatch.setattr(tools_history, "datetime", FrozenDateTime)
+    monkeypatch.setattr(history_policy, "datetime", FrozenDateTime)
 
 
 class TestParseTimeRange:

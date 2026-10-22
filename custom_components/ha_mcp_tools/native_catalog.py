@@ -7,6 +7,7 @@ from ha_mcp.tool_api import ToolDefinition
 
 from .native_calendar_tools import build_calendar_tools
 from .native_device_tools import build_device_tools
+from .native_history_tools import history_definition
 from .native_label_tools import build_label_tools
 from .native_operations.templates import template_definition
 from .native_resource_tools import build_resource_tools
@@ -27,4 +28,5 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *build_resource_tools(manager),
         template_definition(manager.backend),
         trace_definition(manager),
+        history_definition(manager),
     ]

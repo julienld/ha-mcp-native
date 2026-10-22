@@ -11,12 +11,13 @@
     "custom_components/ha_mcp_tools/native_trace_tools.py",
     "custom_components/ha_mcp_tools/native_device_tools.py",
     "custom_components/ha_mcp_tools/native_resource_tools.py",
+    "custom_components/ha_mcp_tools/native_history_tools.py",
     "custom_components/ha_mcp_tools/native_calendar_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 45,
+    "native_catalog_declarations": 46,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -2406,7 +2407,7 @@
         "native result serialization"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/history_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
