@@ -16,6 +16,7 @@ from pydantic import Field
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -27,7 +28,9 @@ from ..errors import (
     create_entity_not_found_error,
     create_error_response,
 )
+from ..runtime.config_reads import SceneReadTools
 from ..strict_bps import BestPracticeKeyParam
+from ..tool_api import ToolFailure
 from ..utils.config_hash import compute_config_hash
 from ..utils.python_sandbox import (
     PythonSandboxError,
@@ -73,46 +76,12 @@ logger = logging.getLogger(__name__)
 
 
 def _raise_scene_not_storage_error(scene_id: str, platform: str | None) -> NoReturn:
-    """Raise ``CONFIG_NOT_FOUND`` for a scene that exists but has no editable config.
+    from ..runtime.config_read_errors import _raise_scene_not_storage_error as fail
 
-    The scene entity was confirmed to exist - in the entity registry, or, for an
-    ``id``-less YAML scene that has no registry entry, in the state machine - but
-    ``config/scene/config/{id}``, backed only by the managed ``scenes.yaml``, has
-    no entry for it. That is the not-a-storage-scene case (a Hue/vendor scene, or
-    a scene defined directly in YAML): the entity EXISTS, so ``ENTITY_NOT_FOUND``
-    would be wrong (issue #1971). ``platform`` names the owning integration when
-    the registry exposed it; the message stays generic otherwise.
-    """
-    entity_id = f"scene.{scene_id.removeprefix('scene.')}"
-    suggestions = [
-        f"Activate it with ha_config_set_scene(scene_id='{entity_id}', activate=True).",
-    ]
-    if platform and platform != "homeassistant":
-        platform_note = (
-            f" It is provided by the '{platform}' integration, which manages its "
-            "own scenes outside Home Assistant's editable scene storage."
-        )
-        suggestions.append(
-            f"Edit this scene in the '{platform}' integration or its companion app; "
-            "ha_config_get_scene / ha_config_set_scene only edit Home Assistant "
-            "UI/storage scenes."
-        )
-    else:
-        platform_note = ""
-        suggestions.append(
-            "ha_config_get_scene / ha_config_set_scene only read and edit Home "
-            "Assistant UI/storage scenes (Settings > Automations & Scenes > Scenes). "
-            "Scenes defined directly in YAML are not editable through this API."
-        )
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.CONFIG_NOT_FOUND,
-            f"Scene '{entity_id}' exists but has no editable Home Assistant "
-            f"storage configuration.{platform_note}",
-            suggestions=suggestions,
-            context={"scene_id": scene_id, "platform": platform},
-        )
-    )
+    try:
+        fail(scene_id, platform)
+    except ToolFailure as error:
+        raise_tool_error(error.data)
 
 
 def _activate_once_reloaded(
@@ -144,11 +113,16 @@ def _skip_scene_activation_backup(kwargs: dict[str, Any]) -> bool:
     )
 
 
-class ConfigSceneTools:
+class ConfigSceneTools(SceneReadTools):
     """Scene configuration management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+
+    async def _fetch_category(
+        self, entity_id: str, scope: str, warnings: list[str]
+    ) -> str | None:
+        return await fetch_entity_category(self._client, entity_id, scope, warnings)
 
     # Short retry retained for config reads and removals; post-write polling
     # has its own deadline in entity_registration.
@@ -297,165 +271,51 @@ class ConfigSceneTools:
             self._client, None, None, {"scene": category}, fail_closed=True
         )
 
-    @tool(
+    ha_config_get_scene = tool(
         name="ha_config_get_scene",
         tags={"Scenes"},
         annotations=read_only_hints("Get or Find Scenes", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_scene(
-        self,
-        scene_id: Annotated[
-            str | None,
-            Field(
-                description="Scene storage ID from listing (e.g. 'movie_night') "
-                "or the scene's entity_id; an entity_id is resolved to the "
-                "storage ID."
-            ),
-        ] = None,
-        query: Annotated[
-            str | None, Field(description="Filter scene names or IDs")
-        ] = None,
-        search_in_config: Annotated[
-            bool,
-            Field(
-                description="Also search full stored scene attribute values within a bounded scan"
-            ),
-        ] = False,
-        limit: Annotated[
-            int, Field(description="Maximum scenes per page", ge=1, le=100)
-        ] = 20,
-        offset: Annotated[int, Field(description="Pagination offset", ge=0)] = 0,
+    )(log_tool_usage(legacy_errors(SceneReadTools.ha_config_get_scene)))
+
+    async def _fetch_scene_config_envelope(self, scene_id: str) -> dict[str, Any]:
+        config: dict[str, Any] = await self._client.get_scene_config(scene_id)
+        return config
+
+    async def _discover_scenes(
+        self, *, query: str | None, search_in_config: bool, limit: int, offset: int
     ) -> dict[str, Any]:
-        """Get a scene's complete configuration, or list and search scenes without scene_id.
-
-        Use ha_search for cross-domain discovery and dependency searches. For ordinary
-        scene discovery, use this tool and pass a returned scene_id back to retrieve
-        the complete entities dict and config_hash for editing (pass that hash to
-        ha_config_set_scene for python_transform updates).
-
-        Listing returns compact metadata. Integration-managed scenes have no editable
-        storage config or scene_id. Partial content-search results explicitly
-        report unread configs and are not exhaustive.
-
-        EXAMPLES:
-        - Get scene: ha_config_get_scene("movie_night")
-        - Find scenes: ha_config_get_scene(query="movie")
-        - Find attribute values: ha_config_get_scene(query="rainbow", search_in_config=True)
-
-        For detailed scene configuration help, use ha_get_skill_guide.
-        """
-        try:
-            if scene_id is None:
-                return await discover_scenes(
-                    self._client,
-                    query=query,
-                    search_in_config=search_in_config,
-                    limit=limit,
-                    offset=offset,
-                )
-            # Issue #1168 R6 blocker 16: empty ``scene_id`` previously
-            # surfaced as ``RESOURCE_NOT_FOUND`` with a misleading
-            # `entities`-related suggestion. Pre-flight here so the caller
-            # gets the actual problem. Migrated to the shared
-            # ``validate_identifier_not_empty`` helper (#1314) — message
-            # and ``context["scene_id"]`` key preserved for callers.
-            validate_identifier_not_empty(
-                scene_id,
-                "scene_id",
-                message="scene_id must not be empty",
-                suggestions=[
-                    "Pass a non-empty scene identifier (e.g. 'movie_night')",
-                    "Call ha_config_get_scene() without scene_id to discover scenes",
-                ],
-                context={"scene_id": scene_id},
-            )
-            # Full scene config reads ALWAYS take the legacy path — no component
-            # routing here, unlike the automation/script gets. Scenes do not
-            # retain their raw storage body in memory: HomeAssistantScene's
-            # ``scene_config.states`` holds runtime State OBJECTS built at
-            # setup, not the storage ``entities`` dict, so a component-served
-            # body can neither match the REST body byte-for-byte nor produce
-            # a stable ``config_hash`` — and the get -> surgical-edit -> set
-            # round-trip depends on both (caught live by the scene lifecycle
-            # e2e suite). automation/script expose ``raw_config`` (the exact
-            # storage dict), which is why their gets DO route.
-            return await self._legacy_get_scene(scene_id)
-        except ToolError:
-            raise
-        except SceneStorageConfigNotFoundError as e:
-            # The entity resolved but scenes.yaml has no config for it - a Hue/
-            # vendor or raw-YAML scene. Surface CONFIG_NOT_FOUND, not the
-            # ENTITY_NOT_FOUND the generic handler below would emit (#1971).
-            _raise_scene_not_storage_error(e.scene_id, e.platform)
-        except Exception as e:
-            # Pass `entity_id` so a 404 from rest_client surfaces as
-            # ENTITY_NOT_FOUND (not the generic RESOURCE_NOT_FOUND fallback).
-            # The naive ``scene.{scene_id}`` form is good enough at error
-            # time — registry resolution happens inside the try block and
-            # may not have run when an exception escapes to here.
-            exception_to_structured_error(
-                e,
-                context={
-                    "scene_id": scene_id,
-                    **(
-                        {"entity_id": f"scene.{scene_id.removeprefix('scene.')}"}
-                        if scene_id is not None
-                        else {}
-                    ),
-                },
-                suggestions=[
-                    "Call ha_config_get_scene() without scene_id to discover scenes",
-                    "Check Home Assistant connection",
-                    "Use ha_get_skill_guide for help",
-                ],
-            )
-            # ``exception_to_structured_error`` always raises (NoReturn); this
-            # explicit raise makes the function's exit unambiguous (no implicit
-            # ``return None`` fall-through) and is never reached at runtime.
-            raise
-
-    async def _legacy_get_scene(self, scene_id: str) -> dict[str, Any]:
-        """Assemble the scene-get response from the REST/WS pipeline.
-
-        The multi-fetch path: id-resolution WS + per-id config REST +
-        ``_resolve_scene_entity_id`` WS + ``fetch_entity_category`` WS. This is
-        the ONLY scene-get path — see ``ha_config_get_scene`` for why scenes
-        never route through the component's ``config_get`` (their in-memory
-        ``scene_config.states`` is runtime State objects, not the storage
-        ``entities`` dict).
-        """
-        # Issue #1168 R3 blockers 3 + 6: unwrap the rest-client envelope
-        # so the response carries the scene body directly (no nested
-        # `success`/`scene_id`/`config` chain), and use the storage key
-        # consistently for `scene_id` regardless of whether the caller
-        # passed the entity_id slug or the storage key.
-        envelope = await self._client.get_scene_config(scene_id)
-        actual_config = envelope.get("config", envelope)
-        resolved_id = envelope.get("scene_id", scene_id)
-        config_hash_value = compute_config_hash(actual_config)
-
-        # Resolve real entity_id via registry — see _resolve_scene_entity_id
-        # for the reasoning. Category fetch on the wrong entity_id is a
-        # silent no-op, masking real category assignments.
-        entity_id = await self._resolve_scene_entity_id(resolved_id)
-        cat_warnings: list[str] = []
-        cat_id = await fetch_entity_category(
-            self._client, entity_id, "scene", cat_warnings
+        return await discover_scenes(
+            self._client,
+            query=query,
+            search_in_config=search_in_config,
+            limit=limit,
+            offset=offset,
         )
 
-        response: dict[str, Any] = {
-            "success": True,
-            "action": "get",
-            "scene_id": resolved_id,
-            "config": actual_config,
-            "config_hash": config_hash_value,
-        }
-        if cat_id:
-            response["category"] = cat_id
-        if cat_warnings:
-            response.setdefault("warnings", []).extend(cat_warnings)
-        return response
+    def _map_scene_error(self, error: Exception, scene_id: str | None) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        if isinstance(error, SceneStorageConfigNotFoundError):
+            _raise_scene_not_storage_error(error.scene_id, error.platform)
+        exception_to_structured_error(
+            error,
+            context={
+                "scene_id": scene_id,
+                **(
+                    {"entity_id": f"scene.{scene_id.removeprefix('scene.')}"}
+                    if scene_id is not None
+                    else {}
+                ),
+            },
+            suggestions=[
+                "Call ha_config_get_scene() without scene_id to discover scenes",
+                "Check Home Assistant connection",
+                "Use ha_get_skill_guide for help",
+            ],
+        )
+
+    _legacy_get_scene = SceneReadTools._read_scene
+    _read_scene = SceneReadTools._read_scene
 
     async def _get_scene_config_internal(
         self, scene_id: str, *, _resolved: bool = False

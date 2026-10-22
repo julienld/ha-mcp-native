@@ -4,8 +4,25 @@ import asyncio
 import logging
 from typing import Any
 
+from ...backends.legacy import legacy_errors_sync
 from ...client.rest_client import HomeAssistantAPIError, HomeAssistantAuthError
 from ...errors import ErrorCode, create_auth_error, create_error_response
+from ...runtime.helper_storage import _name_slug as _slugify_helper_name
+from ...runtime.registry_references import (
+    _raise_if_unknown_area as _shared_raise_if_unknown_area,
+)
+from ...runtime.registry_references import (
+    _raise_if_unknown_category as _shared_raise_if_unknown_category,
+)
+from ...runtime.registry_references import (
+    _raise_if_unknown_floor as _shared_raise_if_unknown_floor,
+)
+from ...runtime.registry_references import (
+    _raise_if_unknown_labels as _shared_raise_if_unknown_labels,
+)
+from ...runtime.registry_references import (
+    _registry_id_values as _shared_registry_id_values,
+)
 from ...utils.registry_update_lock import registry_update_lock
 from ..component_registry_lookup import fetch_entities_for_config_entry_via_component
 from ..config_write_helpers import apply_entity_category
@@ -13,6 +30,12 @@ from ..helpers import exception_to_structured_error, raise_tool_error
 from .schemas import SIMPLE_HELPER_TYPES, _simple_helper_error_context
 
 logger = logging.getLogger(__name__)
+
+_registry_id_values = legacy_errors_sync(_shared_registry_id_values)
+_raise_if_unknown_labels = legacy_errors_sync(_shared_raise_if_unknown_labels)
+_raise_if_unknown_area = legacy_errors_sync(_shared_raise_if_unknown_area)
+_raise_if_unknown_category = legacy_errors_sync(_shared_raise_if_unknown_category)
+_raise_if_unknown_floor = legacy_errors_sync(_shared_raise_if_unknown_floor)
 
 
 async def _ws_registry_lookup(
@@ -45,15 +68,6 @@ async def _ws_registry_lookup(
     return False, [], None, None
 
 
-def _registry_id_values(items: list[dict[str, Any]], field: str) -> list[str]:
-    """Pull non-empty string values of `field` from a list of registry dicts."""
-    return [
-        v
-        for it in items
-        if isinstance(it, dict) and isinstance((v := it.get(field)), str)
-    ]
-
-
 def _ws_error_msg(response: dict[str, Any]) -> str:
     """Extract a human-readable error message from a failed WS response dict."""
     error_detail = response.get("error", {})
@@ -61,92 +75,6 @@ def _ws_error_msg(response: dict[str, Any]) -> str:
         msg: str = error_detail.get("message", "Unknown error")
         return msg
     return str(error_detail) if error_detail else "Unknown error"
-
-
-def _raise_if_unknown_labels(
-    ws_labels: list[dict[str, Any]], labels: list[str] | None
-) -> None:
-    """Raise VALIDATION_INVALID_PARAMETER if any label_id is not in the registry."""
-    valid_label_ids = _registry_id_values(ws_labels, "label_id")
-    # An empty string inside a non-empty list is NOT the clear sentinel
-    # (that's the empty list itself) — treat it as an unknown ID so it can't
-    # ride along into the registry write.
-    unknown = [
-        label_id
-        for label_id in labels or []
-        if not label_id or label_id not in valid_label_ids
-    ]
-    if unknown:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Unknown label_id(s): {unknown}. These do not exist in "
-                "the label registry.",
-                context={"labels": labels, "unknown_labels": unknown},
-                suggestions=[
-                    "Use ha_config_get_label() to list valid label IDs.",
-                    "Use ha_config_set_label() to create a new label.",
-                    f"Available label_ids: {sorted(valid_label_ids)}",
-                ],
-            )
-        )
-
-
-def _raise_if_unknown_area(areas: list[dict[str, Any]], area_id: str) -> None:
-    """Raise VALIDATION_INVALID_PARAMETER if area_id is not in the registry."""
-    valid_area_ids = _registry_id_values(areas, "area_id")
-    if area_id not in valid_area_ids:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"area_id={area_id!r} does not exist in the area registry.",
-                context={"area_id": area_id},
-                suggestions=[
-                    "Use ha_list_floors_areas() to list valid area IDs.",
-                    'Pass area_id="" to clear the area assignment.',
-                    f"Available area_ids: {sorted(valid_area_ids)}",
-                ],
-            )
-        )
-
-
-def _raise_if_unknown_category(
-    ws_categories: list[dict[str, Any]], category: str, scope: str
-) -> None:
-    """Raise VALIDATION_INVALID_PARAMETER if category is not in the scope's registry."""
-    valid_category_ids = _registry_id_values(ws_categories, "category_id")
-    if category not in valid_category_ids:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"category={category!r} does not exist in the {scope} "
-                "category registry.",
-                context={"category": category, "scope": scope},
-                suggestions=[
-                    f"Use ha_config_get_category(scope='{scope}') to list valid category IDs.",
-                    "Use ha_config_set_category() to create a new category.",
-                    f"Available category_ids: {sorted(valid_category_ids)}",
-                ],
-            )
-        )
-
-
-def _raise_if_unknown_floor(floors: list[dict[str, Any]], floor_id: str) -> None:
-    """Raise VALIDATION_INVALID_PARAMETER if floor_id is not in the registry."""
-    valid_floor_ids = _registry_id_values(floors, "floor_id")
-    if floor_id not in valid_floor_ids:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"floor_id={floor_id!r} does not exist in the floor registry.",
-                context={"floor_id": floor_id},
-                suggestions=[
-                    "Use ha_list_floors_areas() to list valid floor IDs.",
-                    'Pass floor_id="" to clear the floor assignment.',
-                    f"Available floor_ids: {sorted(valid_floor_ids)}",
-                ],
-            )
-        )
 
 
 # kind -> (param name used in messages/context, registry name used in messages)
@@ -336,18 +264,6 @@ async def validate_registry_ids(
         _apply_registry_check(
             kind, scope, value, ok, items, exc, error_code, fail_closed
         )
-
-
-def _slugify_helper_name(name: str) -> str:
-    """Derive the slug HA generates from a helper display name.
-
-    Mirrors HA's collection-storage logic: lowercase the name, replace spaces
-    with underscores, then strip any non-alphanumeric/underscore characters.
-    Used by the Bug 12 collision check so we can compare a caller-supplied
-    `name` against existing helpers' IDs without an extra round trip.
-    """
-    lowered = name.lower().replace(" ", "_")
-    return "".join(c for c in lowered if c.isalnum() or c == "_")
 
 
 async def _find_collision_in_flow_helpers(

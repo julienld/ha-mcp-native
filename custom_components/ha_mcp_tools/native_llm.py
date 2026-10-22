@@ -46,9 +46,11 @@ async def exposed_catalog(manager: NativeServerManager) -> tuple[list[Any], set[
     """Share the server's exposure and pinned policy, including its env overrides."""
     from ha_mcp.llm_exposure import effective_llm_api_exposed
 
+    from .native_server_policy import filter_catalogue
+
     await manager.refresh_policy()
     overrides, pinned = manager.policy.llm_overrides, set(manager.policy.pinned)
-    tools = await manager.mcp.list_tools()
+    tools = filter_catalogue(manager, await manager.mcp.local_provider._list_tools())
     exposed = []
     for tool in tools:
         # Importing our own exported API would create a recursive bridge.
@@ -66,16 +68,31 @@ async def call_exposed(
     context: llm.LLMContext,
 ) -> Any:
     """Recompute exposure at execution, including already advertised tools."""
+    from ha_mcp.renamed_tools import adapt_retired_arguments, current_tool_name
+    from ha_mcp.tool_api import ToolFailure, ToolResult
+
+    from .llm_api import _meta_as_field_name
+    from .native_server import mcp_result
+
     actor = context_from_llm(context)
+    arguments = adapt_retired_arguments(name, arguments) or {}
+    name = current_tool_name(name)
     await manager.backend.authorize(actor)
     tools, _ = await exposed_catalog(manager)
     names = frozenset(tool.name for tool in tools)
     if name not in names:
         return tool_result({"error": f"Unknown tool '{name}'."}, error=True)
-    result = await manager.engine.call(
-        name, arguments, replace(actor, allowed_tools=names)
+    try:
+        result = await manager.engine.call(
+            name, arguments, replace(actor, allowed_tools=names)
+        )
+    except ToolFailure as err:
+        result = ToolResult(err.data, is_error=True, status=err.status or "not_started")
+    wire = mcp_result(result, allow_continuation=False).to_mcp_result()
+    payload = _meta_as_field_name(
+        wire.model_dump(exclude_unset=True, exclude_none=True, by_alias=True)
     )
-    return tool_result(result.data, error=result.is_error)
+    return tool_result(payload, error=result.is_error)
 
 
 class NativeTool(llm.Tool):
@@ -132,6 +149,7 @@ class NativeLlmApi(HaMcpLlmApi):
     """Keep established LLM API IDs and search/schema behavior with direct calls."""
 
     manager: Any
+    requires_admin: bool = True
 
     async def async_get_api_instance(
         self, llm_context: llm.LLMContext

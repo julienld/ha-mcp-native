@@ -6,19 +6,21 @@ Home Assistant script configurations.
 """
 
 import logging
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NoReturn, cast
 
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
 from ..errors import ErrorCode, create_error_response
+from ..runtime.config_reads import ScriptReadTools
 from ..strict_bps import BestPracticeKeyParam
 from ..utils.config_hash import compute_config_hash
 from ..utils.python_sandbox import (
@@ -103,156 +105,39 @@ def _skip_script_run_backup(kwargs: dict[str, Any]) -> bool:
     return kwargs.get("run") is not None
 
 
-class ConfigScriptTools:
+class ConfigScriptTools(ScriptReadTools):
     """Script configuration management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
+    ha_config_get_script = tool(
         name="ha_config_get_script",
         tags={"Scripts"},
         annotations=read_only_hints("Get Script Config", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_script(
-        self,
-        script_id: Annotated[
-            str,
-            Field(
-                description="Script identifier — bare storage key ('morning_routine') or entity_id form ('script.morning_routine'); a leading 'script.' prefix is stripped before lookup."
-            ),
-        ],
-    ) -> dict[str, Any]:
-        """
-        Get Home Assistant script configuration.
+    )(log_tool_usage(legacy_errors(ScriptReadTools.ha_config_get_script)))
 
-        Returns the complete configuration for a script, including sequence, mode, fields, and other settings.
-
-        The returned `config_hash` stays the same across consecutive reads of an unchanged config.
-
-        The returned `script_id` is the canonical bare storage key resolved by the REST client (matching what `ha_config_set_script` / `ha_config_remove_script` expect), falling back to the input identifier on the rare path where the REST envelope omits it. Prefix handling matches `ha_config_get_automation` in behavior (mechanism differs: automations resolve via state lookup; scripts strip the prefix).
-
-        EXAMPLES:
-        - Get script (bare form): ha_config_get_script("morning_routine")
-        - Get script (entity_id form): ha_config_get_script("script.morning_routine")
-
-        For detailed script configuration help, use ha_get_skill_guide.
-        """
-        try:
-            # Strip BEFORE validate so a bare ``"script."`` (empty after
-            # strip) is rejected as ``VALIDATION_INVALID_PARAMETER`` rather
-            # than slipping through validate (non-empty pre-strip) and
-            # 404-ing at ``get_script_config("")``. Accept entity_id form
-            # (``script.foo``) and bare storage key (``foo``) — behavioral
-            # parity with ``ha_config_get_automation`` (mechanism differs:
-            # automations resolve via state lookup; scripts strip the
-            # prefix). ``_raise_script_not_found`` suggests
-            # ``ha_search(domain_filter='script')`` which returns
-            # entity_ids; without this strip, feeding that output back into
-            # the GET tool fails and reseeds the wrong-tool spiral that
-            # #1297 closes.
-            script_id = script_id.removeprefix("script.")
-            # Empty/whitespace script_id would propagate to
-            # ``get_script_config`` and surface as a misleading
-            # ``RESOURCE_NOT_FOUND``. Extension of the #1312
-            # validate_identifier_not_empty pattern to the scripts
-            # family per #1313.
-            validate_identifier_not_empty(
-                script_id,
-                "script_id",
-                suggestions=[
-                    "Pass a script identifier (e.g. 'morning_routine')",
-                    "Use ha_search(domain_filter='script') to list scripts",
-                ],
-            )
-
-            # Script gets ALWAYS take the legacy path — the component's
-            # in-process ``config_get`` was withdrawn. It served
-            # ``entity.raw_config``, which is only the storage body as of the
-            # last COMPLETED async reload, with no version marker to tell a
-            # fresh body from a stale one. A get racing a reload returned the
-            # pre-edit body and broke the get -> python_transform -> set
-            # round-trip (caught live by the automation/script config e2e on the
-            # arm/HAOS runners). The legacy REST config endpoint reads the config
-            # FILE, which is fresh the instant a write lands, so it stays the
-            # sole path. Scenes were already legacy-only (no storage body in
-            # memory at all); scripts join them here for freshness. A
-            # file-reading ``config_get`` may return later (issue #1813).
-            return await self._legacy_get_script(script_id)
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            exception_to_structured_error(
-                e,
-                context={"script_id": script_id},
-                suggestions=[
-                    "Verify script_id exists using ha_search(domain_filter='script')",
-                    "Check Home Assistant connection",
-                    "Use ha_get_skill_guide for help",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-
-    async def _legacy_get_script(self, script_id: str) -> dict[str, Any]:
-        """Assemble the script-get response from the REST/WS pipeline.
-
-        The multi-fetch path: id-resolution WS + per-id config REST +
-        ``fetch_entity_category`` WS call. This is the ONLY script-get path —
-        see ``ha_config_get_script`` for why script gets never route through the
-        component's ``config_get`` (its ``raw_config`` freshness lags the config
-        file between a write and the next completed reload).
-        """
-        config_result = await self._fetch_script_config_envelope(script_id)
-        # Extract actual script config body and compute hash before category injection
-        actual_config = config_result.get("config", config_result)
-        config_hash_value = compute_config_hash(actual_config)
-
-        # Fetch category from entity registry (best-effort)
-        # (injected after hash so transient registry failures don't affect the hash)
-        entity_id = f"script.{script_id}"
-        cat_warnings: list[str] = []
-        cat_id = await fetch_entity_category(
-            self._client, entity_id, "script", cat_warnings
+    def _map_read_error(self, error: Exception, identifier: str) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        exception_to_structured_error(
+            error,
+            context={"script_id": identifier},
+            suggestions=[
+                "Verify script_id exists using ha_search(domain_filter='script')",
+                "Check Home Assistant connection",
+                "Use ha_get_skill_guide for help",
+            ],
         )
-        if cat_id:
-            actual_config["category"] = cat_id
 
-        # Issue #1334: return the canonical storage key from the
-        # rest_client envelope so callers can thread the result into
-        # subsequent ha_config_*_script calls without re-resolving.
-        # Falls back to the input when the rest_client response omits
-        # the key — a contract violation that we surface via warning
-        # rather than mask silently.
-        canonical_id = config_result.get("script_id")
-        if canonical_id is None:
-            logger.warning(
-                "get_script_config envelope missing 'script_id' for "
-                "input %r; falling back to caller input. This indicates "
-                "a rest_client contract violation.",
-                script_id,
-            )
-            canonical_id = script_id
+    async def _fetch_category(
+        self, entity_id: str, scope: str, warnings: list[str]
+    ) -> str | None:
+        return await fetch_entity_category(self._client, entity_id, scope, warnings)
 
-        response: dict[str, Any] = {
-            "success": True,
-            "action": "get",
-            "script_id": canonical_id,
-            # The script BODY, not the REST envelope. Returning the envelope
-            # here put ``{success, script_id, config}`` under ``config``, so
-            # ``response["config"]["sequence"]`` did not exist and every caller
-            # had to unwrap twice -- the e2e carried a helper to do exactly
-            # that. ``ha_config_get_automation`` returns the body, this
-            # docstring promises the body, and the hash is already computed
-            # over the body.
-            "config": actual_config,
-            "config_hash": config_hash_value,
-        }
-        # Top level, not inside ``config``: warnings are a top-level list[str]
-        # by contract.
-        if cat_warnings:
-            response.setdefault("warnings", []).extend(cat_warnings)
-        return response
+    _legacy_get_script = ScriptReadTools._read_script
+
+    _read_script = ScriptReadTools._read_script
 
     async def _list_script_entity_ids(self) -> list[str]:
         """Best-effort list of bare script IDs (up to 10) from the entity registry.

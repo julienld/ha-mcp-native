@@ -175,3 +175,20 @@ async def test_failed_drain_can_be_retried_without_losing_owned_engine() -> None
     assert not runtime._stopped
     await runtime.async_stop()
     assert runtime._stopped and runtime.engine.stop.await_count == 2
+
+
+def test_strict_bps_uses_shared_ack_protocol_and_strips_key() -> None:
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+    from ha_mcp.runtime.best_practices import AcknowledgmentState
+
+    runtime = manager()
+    runtime.acknowledgment = AcknowledgmentState()
+    runtime.skill_available = True
+    runtime.policy = NativePolicy(flags={"enable_strict_mandatory_bps": True})
+    rejected = runtime.check_best_practices("ha_config_set_helper", {})
+    assert rejected is not None and rejected.status == "not_started"
+    key = runtime.acknowledgment.current_key()
+    assert key not in str(rejected.data)
+    arguments = {"BestPracticeKey": key, "name": "example"}
+    assert runtime.check_best_practices("ha_config_set_helper", arguments) is None
+    assert arguments == {"name": "example"}

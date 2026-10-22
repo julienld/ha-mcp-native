@@ -13,6 +13,7 @@ class RemoteBackend:
 
     def __init__(self, client: Any) -> None:
         self.client = client
+        self._flows: Any = None
 
     async def authorize(self, context: CallContext) -> None:
         # Remote authorization is enforced by HA on every wire request. The
@@ -24,6 +25,16 @@ class RemoteBackend:
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
         await self.authorize(context)
+        if operation in {
+            "config.flow.start",
+            "config.flow.configure",
+            "config.flow.abort",
+        }:
+            from .remote_flow_ops import RemoteFlows
+
+            if self._flows is None:
+                self._flows = RemoteFlows(self.client)
+            return await self._flows.execute(operation, arguments, context)
         if operation in {"skills.guide", "skills.files"}:
             from .remote_skill_ops import execute_skill_operation
 

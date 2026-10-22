@@ -149,3 +149,20 @@ async def test_subentry_reconfigure_preserves_core_handler_and_context(
     owner.async_init.assert_awaited_once_with(
         ("entry", "sensor"), context={"source": "reconfigure", "subentry_id": "sub"}
     )
+
+
+async def test_failed_flow_stop_keeps_ownership_for_retry(flows: Any) -> None:
+    owner = manager()
+    backend = flows.NativeFlows(
+        SimpleNamespace(config_entries=SimpleNamespace(flow=owner)), AsyncMock()
+    )
+    await backend.execute(
+        "config.flow.start", {"handler": "template"}, CallContext("user")
+    )
+    owner.async_abort.side_effect = RuntimeError("cleanup failed")
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await backend.stop()
+    assert "owned" in backend.owned
+    owner.async_abort.side_effect = None
+    await backend.stop()
+    assert not backend.owned

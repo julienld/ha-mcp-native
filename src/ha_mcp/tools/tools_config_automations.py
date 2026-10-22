@@ -13,6 +13,7 @@ from pydantic import Field
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -23,6 +24,16 @@ from ..errors import (
     create_error_response,
     create_validation_error,
 )
+from ..runtime.config_normalize import (
+    _normalize_automation_config as _normalize_automation_config,
+)
+from ..runtime.config_normalize import (
+    _normalize_config_for_roundtrip as _normalize_config_for_roundtrip,
+)
+from ..runtime.config_normalize import (
+    _normalize_trigger_keys as _normalize_trigger_keys,
+)
+from ..runtime.config_reads import AutomationReadTools
 from ..strict_bps import BestPracticeKeyParam
 from ..utils.config_hash import compute_config_hash
 from ..utils.python_sandbox import (
@@ -106,132 +117,6 @@ NOT_VERIFIED_WARNING_PREFIX = (
 # action schema. Names inside them are the user's own variable names, so no
 # alias mapping may rewrite them (a variable named 'sequences' is data, not a
 # misspelled 'sequence' key).
-_USER_NAMESPACE_KEYS = frozenset({"variables", "trigger_variables"})
-
-
-def _normalize_automation_config(
-    config: Any, is_root: bool = True, *, in_user_namespace: bool = False
-) -> Any:
-    """
-    Recursively normalize automation config field names to HA's canonical form.
-
-    Home Assistant's 2024.10+ canonical form uses the plural root list keys
-    ('triggers', 'actions', 'conditions'); the singular forms ('trigger',
-    'action', 'condition') remain fully accepted as silent aliases. This tool
-    canonicalizes to the plural root forms so the config-API round-trip and the
-    downstream validators / best-practice checker all see one stable, modern
-    shape (HA accepts whichever we send).
-
-    Only the ROOT list keys are pluralized. The singular keys that act as type
-    discriminators or service calls inside trigger/condition/action items
-    ('trigger:' = trigger type, 'condition:' = condition type, 'action:' =
-    service call) are semantically different and are left untouched, as is the
-    singular 'sequence' key inside choose/if options and scripts. The nested
-    'conditions' lists required inside choose/if and compound (or/and/not)
-    blocks are already plural and pass through unchanged (issue #498: never
-    rewrite these deeper keys).
-
-    No mapping applies below a 'variables:' / 'trigger_variables:' key. That
-    subtree is a free-form user namespace, so a key named 'sequences' there is
-    a variable the user declared, not an alias to canonicalize. Rewriting it
-    renamed the variable in what was written to HA (breaking every
-    '{{ sequences }}' reference in the automation) and, when a sibling named
-    'sequence' also existed, dropped the user's value outright.
-
-    Args:
-        config: Automation configuration (dict, list, or primitive)
-        is_root: Whether this is the root-level automation config dict. Only the
-                 root level gets the singular -> plural list-key normalization.
-        in_user_namespace: Whether this value sits inside a variables block.
-                 Set on recursion; no caller passes it.
-
-    Returns:
-        Normalized configuration with plural list field names at the root level.
-    """
-    # Handle lists - recursively process each item
-    if isinstance(config, list):
-        return [
-            _normalize_automation_config(
-                item, is_root=False, in_user_namespace=in_user_namespace
-            )
-            for item in config
-        ]
-
-    # Handle primitives (strings, numbers, etc.)
-    if not isinstance(config, dict):
-        return config
-
-    # Process dictionary
-    normalized = config.copy()
-
-    # Build field mappings (source alias -> canonical key). Inside a variables
-    # block every key is a user-chosen name, so the mapping stays empty there.
-    field_mappings: dict[str, str] = {}
-
-    if not in_user_namespace:
-        # Pluralize the root list keys to HA's 2024.10+ canonical form. ONLY at
-        # the root level: deeper in the tree 'trigger'/'action'/'condition' are
-        # type discriminators / service calls, not list keys, and must not be
-        # touched (e.g., 'action' inside a delay object -- see issue #498).
-        if is_root:
-            field_mappings["trigger"] = "triggers"
-            field_mappings["action"] = "actions"
-            field_mappings["condition"] = "conditions"
-
-        # 'sequences' -> 'sequence': the canonical key is singular at any level.
-        field_mappings["sequences"] = "sequence"
-
-    # Apply field mapping to current level, preferring the canonical key.
-    for src, dst in field_mappings.items():
-        if src in normalized and dst not in normalized:
-            normalized[dst] = normalized.pop(src)
-        elif src in normalized and dst in normalized:
-            # Both present -- prefer the canonical key, drop the alias.
-            del normalized[src]
-
-    # Recursively process all values in the dictionary
-    for key, value in normalized.items():
-        normalized[key] = _normalize_automation_config(
-            value,
-            is_root=False,
-            in_user_namespace=in_user_namespace or key in _USER_NAMESPACE_KEYS,
-        )
-
-    return normalized
-
-
-def _normalize_trigger_keys(triggers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Normalize trigger objects for round-trip compatibility.
-
-    Older Home Assistant configs (and some integrations) still emit triggers
-    keyed by the legacy 'platform'. This tool canonicalizes each trigger to the
-    modern 'trigger' key (HA 2024.10+) so its pipeline and round-trip output use
-    one stable, current shape; HA accepts either form on the SET side.
-
-    Args:
-        triggers: List of trigger configuration dicts
-
-    Returns:
-        List of triggers with 'trigger' key instead of 'platform' key
-    """
-    normalized_triggers = []
-    for trigger in triggers:
-        # Defensive: a malformed (e.g. LLM-generated) item may not be a dict.
-        if not isinstance(trigger, dict):
-            normalized_triggers.append(trigger)
-            continue
-        normalized_trigger = trigger.copy()
-        # Convert legacy 'platform' to modern 'trigger'. If both are present,
-        # drop the legacy alias so HA's strict schema doesn't reject the config
-        # with "extra keys not allowed" (mirrors _normalize_automation_config).
-        if "platform" in normalized_trigger:
-            if "trigger" not in normalized_trigger:
-                normalized_trigger["trigger"] = normalized_trigger.pop("platform")
-            else:
-                del normalized_trigger["platform"]
-        normalized_triggers.append(normalized_trigger)
-    return normalized_triggers
 
 
 def _scene_create_in_choose(action: dict[str, Any]) -> bool:
@@ -270,34 +155,6 @@ def _action_contains_scene_create(action: Any) -> bool:
                 if _action_contains_scene_create(sub):
                     return True
     return _scene_create_in_choose(action)
-
-
-def _normalize_config_for_roundtrip(config: dict[str, Any]) -> dict[str, Any]:
-    """
-    Normalize automation config from GET response for direct use in SET.
-
-    This ensures a config retrieved via ha_config_get_automation can be
-    directly passed to ha_config_set_automation without modification.
-
-    Transformations:
-    1. Field names: canonicalized to plural root keys (triggers/actions/conditions);
-       a stray `sequences` key is normalized to `sequence`.
-    2. Trigger keys: platform -> trigger (inside each trigger object)
-
-    Args:
-        config: Raw automation configuration from HA API
-
-    Returns:
-        Normalized configuration compatible with SET API
-    """
-    # First normalize field names (singular -> plural at the root level)
-    normalized = _normalize_automation_config(config)
-
-    # Then normalize trigger keys (legacy 'platform' -> modern 'trigger')
-    if "triggers" in normalized and isinstance(normalized["triggers"], list):
-        normalized["triggers"] = _normalize_trigger_keys(normalized["triggers"])
-
-    return cast(dict[str, Any], normalized)
 
 
 def _detect_conflicting_root_keys(config: Any) -> list[str]:
@@ -458,7 +315,7 @@ def _strip_redundant_identifier_echo(
     return {k: v for k, v in result.items() if k not in excluded}
 
 
-class AutomationConfigTools:
+class AutomationConfigTools(AutomationReadTools):
     """Configuration management tools for Home Assistant automations."""
 
     def __init__(self, client: Any) -> None:
@@ -525,117 +382,33 @@ class AutomationConfigTools:
                 return str(state_entity_id)
         return None
 
-    @tool(
+    ha_config_get_automation = tool(
         name="ha_config_get_automation",
         tags={"Automations"},
         annotations=read_only_hints("Get Automation Config", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_automation(
-        self,
-        identifier: Annotated[
-            str,
-            Field(
-                description="Automation entity_id (e.g., 'automation.morning_routine') or unique_id"
-            ),
-        ],
-    ) -> dict[str, Any]:
-        """
-        Get Home Assistant automation configuration.
+    )(log_tool_usage(legacy_errors(AutomationReadTools.ha_config_get_automation)))
 
-        Returns the complete configuration including triggers, conditions, actions, and mode settings.
-
-        The returned `config_hash` stays the same across consecutive reads of an unchanged config.
-
-        The returned `automation_id` is the resolved entity_id (canonical
-        form, e.g. `automation.morning_routine`) when the registry lookup
-        succeeds, falling back to the input `identifier` otherwise.
-
-        EXAMPLES:
-        - Get automation: ha_config_get_automation("automation.morning_routine")
-        - Get by unique_id: ha_config_get_automation("my_unique_automation_id")
-
-        For comprehensive automation documentation, use ha_get_skill_guide.
-        """
-        try:
-            # Empty/whitespace identifier would propagate to the internal
-            # config lookup and surface as a misleading
-            # ``RESOURCE_NOT_FOUND``. Structured ``VALIDATION_INVALID_PARAMETER``
-            # naming the parameter is cleaner — extension of the #1312
-            # validate_identifier_not_empty pattern to the automations
-            # family per #1313.
-            validate_identifier_not_empty(
-                identifier,
-                "identifier",
-                suggestions=[
-                    "Pass an automation entity_id (e.g. 'automation.morning_routine')",
-                    "Or pass the unique_id of an existing automation",
-                    "Use ha_search(domain_filter='automation') to list automations",
-                ],
-            )
-
-            # Automation gets ALWAYS take the legacy path — the component's
-            # in-process ``config_get`` was withdrawn. It served
-            # ``entity.raw_config``, which is only the storage body as of the
-            # last COMPLETED async reload, with no version marker to tell a
-            # fresh body from a stale one. A get racing a reload returned the
-            # pre-edit body and broke the get -> python_transform -> set
-            # round-trip (caught live by the automation python_transform e2e on
-            # the arm/HAOS runners). The legacy REST config endpoint reads the
-            # config FILE, which is fresh the instant a write lands, so it stays
-            # the sole path. Scenes were already legacy-only (no storage body in
-            # memory at all); automations join them here for freshness. A
-            # file-reading ``config_get`` may return later (issue #1813).
-            return await self._legacy_get_automation(identifier)
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            exception_to_structured_error(
-                e,
-                context={"identifier": identifier, "action": "get"},
-                suggestions=[
-                    "Verify automation exists using ha_search(domain_filter='automation')",
-                    "Check Home Assistant connection",
-                    "Use ha_get_skill_guide for help",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-
-    async def _legacy_get_automation(self, identifier: str) -> dict[str, Any]:
-        """Assemble the automation-get response from the REST/WS pipeline.
-
-        The multi-fetch path: per-id config REST + state-lookup entity_id
-        resolution + ``fetch_entity_category`` WS call. This is the ONLY
-        automation-get path — see ``ha_config_get_automation`` for why
-        automation gets never route through the component's ``config_get``
-        (its ``raw_config`` freshness lags the config file between a write and
-        the next completed reload).
-        """
-        normalized_config, config_hash = await self._get_automation_config_internal(
-            identifier
+    def _map_read_error(self, error: Exception, identifier: str) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        exception_to_structured_error(
+            error,
+            context={"identifier": identifier, "action": "get"},
+            suggestions=[
+                "Verify automation exists using ha_search(domain_filter='automation')",
+                "Check Home Assistant connection",
+                "Use ha_get_skill_guide for help",
+            ],
         )
 
-        # Resolve entity_id and fetch category from entity registry
-        # (injected after hash so transient registry failures don't affect the hash)
-        entity_id = await self._resolve_automation_entity_id(identifier)
-        cat_warnings: list[str] = []
-        if entity_id:
-            cat_id = await fetch_entity_category(
-                self._client, entity_id, "automation", cat_warnings
-            )
-            if cat_id:
-                normalized_config["category"] = cat_id
+    async def _fetch_category(
+        self, entity_id: str, scope: str, warnings: list[str]
+    ) -> str | None:
+        return await fetch_entity_category(self._client, entity_id, scope, warnings)
 
-        response: dict[str, Any] = {
-            "success": True,
-            "action": "get",
-            "automation_id": entity_id or identifier,
-            "config": normalized_config,
-            "config_hash": config_hash,
-        }
-        if cat_warnings:
-            response.setdefault("warnings", []).extend(cat_warnings)
-        return response
+    _legacy_get_automation = AutomationReadTools._read_automation
+
+    _read_automation = AutomationReadTools._read_automation
 
     @tool(
         name="ha_config_set_automation",

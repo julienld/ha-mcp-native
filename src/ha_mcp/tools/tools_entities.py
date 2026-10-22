@@ -8,7 +8,7 @@ via the Home Assistant entity registry API.
 import asyncio
 import logging
 import re
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -16,6 +16,7 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..backends.legacy import legacy_errors
+from ..backends.legacy_registry_errors import raise_entity_read_error
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
@@ -1648,10 +1649,7 @@ class EntityTools(EntityDiscoveryTools):
         annotations=read_only_hints("Get Entity", open_world=False),
     )(log_tool_usage(legacy_errors(EntityDiscoveryTools.ha_get_entity)))
 
-    def _raise_entity_error(self, error: Exception, entity_id: Any) -> NoReturn:
-        if isinstance(error, ToolError):
-            raise error
-        exception_to_structured_error(error, context={"entity_id": entity_id})
+    _raise_entity_error = staticmethod(raise_entity_read_error)
 
     async def _fetch_enrichment(
         self, entity_ids: list[str]

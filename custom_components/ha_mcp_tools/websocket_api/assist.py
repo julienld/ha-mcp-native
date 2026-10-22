@@ -48,7 +48,9 @@ def _is_unknown_entity_error(exc: Exception) -> bool:
     )
 
 
-def _assist_should_expose(hass: HomeAssistant, entity_id: str) -> bool:
+def _assist_should_expose(
+    hass: HomeAssistant, entity_id: str, *, fail_closed: bool = False
+) -> bool:
     """Whether ``entity_id`` is exposed to the ``conversation`` assistant — READ-ONLY.
 
     A read-only replication of core's ``async_should_expose`` for the conversation
@@ -74,7 +76,9 @@ def _assist_should_expose(hass: HomeAssistant, entity_id: str) -> bool:
         if not _assist_expose_new_entities(hass):
             return False
         return _assist_default_exposed(hass, entity_id)
-    except Exception:  # noqa: BLE001  # fail open (do not hide) on any error, mirroring the resolver
+    except Exception:  # fail open (do not hide) on any error, mirroring the resolver
+        if fail_closed:
+            raise
         return True
 
 

@@ -13,6 +13,11 @@ or credentials.
   JSON Schemas, annotations and names for every decorated tool, with all boolean
   feature flags and developer mode enabled. The 87 entries include 8 beta-tagged
   tools. These are not 87 stable tools plus another 8 tools.
+- [Server-generated catalog baseline](catalog-extras-baseline.json): stable
+  schemas, title, hints and tags of `ha_get_skill_guide`, captured separately
+  from the same immutable upstream archive. Its asset-dependent description is
+  excluded because Git archives omit submodule assets. This extra tool does not
+  increase the decorated-tool count of 87.
 - [Migration inventory](inventory.json): tools grouped by implementation family,
   candidate REST/WebSocket calls, command strings and existing Core prep/do seams.
   Every tool starts `not_verified`; candidate source links do not establish native
@@ -23,6 +28,11 @@ sites, while dynamically dispatched and transitive calls can be absent. Counts
 are useful for locating work, not estimating effort or proving transport removal.
 The inventory includes Core-owner functions already separated from WebSocket
 envelopes. Those are reuse opportunities; they are not themselves a native backend.
+`shared_source` and `semantic_operation_candidates` follow shared methods into
+their actual implementation module. `native_catalog_declaration` records only a
+declaration in the current native catalog; it never establishes verified parity.
+The working-tree scan evolves during porting while both baseline catalogs remain
+immutable preservation references.
 
 Regenerate the current static inventory with:
 

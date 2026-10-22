@@ -72,10 +72,11 @@ def test_a_wrong_pin_does_not_verify(tmp_path):
 
 
 def test_the_pin_is_not_stored_in_the_clear(tmp_path):
-    set_pin(tmp_path, "2468")
+    pin = "the-pin-must-not-be-stored-2468"
+    set_pin(tmp_path, pin)
 
     record = json.loads((tmp_path / PIN_FILENAME).read_text())
-    assert "2468" not in json.dumps(record)
+    assert pin not in json.dumps(record)
     assert record["algorithm"] == "pbkdf2_sha256"
     assert record["salt"] and record["hash"]
 

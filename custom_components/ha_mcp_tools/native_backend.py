@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import voluptuous as vol
@@ -16,6 +16,7 @@ from ha_mcp.runtime.skill_files import read_skill_files
 from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
+from .native_operations.helpers import DIRECT_OPERATIONS as HELPER_DIRECT_OPERATIONS
 from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
 from .native_registry_ops import DIRECT_OPERATIONS as REGISTRY_DIRECT_OPERATIONS
 
@@ -29,6 +30,8 @@ COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
     "helpers.storage.schemas": ("ha_mcp_tools/helper_schemas", False),
     "helpers.storage.read": ("ha_mcp_tools/helper_item", False),
     "helpers.storage.write": ("ha_mcp_tools/helper_write", True),
+    "helpers.registry.snapshot": ("ha_mcp_tools/registries", False),
+    "helpers.entities.for_entry": ("ha_mcp_tools/registry_lookup", False),
 }
 
 
@@ -42,6 +45,10 @@ class NativeBackend:
         service_policy: Callable[[str, str], None] | None = None,
         skill_guide_reader: SkillGuideReader | None = None,
         skill_content_enabled: Callable[[], bool] | None = None,
+        helper_backup: Callable[
+            [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
+        ]
+        | None = None,
     ) -> None:
         from .websocket_api import _command_specs
 
@@ -49,6 +56,7 @@ class NativeBackend:
         self.service_policy = service_policy
         self.skill_guide_reader = skill_guide_reader or SkillGuideReader()
         self.skill_content_enabled = skill_content_enabled or (lambda: True)
+        self.helper_backup = helper_backup
         self.loop = asyncio.get_running_loop()
         self._commands: dict[str, tuple[Any, Any, Any]] = {}
         self._flows: Any = None
@@ -91,6 +99,25 @@ class NativeBackend:
         if operation in REGISTRY_DIRECT_OPERATIONS:
             result = await REGISTRY_DIRECT_OPERATIONS[operation](self.hass, arguments)
             return json.loads(json_bytes(result))
+        if operation in HELPER_DIRECT_OPERATIONS:
+            function, writes = HELPER_DIRECT_OPERATIONS[operation]
+            if writes and context.read_only:
+                raise ToolFailure(
+                    "READ_ONLY",
+                    "Writes are disabled for this caller.",
+                    status="not_started",
+                )
+            result = await function(self.hass, arguments)
+            return json.loads(json_bytes(result))
+        if operation in COMMAND_OPERATIONS:
+            return await self._execute_command(operation, arguments, context)
+        return await self._execute_owned_operation(operation, arguments, context)
+
+    async def _execute_owned_operation(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        if operation == "helpers.backup.capture":
+            return await self._capture_helper_backup(arguments, context)
         if operation == "skills.guide":
             return await self.hass.async_add_executor_job(
                 self.skill_guide_reader.read, arguments.get("file", "SKILL.md")
@@ -116,7 +143,7 @@ class NativeBackend:
         if operation == "services.policy":
             self._check_service_policy(arguments["domain"], arguments["service"])
             return None
-        return await self._execute_command(operation, arguments, context)
+        raise UnsupportedOperation(operation)
 
     async def _execute_command(
         self, operation: str, arguments: dict[str, Any], context: CallContext
@@ -128,6 +155,12 @@ class NativeBackend:
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
         schema, do, prep = self._commands[command]
         payload = dict(arguments)
+        if operation == "helpers.storage.write":
+            from .native_operations.helpers import check_expected_item
+
+            expected = payload.pop("expected_item", None)
+            payload.pop("wait_for_entity", None)
+            check_expected_item(self.hass, payload, expected)
         include_changed_states = (
             payload.pop("include_changed_states", False)
             if operation == "services.call_observe"
@@ -163,3 +196,18 @@ class NativeBackend:
         """Called after engine drain; release only resources this backend owns."""
         if self._flows is not None:
             await self._flows.stop()
+
+    async def _capture_helper_backup(
+        self, arguments: dict[str, Any], context: CallContext
+    ) -> dict[str, Any]:
+        if context.read_only:
+            raise ToolFailure(
+                "READ_ONLY",
+                "Writes are disabled for this caller.",
+                status="not_started",
+            )
+        if self.helper_backup is not None:
+            return await self.helper_backup(arguments, context) or {}
+        return {
+            "warnings": ["Automatic helper backup is unavailable in this native entry."]
+        }

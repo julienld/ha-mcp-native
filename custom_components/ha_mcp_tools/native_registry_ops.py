@@ -10,6 +10,8 @@ from homeassistant.core import HomeAssistant
 
 from ha_mcp.tool_api import ToolFailure
 
+from .native_operations.config_reads import DIRECT_OPERATIONS as CONFIG_READ_OPERATIONS
+
 # This is a semantic capability map, never permission to execute arbitrary WS
 # handlers. NativeBackend applies the schema and calls the do/prep owners.
 COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
@@ -48,14 +50,12 @@ async def _matter_node_diagnostics(
     hass: HomeAssistant, arguments: dict[str, Any]
 ) -> Any:
     _require_loaded(hass, "matter")
+    from homeassistant.components.matter import api as matter_api
     from homeassistant.components.matter.helpers import (
         MissingNode,
         get_matter,
         node_from_ha_device_id,
     )
-    from matter_server.client.exceptions import ServerVersionTooOld
-    from matter_server.common.errors import MatterError
-    from matter_server.common.helpers.util import dataclass_to_dict
 
     try:
         matter = get_matter(hass)
@@ -66,9 +66,13 @@ async def _matter_node_diagnostics(
                 f"Could not resolve Matter node from device id {arguments['device_id']}",
             )
         result = await matter.matter_client.node_diagnostics(node_id=node.node_id)
-    except (MatterError, MissingNode, ServerVersionTooOld) as error:
+    except (
+        matter_api.MatterError,
+        MissingNode,
+        matter_api.ServerVersionTooOld,
+    ) as error:
         raise ToolFailure("RADIO_UNAVAILABLE", str(error)) from error
-    return dataclass_to_dict(result)
+    return matter_api.dataclass_to_dict(result)
 
 
 def _entity_rows(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -186,3 +190,5 @@ DIRECT_OPERATIONS: dict[
     "entities.registry.read": _entity_read,
     "entities.registry.list": _entity_list,
 }
+
+DIRECT_OPERATIONS.update(CONFIG_READ_OPERATIONS)

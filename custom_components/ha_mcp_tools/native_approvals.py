@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
@@ -20,6 +21,7 @@ from ha_mcp.policy.evaluator import (
 )
 from ha_mcp.policy.events import APPROVAL_REQUESTED_EVENT, build_requested_payload
 from ha_mcp.policy.model import Policy
+from ha_mcp.runtime.best_practices import STRICT_BPS_KEY_PARAM
 from ha_mcp.tool_api import CallContext, ToolResult
 
 # An actual FastMCP middleware context exists only on the MCP surface. Assist
@@ -115,9 +117,10 @@ class NativeApprovalGate:
         self, name: str, arguments: dict[str, Any], actor: CallContext, writes: bool
     ) -> ToolResult | None:
         await self.manager.refresh_policy()
-        if (preflight := getattr(self.manager, "check_best_practices", None)) is not None:
-            if (failure := preflight(name, arguments)) is not None:
-                return failure
+        await self._visibility_before(name, arguments, actor)
+        receipt = arguments.get(STRICT_BPS_KEY_PARAM)
+        if (failure := self._preflight(name, arguments)) is not None:
+            return failure
         policy = self.manager.policy.security_policy
         if policy is None:
             return None
@@ -161,6 +164,14 @@ class NativeApprovalGate:
         except TimeoutError:
             return self._pending_result(pending, continuation, dynamic)
         await self.manager.refresh_policy()
+        await self._visibility_before(name, arguments, actor)
+        if (
+            failure := self._preflight(
+                name, {**arguments, STRICT_BPS_KEY_PARAM: receipt}
+            )
+        ) is not None:
+            self.queue.remove(pending.token)
+            return failure
         current = self.manager.policy.security_policy
         if current is None or _policy_hash(current) != policy_hash:
             self.queue.remove(pending.token)
@@ -168,6 +179,19 @@ class NativeApprovalGate:
                 "not_started", "The approval policy changed. Issue a new call."
             )
         return self._consume(pending, name, args, policy, remembered)
+
+    def _preflight(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        preflight: Callable[[str, dict[str, Any]], ToolResult | None] | None = getattr(
+            self.manager, "check_best_practices", None
+        )
+        return preflight(name, arguments) if preflight is not None else None
+
+    async def _visibility_before(
+        self, name: str, arguments: dict[str, Any], actor: CallContext
+    ) -> None:
+        visibility = getattr(self.manager, "visibility", None)
+        if visibility is not None:
+            await visibility.before(name, arguments, actor)
 
     def _resume(self, name: str, digest: str, policy: Policy) -> tuple[Any, Any]:
         context = MCP_APPROVAL_CONTEXT.get()

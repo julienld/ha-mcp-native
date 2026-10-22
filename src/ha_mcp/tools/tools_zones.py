@@ -6,13 +6,14 @@ Home Assistant zones (location-based areas for presence automation).
 """
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..backup_helper_target import stored_target
 from ..client.rest_client import (
     HomeAssistantAPIError,
@@ -23,6 +24,16 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response, create_validation_error
+from ..runtime.zone_records import _build_zone_result as _build_zone_result
+from ..runtime.zone_records import (
+    _shape_component_zone_record as _shape_component_zone_record,
+)
+from ..runtime.zone_records import (
+    _shape_component_zone_rows as _shape_component_zone_rows,
+)
+from ..runtime.zone_records import _with_registry_icons as _with_registry_icons
+from ..runtime.zone_records import render_zone_snapshot
+from ..runtime.zones import ZoneReadTools
 from .auto_backup import with_auto_backup
 from .component_api import (
     component_supports,
@@ -46,250 +57,97 @@ from .ws_waiters import wait_for_entity_removed
 logger = logging.getLogger(__name__)
 
 
-def _build_zone_result(
-    zones: list[dict[str, Any]], zone_id: str | None, gaps: list[str] | None = None
-) -> dict[str, Any]:
-    """Assemble the ha_get_zone response from a list of zone records.
-
-    Shared by the legacy ``zone/list`` path and the component ``helpers_list``
-    path so the two produce an identical envelope. Without ``zone_id`` returns
-    the full list; with one (a zone_id or an entity_id), returns that single
-    zone or raises RESOURCE_NOT_FOUND. ``gaps`` names parts of the listing that
-    could not be read: they become warnings, and a zone missing from such a
-    listing is a read failure, not an absent zone.
-    """
-    if zone_id is None:
-        response: dict[str, Any] = {
-            "success": True,
-            "count": len(zones),
-            "zones": zones,
-            "message": f"Found {len(zones)} zone(s)",
-        }
-        if gaps:
-            response["warnings"] = list(gaps)
-        return response
-
-    # A stored zone named "Home" has the id "home", like the home zone's row.
-    matches = [z for z in zones if zone_id in (z.get("id"), z.get("entity_id"))]
-    zone = next((z for z in matches if z.get("editable")), None) or next(
-        iter(matches), None
-    )
-    if zone is None and gaps:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.SERVICE_CALL_FAILED,
-                f"Zone {zone_id} is not among the zones that could be read: "
-                + "; ".join(gaps),
-                context={"zone_id": zone_id},
-                suggestions=["Retry once the entity registry and states can be read"],
-            )
-        )
-    if zone is None:
-        available_ids = [z.get("id") for z in zones[:10]]  # Show first 10
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"Zone not found: {zone_id}",
-                context={
-                    "zone_id": zone_id,
-                    "available_zone_ids": available_ids,
-                },
-                suggestions=[
-                    "Use ha_get_zone() without zone_id to see all available zones"
-                ],
-            )
-        )
-    response = {"success": True, "zone_id": zone_id, "zone": zone}
-    if gaps:
-        response["warnings"] = list(gaps)
-    return response
-
-
-def _shape_component_zone_record(rec: dict[str, Any]) -> dict[str, Any]:
-    """Map one component ``helpers_list`` zone record onto the legacy zone row.
-
-    The component supplies each zone entity's config as ``config``: the stored
-    body for a storage zone, and the YAML or core-configuration body for the
-    YAML and home zones that ``zone/list`` omits. The row is that body plus
-    ``entity_id`` and an ``editable`` / ``source`` discriminator.
-    """
-    config = rec.get("config")
-    out: dict[str, Any] = dict(config) if isinstance(config, dict) else {}
-    # The component reads each zone entity's _config, so a zone outside the
-    # storage (the home zone, a YAML zone) shows as one without a storage id.
-    # Without a _config it falls back to the state attributes and fills the
-    # storage id in; Core's editable attribute then marks a YAML zone.
-    storage_id = rec.get("storage_id")
-    is_yaml = storage_id is None or out.get("editable") is False
-    # Storage zones keep their storage id (the key ha_get_zone matches on);
-    # YAML zones get their object_id so they can still be fetched by zone_id.
-    out["id"] = storage_id if storage_id is not None else rec.get("object_id")
-    out["entity_id"] = rec.get("entity_id")
-    out["editable"] = not is_yaml
-    out["source"] = "yaml" if is_yaml else "storage"
-    return out
-
-
-def _with_registry_icons(
-    rows: list[dict[str, Any]], entries: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """The rows with the icon each zone's entity shows: its registry icon, where
-    the zone tools keep a new zone's icon (#2643), over the stored one."""
-    icons = {e.get("entity_id"): e["icon"] for e in entries if e.get("icon")}
-    return [
-        {**row, "icon": icons[row["entity_id"]]}
-        if row.get("entity_id") in icons
-        else row
-        for row in rows
-    ]
-
-
-def _shape_component_zone_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """Reshape the component's zone ``helpers_list`` result into legacy rows."""
-    raw = result.get("helpers")
-    records = raw if isinstance(raw, list) else []
-    return [
-        _shape_component_zone_record(rec)
-        for rec in records
-        if isinstance(rec, dict) and rec.get("helper_type") == "zone"
-    ]
-
-
-class ZoneTools:
+class ZoneTools(ZoneReadTools):
     """Zone configuration management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
+    ha_get_zone = tool(
         name="ha_get_zone",
         tags={"Zones"},
         annotations=read_only_hints("Get Zone", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_zone(
-        self,
-        zone_id: Annotated[
-            str | None,
-            Field(
-                description="Zone ID or entity_id to get details for (from the ha_get_zone() list).",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get zone information - list all zones or get details for a specific one.
+    )(log_tool_usage(legacy_errors(ZoneReadTools.ha_get_zone)))
 
-        Without a zone_id: Lists all Home Assistant zones with their coordinates and radius.
-        With a zone_id: Returns detailed configuration for a specific zone.
+    def _map_zone_error(self, error: Exception, zone_id: str | None) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        exception_to_structured_error(
+            error,
+            context={"zone_id": zone_id},
+            suggestions=[
+                "Check Home Assistant connection",
+                "Verify WebSocket connection is active",
+                "Use ha_get_zone() without zone_id to see all available zones",
+            ],
+        )
 
-        EXAMPLES:
-        - List all zones: ha_get_zone()
-        - Get specific zone: ha_get_zone(zone_id="office")
-        - Same zone by entity_id: ha_get_zone(zone_id="zone.office")
-
-        Zones outside the zone storage, the home zone (from the general
-        settings) and YAML zones, are listed with ``editable=false`` /
-        ``source="yaml"``; editable means ha_set_zone and ha_remove_zone can
-        change the zone. Each zone carries its entity_id.
-        """
-        try:
-            # Prefer the ha_mcp_tools component's helpers_list, one call for
-            # storage and YAML zones. Without it, Core's zone/list (storage
-            # only) is joined with the registry and the YAML zones' states;
-            # the fallback taxonomy lives in ``_get_zone_via_component``.
-            caps = await get_component_caps(self._client)
-            if component_supports(caps, "helpers_list"):
-                component_response = await self._get_zone_via_component(zone_id)
-                if component_response is not None:
-                    return component_response
-
-            return await self._legacy_zone_result(zone_id)
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting zone(s) (zone_id={zone_id}): {e}")
-            exception_to_structured_error(
-                e,
-                context={"zone_id": zone_id},
-                suggestions=[
-                    "Check Home Assistant connection",
-                    "Verify WebSocket connection is active",
-                    "Use ha_get_zone() without zone_id to see all available zones",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
+    async def _zone_snapshot(self) -> dict[str, Any]:
+        caps = await get_component_caps(self._client)
+        if component_supports(caps, "helpers_list"):
+            snapshot = await self._component_zone_snapshot()
+            if snapshot is not None:
+                return snapshot
+        rows, gaps = await self._legacy_zone_rows()
+        return {"rows": rows, "gaps": gaps, "warnings": []}
 
     async def _get_zone_via_component(
         self, zone_id: str | None
     ) -> dict[str, Any] | None:
-        """Serve ha_get_zone from the component's helpers_list; ``None`` ⇒ legacy.
+        snapshot = await self._component_zone_snapshot()
+        return render_zone_snapshot(snapshot, zone_id) if snapshot is not None else None
 
-        Error taxonomy mirrors ``_list_helpers_via_component`` in
-        tools_config_helpers (§ 4). ``zone`` is always in the collection
-        universe, so there is a legacy fallback for every failure:
-
-        - ``unknown_command`` (cached caps went stale after a component
-          downgrade): invalidate the caps and return ``None`` so the caller
-          serves the legacy listing, silently.
-        - any other ``HomeAssistantCommandError`` / ``HomeAssistantCommandTimeout``:
-          serve the result from the legacy listing, append a ``warnings[]``
-          entry, and ``log.warning``.
-        - a response that does not authoritatively enumerate ``zone`` (an older
-          component with no ``covered_types``): fall back to legacy silently.
-        - ``HomeAssistantConnectionError`` (pooled-WS drop) or the plain
-          ``Exception`` ``get_websocket_client()`` raises on a failed (re)connect:
-          served from the legacy listing (its reads ride the swallowing
-          ``send_websocket_message`` bridge, so a transport failure surfaces
-          there as a structured error or a listing gap rather than dying
-          identically), with a ``warnings[]`` entry + ``log.warning``.
-        """
+    async def _component_zone_snapshot(self) -> dict[str, Any] | None:
         try:
             raw = await self._send_component_zone_list()
-        except (HomeAssistantCommandError, HomeAssistantCommandTimeout) as exc:
-            if is_unknown_command(exc):
+        except (HomeAssistantCommandError, HomeAssistantCommandTimeout) as error:
+            if is_unknown_command(error):
                 invalidate_caps(self._client)
                 return None
-            response = await self._legacy_zone_result(zone_id)
-            response.setdefault("warnings", []).append(
-                f"component zone listing failed ({exc}); served via legacy path"
-            )
             logger.warning(
                 "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
-                exc,
+                error,
             )
-            return response
-        except Exception as exc:  # noqa: BLE001
-            response = await self._legacy_zone_result(zone_id)
-            response.setdefault("warnings", []).append(
-                f"component zone listing connection error ({exc}); "
-                "served via legacy path"
-            )
+            rows, gaps = await self._legacy_zone_rows()
+            return {
+                "rows": rows,
+                "gaps": gaps,
+                "warnings": [
+                    f"component zone listing failed ({error}); served via legacy path"
+                ],
+            }
+        except Exception as error:  # noqa: BLE001 - existing optional remote capability fallback
             logger.warning(
-                "ha_mcp_tools/helpers_list (zone) connection error; "
-                "fell back to legacy: %r",
-                exc,
+                "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
+                error,
             )
-            return response
+            rows, gaps = await self._legacy_zone_rows()
+            return {
+                "rows": rows,
+                "gaps": gaps,
+                "warnings": [
+                    f"component zone listing connection error ({error}); served via legacy path"
+                ],
+            }
         result = raw.get("result") or {}
         covered = result.get("covered_types")
         if not (isinstance(covered, list) and "zone" in covered):
-            # The component did not authoritatively enumerate zones (older
-            # component with no covered_types): don't trust its list — fall back
-            # to the legacy listing silently.
             return None
         rows = _shape_component_zone_rows(result)
         try:
             entries, registry_error = await self._zone_registry()
-        except HomeAssistantConnectionError as exc:
-            entries, registry_error = [], str(exc)
-        # The listing is complete without the registry; only its icons are missing.
-        response = _build_zone_result(_with_registry_icons(rows, entries), zone_id)
-        if registry_error:
-            response.setdefault("warnings", []).append(
-                f"Icons set in the entity registry are missing: {registry_error}"
-            )
-        return response
+        except HomeAssistantConnectionError as error:
+            entries, registry_error = [], str(error)
+        warnings = (
+            [f"Icons set in the entity registry are missing: {registry_error}"]
+            if registry_error
+            else []
+        )
+        return {
+            "rows": _with_registry_icons(rows, entries),
+            "gaps": [],
+            "warnings": warnings,
+        }
 
     async def _send_component_zone_list(self) -> dict[str, Any]:
         """Send one ``ha_mcp_tools/helpers_list`` zone query over the per-client WS."""

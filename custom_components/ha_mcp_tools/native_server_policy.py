@@ -20,7 +20,7 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 
 def _flag(config: dict[str, Any], name: str, default: bool = False) -> bool:
-    value = os.environ.get(name.upper(), config.get(name, default))
+    value = os.environ.get(environment_name(name), config.get(name, default))
     if isinstance(value, bool):
         return value
     normalized = str(value).strip().lower()
@@ -29,6 +29,18 @@ def _flag(config: dict[str, Any], name: str, default: bool = False) -> bool:
     if normalized in {"false", "0", "no", "off"}:
         return False
     raise ValueError(f"Invalid boolean setting: {name}")
+
+
+def environment_name(name: str) -> str:
+    """Use Settings' aliases, including HAMCP-prefixed feature flags."""
+    from ha_mcp.config_settings import Settings
+
+    descriptor = Settings.model_fields.get(name)
+    return (
+        str(descriptor.alias or name.upper())
+        if descriptor is not None
+        else name.upper()
+    )
 
 
 @dataclass(frozen=True)
@@ -50,34 +62,63 @@ class NativePolicy:
             default = declared if isinstance(declared, bool) else False
         return _flag(self.flags, name, default)
 
-    def enabled(self, name: str, *, writes: bool = False, source_module: str | None = None) -> bool:
+    def enabled(
+        self, name: str, *, writes: bool = False, source_module: str | None = None
+    ) -> bool:
         from ha_mcp.settings_ui._tools_meta import MANDATORY_TOOLS
 
-        module_enabled = self.enabled_modules is None or source_module in (None, "server") or source_module in self.enabled_modules
-        if name == "ha_get_skill_guide" and self.flag("enable_mandatory_bps") and self.flag("enable_strict_mandatory_bps"):
+        module_enabled = (
+            self.enabled_modules is None
+            or source_module in (None, "server")
+            or source_module in self.enabled_modules
+        )
+        if (
+            name == "ha_get_skill_guide"
+            and self.flag("enable_mandatory_bps")
+            and self.flag("enable_strict_mandatory_bps")
+        ):
             return True
-        return module_enabled and (name in MANDATORY_TOOLS or self.tool_states.get(name) != "disabled") and not (writes and self.read_only)
+        return (
+            module_enabled
+            and (name in MANDATORY_TOOLS or self.tool_states.get(name) != "disabled")
+            and not (writes and self.read_only)
+        )
 
     def tool_enabled(self, definition: Any) -> bool:
         from ha_mcp.settings_ui._tools_meta import FEATURE_GATED_TOOLS, gate_is_beta
 
-        gate = FEATURE_GATED_TOOLS.get(definition.name, {}).get("disabled_by")
-        if gate and (not self.flag(gate) or (gate_is_beta(gate) and not self.flag("enable_beta_features"))):
+        metadata = FEATURE_GATED_TOOLS.get(definition.name)
+        gate = metadata.get("disabled_by") if metadata is not None else None
+        if gate and (
+            not self.flag(gate)
+            or (gate_is_beta(gate) and not self.flag("enable_beta_features"))
+        ):
             return False
         return self.enabled(definition.name, source_module=definition.source_module)
 
 
 def load_policy(directory: Path) -> NativePolicy:
     """File errors fail closed rather than re-enabling a user's hidden tools."""
-    from ha_mcp.renamed_tools import current_tool_name
+    from ha_mcp.renamed_tools import rename_retired_keys
     from ha_mcp.runtime.module_selection import parse_enabled_modules
+    from ha_mcp.settings_ui._persistence import (
+        _more_restrictive_exposure,
+        _more_restrictive_tool_state,
+    )
     from ha_mcp.transforms import DEFAULT_PINNED_TOOLS
 
     tools_config = _read_object(directory / "tool_config.json")
-    flags = {**_read_object(directory / "backup_settings.json"), **_read_object(directory / "feature_flags.json")}
-    module_setting = os.environ.get("ENABLED_TOOL_MODULES", flags.get("enabled_tool_modules", "all"))
+    flags = {
+        **_read_object(directory / "backup_settings.json"),
+        **_read_object(directory / "feature_flags.json"),
+    }
+    module_setting = os.environ.get(
+        "ENABLED_TOOL_MODULES", flags.get("enabled_tool_modules", "all")
+    )
     enabled_modules = parse_enabled_modules(str(module_setting))
-    instructions = os.environ.get("HAMCP_CUSTOM_INSTRUCTIONS", flags.get("custom_instructions", ""))
+    instructions = os.environ.get(
+        "HAMCP_CUSTOM_INSTRUCTIONS", flags.get("custom_instructions", "")
+    )
     security_policy = None
     if _flag(flags, "enable_tool_security_policies"):
         from ha_mcp.policy.persistence import load_policy as load_approval_policy
@@ -85,19 +126,21 @@ def load_policy(directory: Path) -> NativePolicy:
 
         migrate_policy_any_semantics(directory)
         security_policy = load_approval_policy(directory)
-    states = {
-        current_tool_name(name): value
-        for name, value in tools_config.get("tools", {}).items()
-    }
+    states = rename_retired_keys(
+        tools_config.get("tools", {}), prefer=_more_restrictive_tool_state
+    )
     states.update(env_tool_states())
     pinned = (
         set(DEFAULT_PINNED_TOOLS) - {n for n, v in states.items() if v == "enabled"}
     ) | {n for n, v in states.items() if v == "pinned"}
-    overrides = {
-        name: value
-        for name, value in tools_config.get("llm_api", {}).items()
-        if isinstance(value, bool)
-    }
+    overrides = rename_retired_keys(
+        {
+            name: value
+            for name, value in tools_config.get("llm_api", {}).items()
+            if isinstance(value, bool)
+        },
+        prefer=_more_restrictive_exposure,
+    )
     return NativePolicy(
         states,
         overrides,
@@ -110,39 +153,51 @@ def load_policy(directory: Path) -> NativePolicy:
     )
 
 
+def filter_catalogue(manager: Any, tools: Any) -> list[Any]:
+    """Filter before presentation transforms so hidden tools cannot leak in search."""
+    from ha_mcp.llm_exposure import effective_llm_api_exposed
+
+    policy = manager.policy
+    visible = []
+    for tool in tools:
+        writes = getattr(tool.annotations, "read_only_hint", False) is not True
+        definition = manager.engine.tools.get(tool.name)
+        source_module = definition.source_module if definition is not None else None
+        if not policy.enabled(
+            tool.name, writes=writes, source_module=source_module
+        ) or (definition is not None and not policy.tool_enabled(definition)):
+            continue
+        meta = {
+            **(tool.meta or {}),
+            "ha_mcp": {
+                **((tool.meta or {}).get("ha_mcp") or {}),
+                "llm_api_exposed": effective_llm_api_exposed(
+                    tool.name, tool.tags, policy.llm_overrides
+                ),
+                "pinned": tool.name in policy.pinned,
+            },
+        }
+        visible.append(tool.model_copy(update={"meta": meta}))
+    return visible
+
+
 def catalogue_middleware(manager: Any) -> Any:
     """One live filter, with no growing stack of enable/disable transforms."""
     from ha_mcp._vendor.fastmcp.exceptions import ToolError
     from ha_mcp._vendor.fastmcp.server.middleware import Middleware
-    from ha_mcp.llm_exposure import effective_llm_api_exposed
 
     class CataloguePolicy(Middleware):
         async def on_list_tools(self, context: Any, call_next: Any) -> Any:
-            tools = await call_next(context)
-            policy = manager.policy
-            visible = []
-            for tool in tools:
-                writes = getattr(tool.annotations, "read_only_hint", False) is not True
-                definition = manager.engine.tools.get(tool.name)
-                source_module = definition.source_module if definition is not None else None
-                if not policy.enabled(tool.name, writes=writes, source_module=source_module) or (definition is not None and not policy.tool_enabled(definition)):
-                    continue
-                meta = {
-                    **(tool.meta or {}),
-                    "ha_mcp": {
-                        "llm_api_exposed": effective_llm_api_exposed(
-                            tool.name, tool.tags, policy.llm_overrides
-                        ),
-                        "pinned": tool.name in policy.pinned,
-                    },
-                }
-                visible.append(tool.model_copy(update={"meta": meta}))
-            return visible
+            return filter_catalogue(manager, await call_next(context))
 
         async def on_call_tool(self, context: Any, call_next: Any) -> Any:
             definition = manager.engine.tools.get(context.message.name)
             source_module = definition.source_module if definition is not None else None
-            if not manager.policy.enabled(context.message.name, source_module=source_module) or (definition is not None and not manager.policy.tool_enabled(definition)):
+            if not manager.policy.enabled(
+                context.message.name, source_module=source_module
+            ) or (
+                definition is not None and not manager.policy.tool_enabled(definition)
+            ):
                 raise ToolError("Unknown or disabled tool")
             return await call_next(context)
 
@@ -166,3 +221,21 @@ def env_tool_states() -> dict[str, str]:
     states = {current_tool_name(name): "pinned" for name in pinned}
     states.update({current_tool_name(name): "disabled" for name in disabled - pinned})
     return states
+
+
+def catalogue_transform(manager: Any) -> Any:
+    """Apply the shared catalogue policy below any transport-specific search."""
+    from ha_mcp._vendor.fastmcp.server.transforms import Transform
+
+    class CatalogueVisibility(Transform):
+        async def list_tools(self, tools: Any) -> Any:
+            return filter_catalogue(manager, tools)
+
+        async def get_tool(
+            self, name: str, call_next: Any, *, version: Any = None
+        ) -> Any:
+            tool = await call_next(name, version=version)
+            visible = filter_catalogue(manager, [tool]) if tool is not None else []
+            return visible[0] if visible else None
+
+    return CatalogueVisibility()

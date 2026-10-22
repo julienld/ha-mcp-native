@@ -100,6 +100,14 @@ async def call_imported(
     """Revalidate owner, availability and original schema immediately before use."""
     from ha_mcp.tool_api import ToolResult
 
+    await manager.backend.authorize(actor)
+    if (visibility := getattr(manager, "visibility", None)) is not None:
+        await visibility.before(
+            "ha_native_llm_call",
+            {"name": qualified_name, "arguments": arguments},
+            actor,
+        )
+
     api_id, separator, tool_name = qualified_name.partition("/")
     if not separator or not api_id or not tool_name:
         raise ValueError("Use the API/tool name returned by ha_native_llm_tools")
@@ -159,9 +167,17 @@ def register_import_tools(manager: NativeServerManager) -> None:
             "openWorldHint": False,
         }
     )
-    async def ha_native_llm_tools(api_id: str) -> dict[str, Any]:
+    async def ha_native_llm_tools(api_id: str) -> Any:
         """Read instructions and API-qualified tools from a selected native API."""
-        return await inspect_api(manager, api_id, current_context())
+        actor = current_context()
+        result = await manager.engine.call_owned(
+            "ha_native_llm_tools",
+            lambda: inspect_api(manager, api_id, actor),
+            actor,
+            writes=False,
+            arguments={"api_id": api_id},
+        )
+        return mcp_result(result)
 
     @manager.mcp.tool(
         annotations={

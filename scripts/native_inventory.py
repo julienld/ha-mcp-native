@@ -185,7 +185,7 @@ def _family(path: str) -> tuple[str, str, list[str]]:
             ["binary image serialization", "entity access", "provider availability"],
         ),
         (
-            ("system", "updates", "radio", "themes"),
+            ("tools_system", "tools_updates", "tools_radio", "tools_themes"),
             "system-and-platform",
             "high",
             [

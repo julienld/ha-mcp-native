@@ -163,22 +163,25 @@ def _outbound_reason(name: str) -> str:
     )
 
 
+def enforcement_error(tool_name: str, reason: str) -> dict[str, Any]:
+    """The same non-disclosing error for native and remote enforcement."""
+    return create_error_response(
+        ErrorCode.ENTITY_VISIBILITY_ENFORCED,
+        "Entity visibility enforce mode is active on this Home Assistant MCP "
+        f"server. {reason} No data was returned.",
+        suggestions=[
+            "The entity is restricted by the entity visibility filter's enforce "
+            + "mode; do not retry the same request.",
+            "If the user wants this data, they must adjust or turn off enforce "
+            + "mode in the ha-mcp settings UI (Entity Visibility tab).",
+        ],
+        context={"tool_name": tool_name, "visibility_enforced": True},
+    )
+
+
 def _raise_enforced(tool_name: str, reason: str) -> NoReturn:
     """Refuse a call with the generic enforce-mode error (never names an entity)."""
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.ENTITY_VISIBILITY_ENFORCED,
-            "Entity visibility enforce mode is active on this Home Assistant MCP "
-            f"server. {reason} No data was returned.",
-            suggestions=[
-                "The entity is restricted by the entity visibility filter's enforce "
-                + "mode; do not retry the same request.",
-                "If the user wants this data, they must adjust or turn off enforce "
-                + "mode in the ha-mcp settings UI (Entity Visibility tab).",
-            ],
-            context={"tool_name": tool_name, "visibility_enforced": True},
-        )
-    )
+    raise_tool_error(enforcement_error(tool_name, reason))
 
 
 def _conceal_as_not_found(entity_id: str) -> NoReturn:

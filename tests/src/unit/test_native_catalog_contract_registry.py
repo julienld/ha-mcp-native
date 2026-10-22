@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -13,7 +13,7 @@ from ha_mcp.runtime import Engine
 from ha_mcp.runtime.catalog import define_tool
 from ha_mcp.runtime.devices import DeviceDiscoveryTools
 from ha_mcp.runtime.entities import EntityDiscoveryTools
-from ha_mcp.tool_api import CallContext
+from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.tools.tool_hints import read_only_hints
 
 from .test_component_ws_search import (
@@ -54,10 +54,8 @@ async def test_native_device_lookup_keeps_disabled_entities_and_reports_missing_
         sys.modules["homeassistant.helpers"], "entity_registry", registry_module
     )
     validator = Mock(return_value=entity.entity_id)
-    validation_module = SimpleNamespace(entity_id=validator)
-    monkeypatch.setattr(
-        sys.modules["homeassistant.helpers"], "config_validation", validation_module
-    )
+    validation_module = sys.modules["homeassistant.helpers"].config_validation
+    monkeypatch.setattr(validation_module, "entity_id", validator)
     hass = FakeHass(config=SimpleNamespace(components=set()))
     authorize(hass)
     backend = native.NativeBackend(hass)
@@ -101,11 +99,8 @@ async def test_native_bulk_entity_read_keeps_duplicate_order_and_extended_metada
         sys.modules["homeassistant.helpers"], "entity_registry", registry_module
     )
     validator = Mock(side_effect=lambda value: value)
-    monkeypatch.setattr(
-        sys.modules["homeassistant.helpers"],
-        "config_validation",
-        SimpleNamespace(entity_ids=validator),
-    )
+    validation_module = sys.modules["homeassistant.helpers"].config_validation
+    monkeypatch.setattr(validation_module, "entity_ids", validator)
     hass = FakeHass(config=SimpleNamespace(components=set()))
     authorize(hass)
     backend = native.NativeBackend(hass)
@@ -133,3 +128,20 @@ async def test_native_bulk_entity_read_keeps_duplicate_order_and_extended_metada
         {"entity_id": "light.missing", "error": "Entity not found"}
     ]
     validator.assert_called_once_with(["light.a", "light.missing", "light.a"])
+
+
+async def test_optional_radio_cannot_soften_an_authorization_refusal() -> None:
+    """A lost credential must fail the tool instead of returning earlier device data."""
+    from ha_mcp.runtime.radio import enrich_zha_metrics
+
+    backend = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=ToolFailure("AUTH_FORBIDDEN", "Credential revoked")
+        )
+    )
+    warnings: list[str] = []
+    with pytest.raises(ToolFailure, match="Credential revoked"):
+        await enrich_zha_metrics(
+            backend, CallContext("actor"), {"ieee_address": "00:11"}, warnings
+        )
+    assert not warnings

@@ -53,7 +53,8 @@ def _prepare_flow_result(
         "options": hass.config_entries.options,
         "subentry": hass.config_entries.subentries,
     }
-    return views[kind](managers[kind])._prepare_result_json(result)
+    prepared: dict[str, Any] = views[kind](managers[kind])._prepare_result_json(result)
+    return prepared
 
 
 class NativeFlows:
@@ -173,8 +174,7 @@ class NativeFlows:
             self._manager(owned.kind).async_abort(flow_id)
         except UnknownFlow:
             _LOGGER.debug("Owned flow already completed: %s", flow_id)
-        finally:
-            self.owned.pop(flow_id, None)
+        self.owned.pop(flow_id, None)
 
     def _expire(self) -> None:
         now = time.monotonic()

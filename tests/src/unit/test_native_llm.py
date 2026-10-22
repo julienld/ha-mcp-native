@@ -24,15 +24,23 @@ from ha_mcp.tool_api import CallContext, ToolResult  # noqa: E402
 def schema_libraries():
     """Peers install global fake modules; this test needs the actual codecs."""
     prefixes = ("voluptuous", "voluptuous_openapi")
-    saved = {name: module for name, module in sys.modules.items()
-             if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)}
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+    }
     for name in saved:
         sys.modules.pop(name, None)
     try:
-        yield importlib.import_module("voluptuous"), importlib.import_module("voluptuous_openapi")
+        yield (
+            importlib.import_module("voluptuous"),
+            importlib.import_module("voluptuous_openapi"),
+        )
     finally:
         for name in list(sys.modules):
-            if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes):
+            if any(
+                name == prefix or name.startswith(prefix + ".") for prefix in prefixes
+            ):
                 sys.modules.pop(name, None)
         sys.modules.update(saved)
 
@@ -74,6 +82,50 @@ async def test_export_rechecks_exposure_after_conversation_discovery(
     manager.engine.call.assert_not_called()
 
 
+async def test_export_preserves_legacy_result_envelope_and_operation_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime()
+    manager.engine.call = AsyncMock(
+        return_value=ToolResult(
+            {"changed": True}, status="confirmed", operation_id="owned-operation"
+        )
+    )
+    monkeypatch.setattr(
+        native_llm,
+        "exposed_catalog",
+        AsyncMock(return_value=([SimpleNamespace(name="ha_call_service")], set())),
+    )
+    result = await native_llm.call_exposed(
+        manager, "ha_call_service", {}, context("alice")
+    )
+    data = result if isinstance(result, dict) else result.data
+    assert data["structuredContent"] == {"changed": True}
+    assert data["meta"]["ha_mcp"] == {
+        "status": "confirmed",
+        "operation_id": "owned-operation",
+    }
+
+
+async def test_assist_alias_is_adapted_before_exposure_and_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime()
+    manager.engine.call = AsyncMock(
+        return_value=ToolResult({"blueprints": []}, status="confirmed")
+    )
+    monkeypatch.setattr(
+        native_llm,
+        "exposed_catalog",
+        AsyncMock(return_value=([SimpleNamespace(name="ha_manage_blueprints")], set())),
+    )
+    await native_llm.call_exposed(manager, "ha_get_blueprint", {}, context("alice"))
+    assert manager.engine.call.await_args.args[:2] == (
+        "ha_manage_blueprints",
+        {"action": "list"},
+    )
+
+
 def test_import_serializes_original_voluptuous_schema_and_custom_serializer(
     schema_libraries,
 ) -> None:
@@ -83,7 +135,9 @@ def test_import_serializes_original_voluptuous_schema_and_custom_serializer(
     tool = SimpleNamespace(parameters=vol.Schema({vol.Required("kind"): marker}))
     instance = SimpleNamespace(
         custom_serializer=lambda value: (
-            {"type": "string", "enum": ["kept"]} if value is marker else openapi.UNSUPPORTED
+            {"type": "string", "enum": ["kept"]}
+            if value is marker
+            else openapi.UNSUPPORTED
         )
     )
     schema = native_llm_import._schema(instance, tool)
@@ -98,7 +152,8 @@ async def test_import_refuses_unselected_and_own_exported_api() -> None:
 
 
 async def test_import_uses_owner_validator_and_preserves_error_result(
-    monkeypatch: pytest.MonkeyPatch, schema_libraries,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_libraries,
 ) -> None:
     vol, _openapi = schema_libraries
     manager = runtime()

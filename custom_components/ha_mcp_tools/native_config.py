@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+if TYPE_CHECKING:
+    import voluptuous as vol
 
 from . import server_credentials
 from .const import (
@@ -23,7 +24,7 @@ from .const import (
 
 def runtime_schema(schema: vol.Schema, values: Mapping[str, Any]) -> vol.Schema:
     """Keep authentication first and show network/token controls only for legacy."""
-    schema = vol.Schema(
+    schema = type(schema)(
         dict(
             sorted(
                 schema.schema.items(),
@@ -44,7 +45,7 @@ def runtime_schema(schema: vol.Schema, values: Mapping[str, Any]) -> vol.Schema:
         server_credentials.ADMIN_USERNAME,
         server_credentials.ADMIN_PASSWORD,
     }
-    return vol.Schema(
+    return type(schema)(
         {
             key: value
             for key, value in schema.schema.items()

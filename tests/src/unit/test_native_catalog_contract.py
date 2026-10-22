@@ -146,6 +146,10 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         for hint in _ANNOTATIONS:
             if old["annotations"].get(hint) != definition.annotations.get(hint):
                 differences.append(f"changed safety annotation {hint}")
+        if set(old.get("_meta", {}).get("fastmcp", {}).get("tags", [])) != set(
+            definition.tags
+        ):
+            differences.append("changed discovery categories")
         if _structural_schema(old.get("outputSchema")) != _structural_schema(
             definition.output_schema
         ):

@@ -21,6 +21,13 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
+from ..runtime.skill_content import (
+    _SKILL_CONTENT_OPTOUT_HINT as _SKILL_CONTENT_OPTOUT_HINT,
+)
+from ..runtime.skill_content import (
+    _SKILLS_VENDOR_MISSING_WARNING as _SKILLS_VENDOR_MISSING_WARNING,
+)
+from ..runtime.skill_content import apply_skill_content
 from ..utils.skill_loader import (
     BEST_PRACTICES_SKILL_NAME as _HA_BEST_PRACTICES_SKILL_NAME,
 )
@@ -280,23 +287,12 @@ def build_skill_content(
     )
 
 
-_SKILLS_VENDOR_MISSING_WARNING = (
-    "skill_content unavailable — the home-assistant-best-practices "
-    "skills-vendor submodule is not initialised. The agent will not "
-    "receive the relevant best-practice guidance for this write. "
-    "Run `git submodule update --init` on the server install."
-)
-
 # Opt-out hint shipped alongside delivered skill_content. The param
 # name (`MandatoryBPS`), absence of a Field description, and first-key
 # response placement are all load-bearing — each was settled by BAT
 # (failing alternatives reflexively triggered minimisation, omission,
 # or invisibility on at least one model). Don't tune any of them
 # casually; re-BAT before any change.
-_SKILL_CONTENT_OPTOUT_HINT = (
-    "Pass `MandatoryBPS=false` on subsequent calls to this tool in "
-    "this session to skip this content."
-)
 
 # Suggestion appended to EVERY write-tool error response. Not every
 # error has BP-checker context, so the generic skill-guide pointer is
@@ -346,19 +342,9 @@ def attach_skill_content(
         referenced_files=referenced_files,
     )
     if content:
-        # Reorder so the hint is the FIRST key in the response and the
-        # bulky skill_content is the LAST. LLMs (especially smaller
-        # models) process responses top-down and BAT showed the
-        # trailing-hint placement was getting buried under ~25KB of
-        # markdown — Opus needed five tries to find it, Sonnet/Haiku
-        # never found it. The mutation is in place because callers
-        # pass the dict by reference and expect their handle to keep
-        # pointing at the same response object.
-        existing_items = list(response.items())
-        response.clear()
-        response["skill_content_hint"] = _SKILL_CONTENT_OPTOUT_HINT
-        response.update(existing_items)
-        response["skill_content"] = content
+        apply_skill_content(
+            response, content, enabled=True, requested=True, vendor_missing=False
+        )
         return
 
     # Empty content has three distinct causes:
@@ -377,8 +363,15 @@ def attach_skill_content(
     except ValidationError:
         master_on = False
     requested_anything = MandatoryBPS or referenced_files
-    if master_on and requested_anything and get_skills_dir() is None:
-        response.setdefault("warnings", []).append(_SKILLS_VENDOR_MISSING_WARNING)
+    apply_skill_content(
+        response,
+        content,
+        enabled=master_on,
+        requested=bool(requested_anything),
+        vendor_missing=master_on
+        and bool(requested_anything)
+        and get_skills_dir() is None,
+    )
 
 
 def augment_error_dict_with_skill_content(

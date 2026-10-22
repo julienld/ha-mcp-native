@@ -11,12 +11,12 @@ Known assistant identifiers:
 """
 
 import logging
-from typing import Any, NoReturn
+from typing import Any
 
-from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..backends.legacy import legacy_errors
+from ..backends.legacy_registry_errors import raise_entity_read_error
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
@@ -34,7 +34,6 @@ from .component_api import (
     is_unknown_command,
 )
 from .helpers import (
-    exception_to_structured_error,
     log_tool_usage,
     raise_tool_error,
     register_tool_methods,
@@ -143,12 +142,7 @@ class VoiceAssistantTools(ExposureTools):
             "exposed_entities": result.get("result", {}).get("exposed_entities", {})
         }
 
-    def _raise_exposure_error(
-        self, error: Exception, entity_id: str | None
-    ) -> NoReturn:
-        if isinstance(error, ToolError):
-            raise error
-        exception_to_structured_error(error, context={"entity_id": entity_id})
+    _raise_exposure_error = staticmethod(raise_entity_read_error)
 
     ha_get_entity_exposure = tool(
         name="ha_get_entity_exposure",

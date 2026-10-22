@@ -7,6 +7,7 @@ import importlib
 import inspect
 import json
 import logging
+import os
 import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -28,7 +29,12 @@ from .const import (
     WEBHOOK_AUTH_LEGACY,
 )
 from .http_adapter import serve_asgi, serve_buffered_asgi
-from .native_server_policy import NativePolicy, catalogue_middleware, load_policy
+from .native_server_policy import (
+    NativePolicy,
+    catalogue_middleware,
+    catalogue_transform,
+    load_policy,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -48,6 +54,7 @@ def _prewarm() -> bool:
     importlib.import_module("ha_mcp._vendor.fastmcp")
     importlib.import_module("ha_mcp.settings_ui")
     importlib.import_module("ha_mcp.policy.handlers")
+    importlib.import_module(f"{__package__}.native_visibility")
     from io import StringIO
 
     from ha_mcp._vendor.fastmcp.server.dependencies import is_docket_available
@@ -72,13 +79,16 @@ def current_context() -> CallContext:
     return cast("CallContext", get_http_request().scope["state"]["ha_mcp_context"])
 
 
-def mcp_result(result: ToolResult) -> Any:
+def mcp_result(result: ToolResult, *, allow_continuation: bool = True) -> Any:
     """Keep payloads intact and report execution outcome in MCP metadata."""
     from ha_mcp._vendor.fastmcp.tools.base import ToolResult as MCPResult
 
     from .native_approvals import project_continuation
 
-    if (continuation := project_continuation(result)) is not None:
+    if (
+        allow_continuation
+        and (continuation := project_continuation(result)) is not None
+    ):
         return continuation
 
     return MCPResult(
@@ -99,13 +109,19 @@ def _project_tool(manager: NativeServerManager, definition: Any) -> Any:
         _manager: Any = PrivateAttr()
 
         def __init__(self) -> None:
+            support = definition.meta.get("ha_mcp", {}).get("native_support", {})
+            note = support.get("note", "")
+            description = definition.description + (
+                f"\n\nNative support: {note}" if note else ""
+            )
             super().__init__(
                 name=definition.name,
-                description=definition.description,
+                description=description,
                 parameters=definition.input_schema,
                 output_schema=definition.output_schema,
                 annotations=definition.annotations,
                 tags=set(definition.tags),
+                meta=definition.meta,
             )
             self._manager = manager
 
@@ -142,6 +158,9 @@ class NativeServerManager:
         self.settings_ui: Any = None
         self.skill_available = False
         self.acknowledgment: Any = None
+        self.search_enabled = False
+        self.snapshots: Any = None
+        self.visibility: Any = None
         self.http_limit = max(
             1, min(256, int(entry.options.get(OPT_NATIVE_HTTP_LIMIT, 32)))
         )
@@ -164,24 +183,34 @@ class NativeServerManager:
         from ha_mcp._vendor.fastmcp import FastMCP
         from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity
         from ha_mcp.runtime import Engine
-        from ha_mcp.runtime.catalog import build_initial_catalog
         from ha_mcp.runtime.best_practices import AcknowledgmentState
+        from ha_mcp.runtime.catalog import build_initial_catalog
         from ha_mcp.runtime.skills import SkillGuideReader
+        from ha_mcp.tools.renamed_tool_middleware import RenamedToolAliasMiddleware
 
         from .native_approvals import NativeApprovalGate, approval_context_middleware
         from .native_backend import NativeBackend
         from .native_settings import NativeSettings
+        from .native_snapshots import NativeSnapshots
+        from .native_visibility import NativeVisibility
 
         self.acknowledgment = AcknowledgmentState()
-        self.backend = NativeBackend(self.hass, service_policy=self.service_policy,
-                                     skill_guide_reader=SkillGuideReader(ack_line=self.skill_ack_line),
-                                     skill_content_enabled=lambda: self.policy.flag("enable_mandatory_bps"))
+        self.snapshots = NativeSnapshots(self)
+        self.backend = NativeBackend(
+            self.hass,
+            service_policy=self.service_policy,
+            skill_guide_reader=SkillGuideReader(ack_line=self.skill_ack_line),
+            skill_content_enabled=lambda: self.policy.flag("enable_mandatory_bps"),
+            helper_backup=self.snapshots.helper_backup,
+        )
         self.settings_ui = NativeSettings(self)
+        self.visibility = NativeVisibility(self)
         self.approval_gate = NativeApprovalGate(self)
         self.engine = Engine(
             self.backend,
             tools=build_initial_catalog(self.backend),
             policy_guard=self.approval_gate,
+            result_filter=self.visibility.after,
         )
         self.mcp = FastMCP(
             name="Home Assistant MCP",
@@ -200,9 +229,12 @@ class NativeServerManager:
         from .native_llm_import import register_import_tools
 
         register_import_tools(self)
+        self.mcp.add_middleware(RenamedToolAliasMiddleware())
         self.mcp.add_middleware(catalogue_middleware(self))
         self.mcp.add_middleware(approval_context_middleware())
         await self.refresh_policy()
+        self.mcp.add_transform(catalogue_transform(self))
+        self._configure_search()
         self.app = self.mcp.http_app(
             path=self.path, stateless_http=True, host_origin_protection=False
         )
@@ -236,6 +268,30 @@ class NativeServerManager:
         finally:
             self.accepting = False
 
+    def _configure_search(self) -> None:
+        from ha_mcp.config_registry import SETTING_BOUNDS
+        from ha_mcp.config_settings import Settings
+        from ha_mcp.transforms import CategorizedSearchTransform
+
+        self.search_enabled = self.policy.flag("enable_tool_search")
+        if not self.search_enabled:
+            return
+        default = Settings.model_fields["tool_search_max_results"].default
+        maximum = int(
+            os.environ.get(
+                "TOOL_SEARCH_MAX_RESULTS",
+                self.policy.flags.get("tool_search_max_results", default),
+            )
+        )
+        low, high = SETTING_BOUNDS["tool_search_max_results"]
+        if not low <= maximum <= high:
+            raise ValueError("tool_search_max_results is outside supported bounds")
+        self.mcp.add_transform(
+            CategorizedSearchTransform(
+                max_results=maximum, always_visible=sorted(self.policy.pinned)
+            )
+        )
+
     async def refresh_policy(self) -> None:
         """Apply all-client restrictions independently from Assist exposure."""
         policy = await self.hass.async_add_executor_job(
@@ -244,10 +300,18 @@ class NativeServerManager:
         self.policy = policy
         self.engine.read_only = policy.read_only
         names = {*self.engine.tools, "ha_native_llm_tools", "ha_native_llm_call"}
-        self.engine.enabled_tools = {name for name in names if (
-            policy.tool_enabled(self.engine.tools[name]) if name in self.engine.tools else policy.enabled(name)
-        )}
-        self.mcp.instructions = _INSTRUCTIONS + ("\n\n" + policy.custom_instructions if policy.custom_instructions else "")
+        self.engine.enabled_tools = {
+            name
+            for name in names
+            if (
+                policy.tool_enabled(self.engine.tools[name])
+                if name in self.engine.tools
+                else policy.enabled(name)
+            )
+        }
+        self.mcp.instructions = _INSTRUCTIONS + (
+            "\n\n" + policy.custom_instructions if policy.custom_instructions else ""
+        )
 
     def service_policy(self, domain: str, service: str) -> None:
         from ha_mcp.runtime.service_policy import check_service_policy
@@ -260,20 +324,32 @@ class NativeServerManager:
         )
 
     def strict_best_practices(self) -> bool:
-        return self.skill_available and self.policy.flag("enable_mandatory_bps") and self.policy.flag("enable_strict_mandatory_bps")
+        return (
+            self.skill_available
+            and self.policy.flag("enable_mandatory_bps")
+            and self.policy.flag("enable_strict_mandatory_bps")
+        )
 
     def skill_ack_line(self) -> str | None:
         return self.acknowledgment.line() if self.strict_best_practices() else None
 
-    def check_best_practices(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
-        from ha_mcp.runtime.best_practices import STRICT_BPS_GATED_TOOLS, STRICT_BPS_KEY_PARAM, required_acknowledgment_error
+    def check_best_practices(
+        self, name: str, arguments: dict[str, Any]
+    ) -> ToolResult | None:
+        from ha_mcp.runtime.best_practices import (
+            STRICT_BPS_GATED_TOOLS,
+            STRICT_BPS_KEY_PARAM,
+            required_acknowledgment_error,
+        )
         from ha_mcp.tool_api import ToolResult
 
         if name not in STRICT_BPS_GATED_TOOLS:
             return None
         supplied = arguments.pop(STRICT_BPS_KEY_PARAM, None)
         if self.strict_best_practices() and not self.acknowledgment.accepts(supplied):
-            return ToolResult(required_acknowledgment_error(name), is_error=True, status="not_started")
+            return ToolResult(
+                required_acknowledgment_error(name), is_error=True, status="not_started"
+            )
         return None
 
     async def async_stop(self) -> None:
@@ -297,6 +373,8 @@ class NativeServerManager:
             and (stop_backend := getattr(self.backend, "stop", None)) is not None
         ):
             await stop_backend()
+        if self.snapshots is not None:
+            await self.snapshots.async_stop()
         tasks = tuple(self._http_tasks)
         for task in tasks:
             task.cancel()

@@ -12,7 +12,7 @@ from uuid import uuid4
 from aiohttp import web
 
 from .const import COMPONENT_VERSION, SERVER_CONFIG_SUBDIR
-from .native_server_policy import _read_object, env_tool_states
+from .native_server_policy import _read_object, env_tool_states, load_policy
 
 _LOGGER = logging.getLogger(__name__)
 _SUPPORTED_FLAGS = (
@@ -20,9 +20,13 @@ _SUPPORTED_FLAGS = (
     "enable_tool_security_policies",
     "enable_mandatory_bps",
     "enable_strict_mandatory_bps",
+    "enable_tool_search",
 )
 _BACKUP_FLAGS = ("enable_snapshot_actions", "backup_read_only")
-_ADVANCED = {"enabled_tool_modules": "ENABLED_TOOL_MODULES", "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS"}
+_ADVANCED = {
+    "enabled_tool_modules": "ENABLED_TOOL_MODULES",
+    "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS",
+}
 
 
 class NativeSettings:
@@ -53,7 +57,9 @@ class NativeSettings:
             "api/policy/approve": self._decide,
             "api/policy/deny": self._decide,
             "api/policy/tool-schema": self._tool_schema,
+            "api/policy/value-source": self._value_source,
             "api/policy/decision-pin": self._decision_pin,
+            "api/visibility/config": self._visibility_config,
         }
         handler = routes.get(path.strip("/"))
         if handler is None:
@@ -76,7 +82,7 @@ class NativeSettings:
     async def _page(self, request: web.Request) -> web.Response:
         snapshot = SimpleNamespace(
             cookies=dict(request.cookies),
-            headers=dict(request.headers),
+            headers={key.lower(): value for key, value in request.headers.items()},
             query_params=dict(request.query),
         )
         return web.Response(
@@ -141,7 +147,10 @@ class NativeSettings:
                 },
                 "llm_api_overrides": policy.llm_overrides,
                 "llm_api_available": True,
-                "bps_locked_tools": [],
+                "bps_locked_tools": ["ha_get_skill_guide"]
+                if policy.flag("enable_mandatory_bps")
+                and policy.flag("enable_strict_mandatory_bps")
+                else [],
                 "ignored_disabled_tools": [],
                 "tool_config_warnings": [],
             }
@@ -160,6 +169,16 @@ class NativeSettings:
         ):
             raise ValueError("states and llm_api must be JSON objects")
         states = _coerce_tool_states(body.get("states", {}))
+        policy = load_policy(self.directory)
+        if (
+            policy.flag("enable_mandatory_bps")
+            and policy.flag("enable_strict_mandatory_bps")
+            and states.get("ha_get_skill_guide") == "disabled"
+            and policy.tool_states.get("ha_get_skill_guide") != "disabled"
+        ):
+            raise ValueError(
+                "The skill guide is required while strict best-practices mode is enabled"
+            )
         pinned = env_tool_states()
         if any(
             name in states and states[name] != value for name, value in pinned.items()
@@ -170,12 +189,16 @@ class NativeSettings:
         }
         llm_api = _coerce_llm_overrides(body.get("llm_api", {}))
         self._merge("tool_config.json", {"tools": persisted, "llm_api": llm_api})
+        restart_required = (
+            bool(getattr(self.manager, "search_enabled", False))
+            and policy.pinned != load_policy(self.directory).pinned
+        )
         return {
             "success": True,
             "applied": persisted,
             "llm_api_applied": llm_api,
             "mode": "file",
-            "restart_required": False,
+            "restart_required": restart_required,
         }
 
     async def _features(self, request: web.Request) -> web.Response:
@@ -188,7 +211,7 @@ class NativeSettings:
         policy = self.manager.policy
         flags = {
             name: {
-                        "value": policy.flag(name),
+                "value": policy.flag(name),
                 "origin": "env" if name.upper() in os.environ else "file",
                 "editable": name.upper() not in os.environ,
                 "type": "bool",
@@ -209,13 +232,36 @@ class NativeSettings:
                 raise ValueError(f"Unsupported native feature setting: {name}")
             if name.upper() in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
+        self._validate_bps_flags(raw)
         self._merge("feature_flags.json", raw)
         return {
             "success": True,
             "applied": raw,
             "mode": "file",
-            "restart_required": False,
+            "restart_required": "enable_tool_search" in raw,
         }
+
+    def _validate_bps_flags(self, raw: dict[str, Any]) -> None:
+        from dataclasses import replace
+
+        policy = load_policy(self.directory)
+        updated = replace(policy, flags={**policy.flags, **raw})
+        parent = updated.flag("enable_mandatory_bps")
+        strict = updated.flag("enable_strict_mandatory_bps")
+        if raw.get("enable_strict_mandatory_bps") is True and not parent:
+            raise ValueError("Enable best-practice skills before enabling strict mode")
+        if (
+            parent
+            and strict
+            and {"enable_mandatory_bps", "enable_strict_mandatory_bps"}.intersection(
+                raw
+            )
+        ):
+            states = _read_object(self.directory / "tool_config.json").get("tools", {})
+            if states.get("ha_get_skill_guide") == "disabled":
+                raise ValueError(
+                    "Re-enable the skill guide before enabling strict mode"
+                )
 
     async def _theme(self, request: web.Request) -> web.Response:
         if request.method == "GET":
@@ -237,10 +283,16 @@ class NativeSettings:
             return web.json_response(result)
         await self.manager.refresh_policy()
         policy = self.manager.policy
-        fields = [{"field": name, "env_var": name.upper(),
-                   "value": policy.flag(name, name == "backup_read_only"),
-                   "origin": "env" if name.upper() in os.environ else "file",
-                   "editable": name.upper() not in os.environ} for name in _BACKUP_FLAGS]
+        fields = [
+            {
+                "field": name,
+                "env_var": name.upper(),
+                "value": policy.flag(name),
+                "origin": "env" if name.upper() in os.environ else "file",
+                "editable": name.upper() not in os.environ,
+            }
+            for name in _BACKUP_FLAGS
+        ]
         return web.json_response({"success": True, "is_addon": False, "fields": fields})
 
     def _save_backup_config(self, body: Any) -> dict[str, Any]:
@@ -251,9 +303,16 @@ class NativeSettings:
             raise ValueError(error)
         for name in clean:
             if name not in _BACKUP_FLAGS or name.upper() in os.environ:
-                raise ValueError(f"Unsupported or environment-controlled native backup setting: {name}")
+                raise ValueError(
+                    f"Unsupported or environment-controlled native backup setting: {name}"
+                )
         self._merge("backup_settings.json", clean)
-        return {"success": True, "applied": clean, "mode": "file", "restart_required": False}
+        return {
+            "success": True,
+            "applied": clean,
+            "mode": "file",
+            "restart_required": False,
+        }
 
     def _save_theme(self, body: Any) -> dict[str, str]:
         from ha_mcp.settings_ui._theme import _sanitize_theme_prefs
@@ -304,12 +363,26 @@ class NativeSettings:
             return web.json_response(result)
         await self.manager.refresh_policy()
         values = self.manager.policy.flags
-        fields = [{"field": name, "env_var": env, "type": "str", "section": "tools_surface",
-                   "value": os.environ.get(env, values.get(name, "all" if name == "enabled_tool_modules" else "")),
-                   "origin": "env" if env in os.environ else "file", "editable": env not in os.environ,
-                   "multiline": name == "custom_instructions", "restart_required": False}
-                  for name, env in _ADVANCED.items()]
-        return web.json_response({"fields": fields, "is_addon": False, "is_stdio": False})
+        fields = [
+            {
+                "field": name,
+                "env_var": env,
+                "type": "str",
+                "section": "tools_surface",
+                "value": os.environ.get(
+                    env,
+                    values.get(name, "all" if name == "enabled_tool_modules" else ""),
+                ),
+                "origin": "env" if env in os.environ else "file",
+                "editable": env not in os.environ,
+                "multiline": name == "custom_instructions",
+                "restart_required": False,
+            }
+            for name, env in _ADVANCED.items()
+        ]
+        return web.json_response(
+            {"fields": fields, "is_addon": False, "is_stdio": False}
+        )
 
     def _save_advanced(self, body: Any) -> dict[str, Any]:
         if not isinstance(body, dict) or not body:
@@ -320,7 +393,12 @@ class NativeSettings:
             if _ADVANCED[name] in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
         self._merge("feature_flags.json", body)
-        return {"success": True, "applied": body, "mode": "file", "restart_required": False}
+        return {
+            "success": True,
+            "applied": body,
+            "mode": "file",
+            "restart_required": False,
+        }
 
     async def _policy(self, request: web.Request) -> web.Response:
         from ha_mcp.policy.persistence import load_policy
@@ -442,10 +520,74 @@ class NativeSettings:
         from ha_mcp.policy.handlers import _get_tool_schema
 
         response = await _get_tool_schema(
-            self.manager, Request({"type": "http", "query_string": request.query_string.encode()})
+            self.manager,
+            Request({"type": "http", "query_string": request.query_string.encode()}),
         )
         return web.Response(
             body=response.body,
             status=response.status_code,
             content_type="application/json",
         )
+
+    async def _value_source(self, request: web.Request) -> web.Response:
+        from ha_mcp.policy.value_sources import project_value_source
+
+        from .ui_panel import _COOKIE_NAME, _session_user_is_admin
+
+        hass = self.manager.hass
+        if not await _session_user_is_admin(hass, request.cookies.get(_COOKIE_NAME)):
+            return web.Response(status=401)
+        source = request.query.get("source", "")
+        params = {key: value for key, value in request.query.items() if key != "source"}
+        if source in ("ha_domains", "ha_services"):
+            data = hass.services.async_services()
+        elif source == "ha_entities":
+            data = [{"entity_id": state.entity_id} for state in hass.states.async_all()]
+        elif source == "ha_config_entries":
+            data = [
+                {"entry_id": entry.entry_id}
+                for entry in hass.config_entries.async_entries()
+            ]
+        else:
+            raise ValueError(f"Unknown value source: {source!r}")
+        return web.json_response(
+            {"source": source, "values": project_value_source(source, data, params)}
+        )
+
+    async def _visibility_config(self, request: web.Request) -> web.Response:
+        from .native_visibility import load_native_visibility
+
+        if request.method == "GET":
+            try:
+                config = await self._io(load_native_visibility, self.directory)
+            except ValueError as error:
+                return web.json_response(
+                    {"error": str(error), "visibility_file_corrupt": True}, status=500
+                )
+            return web.json_response(config.model_dump(mode="json"))
+        if request.method != "PUT":
+            return web.Response(status=405)
+        result = await self._io(self._save_visibility, await request.json())
+        return web.json_response(
+            result, status=409 if "current_version" in result else 200
+        )
+
+    def _save_visibility(self, body: Any) -> dict[str, Any]:
+        from ha_mcp.utils.config_write_lock import config_file_lock
+        from ha_mcp.visibility.model import VisibilityConfig
+        from ha_mcp.visibility.persistence import save_visibility_config
+
+        from .native_visibility import load_native_visibility
+
+        config = VisibilityConfig.model_validate(body)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with config_file_lock(self.directory):
+            current = load_native_visibility(self.directory)
+            if config.version != current.version:
+                return {
+                    "error": "Visibility config version mismatch",
+                    "current_version": current.version,
+                    "current_config": current.model_dump(mode="json"),
+                }
+            save_visibility_config(self.directory, config)
+        return {"saved": True, "version": config.version + 1}

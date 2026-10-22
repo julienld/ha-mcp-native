@@ -13,6 +13,7 @@ from ha_mcp.tool_api import (
     Backend,
     CallContext,
     PolicyGuard,
+    ResultFilter,
     ToolDefinition,
     ToolFailure,
     ToolResult,
@@ -36,6 +37,7 @@ class Engine:
         cancel_timeout: float = 1,
         max_records: int = 128,
         policy_guard: PolicyGuard | None = None,
+        result_filter: ResultFilter | None = None,
     ) -> None:
         if min(max_operations, operation_timeout, max_records) <= 0:
             raise ValueError("Operation limits must be positive")
@@ -54,6 +56,7 @@ class Engine:
         self.cancel_timeout = cancel_timeout
         self.max_records = max_records
         self.policy_guard = policy_guard
+        self.result_filter = result_filter
         self.tasks: set[asyncio.Task[ToolResult]] = set()
         self.operations: dict[str, dict[str, Any]] = {}
 
@@ -139,15 +142,16 @@ class Engine:
         arguments: dict[str, Any],
     ) -> ToolResult:
         record = self.operations[operation_id]
+        deadline = asyncio.get_running_loop().time() + self.operation_timeout
         try:
-            async with asyncio.timeout(self.operation_timeout):
+            async with asyncio.timeout_at(deadline):
                 raw = await self._invoke_authorized(
                     name, arguments, context, writes, record, invoke
                 )
             result = raw if isinstance(raw, ToolResult) else ToolResult(raw)
             status = result.status or ("failed" if result.is_error else "confirmed")
             record["status"] = status
-            return replace(result, status=status, operation_id=operation_id)
+            result = replace(result, status=status, operation_id=operation_id)
         except asyncio.CancelledError:
             record["status"] = self._failure_status(record, writes)
             raise
@@ -169,8 +173,41 @@ class Engine:
                         "message": type(exc).__name__,
                     },
                 }
-            return ToolResult(
+            result = ToolResult(
                 data, is_error=True, status=status, operation_id=operation_id
+            )
+        return await self._filter_result(name, arguments, context, result, deadline)
+
+    async def _filter_result(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: CallContext,
+        result: ToolResult,
+        deadline: float,
+    ) -> ToolResult:
+        if self.result_filter is None:
+            return result
+        try:
+            async with asyncio.timeout_at(deadline):
+                filtered = await self.result_filter(name, arguments, context, result)
+            return replace(
+                filtered, status=result.status, operation_id=result.operation_id
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Result filtering failed for %s (%s)", name, result.operation_id
+            )
+            return replace(
+                result,
+                data={
+                    "success": False,
+                    "error": {
+                        "code": "RESULT_FILTER_FAILED",
+                        "message": "The operation result could not be safely returned.",
+                    },
+                },
+                is_error=True,
             )
 
     async def _invoke_authorized(

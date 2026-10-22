@@ -16,6 +16,8 @@ from .actions import ServiceCallTools
 from .devices import DeviceDiscoveryTools
 from .entities import EntityDiscoveryTools
 from .exposure import ExposureTools
+from .helper_schema import SIMPLE_HELPER_TYPES
+from .helper_tools import HelperConfigTools
 from .labels import CategoryDiscoveryTools, LabelDiscoveryTools
 from .registries import AreaDiscoveryTools
 from .services import ServiceDiscoveryTools
@@ -31,6 +33,7 @@ def define_tool(
     annotations: dict[str, Any],
     tags: frozenset[str] = frozenset(),
     source_module: str | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> ToolDefinition:
     """One signature drives validation, schemas and both transport facades."""
     method = getattr(owner, method_name)
@@ -76,6 +79,7 @@ def define_tool(
         validate=validate,
         tags=tags,
         source_module=source_module,
+        meta=meta or {},
     )
 
 
@@ -187,5 +191,31 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
                 "Get Home Assistant Best Practices Skill Guide", open_world=False
             ),
             tags=frozenset({"System"}),
+        ),
+        define_tool(
+            backend,
+            HelperConfigTools,
+            "ha_config_set_helper",
+            source_module="tools_config_helpers",
+            annotations=write_hints(
+                "Create or Update Helper",
+                destructive=True,
+                idempotent=False,
+                open_world=False,
+            ),
+            tags=frozenset({"Helper Entities"}),
+            meta={
+                "ha_mcp": {
+                    "native_support": {
+                        "storage_helpers": {
+                            "create": sorted(SIMPLE_HELPER_TYPES),
+                            "update": sorted(SIMPLE_HELPER_TYPES),
+                        },
+                        "flow_helpers": {"create": ["utility_meter"], "update": []},
+                        "config_subentries": False,
+                        "note": "Experimental native branches: storage helper create/update and utility_meter creation. Other helper flows and subentries are not ported yet.",
+                    }
+                }
+            },
         ),
     ]

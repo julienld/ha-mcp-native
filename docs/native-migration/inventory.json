@@ -22,11 +22,11 @@
       "optional-images": 1,
       "platform-extensions": 4,
       "policy": 1,
-      "privileged-files": 2,
+      "privileged-files": 6,
       "recorder-and-diagnostics": 3,
       "registries": 18,
       "services": 5,
-      "system-and-platform": 10,
+      "system-and-platform": 6,
       "utility-and-cross-cutting": 1
     }
   },
@@ -1832,12 +1832,13 @@
         "beta"
       ],
       "beta": true,
-      "family": "system-and-platform",
+      "family": "privileged-files",
       "migration_risk": "high",
       "risk_reasons": [
-        "Core vs Supervisor availability",
-        "restart/disconnection outcome",
-        "native response contracts"
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
@@ -2289,78 +2290,78 @@
       ],
       "client_call_candidates": [
         {
-          "line": 134,
+          "line": 135,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 308,
+          "line": 309,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 319,
+          "line": 320,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 601,
+          "line": 602,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 722,
+          "line": 723,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1223,
+          "line": 1224,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1662,
+          "line": 1660,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 436,
+          "line": 437,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 498,
+          "line": 499,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 565,
+          "line": 566,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 683,
+          "line": 684,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1000,
+          "line": 1001,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "homeassistant/expose_entity"
           ]
         },
         {
-          "line": 1727,
+          "line": 1725,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/remove"
           ]
         },
         {
-          "line": 1254,
+          "line": 1255,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get_entries"
@@ -2396,14 +2397,14 @@
       ],
       "client_call_candidates": [
         {
-          "line": 125,
+          "line": 124,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "homeassistant/expose_entity/list"
           ]
         },
         {
-          "line": 97,
+          "line": 96,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -2941,12 +2942,13 @@
         "beta"
       ],
       "beta": true,
-      "family": "system-and-platform",
+      "family": "privileged-files",
       "migration_risk": "high",
       "risk_reasons": [
-        "Core vs Supervisor availability",
-        "restart/disconnection outcome",
-        "native response contracts"
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
@@ -3637,12 +3639,13 @@
         "beta"
       ],
       "beta": true,
-      "family": "system-and-platform",
+      "family": "privileged-files",
       "migration_risk": "high",
       "risk_reasons": [
-        "Core vs Supervisor availability",
-        "restart/disconnection outcome",
-        "native response contracts"
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
@@ -3941,78 +3944,78 @@
       ],
       "client_call_candidates": [
         {
-          "line": 134,
+          "line": 135,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 308,
+          "line": 309,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 319,
+          "line": 320,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 601,
+          "line": 602,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 722,
+          "line": 723,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1223,
+          "line": 1224,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1662,
+          "line": 1660,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 436,
+          "line": 437,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 498,
+          "line": 499,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 565,
+          "line": 566,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 683,
+          "line": 684,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1000,
+          "line": 1001,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "homeassistant/expose_entity"
           ]
         },
         {
-          "line": 1727,
+          "line": 1725,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/remove"
           ]
         },
         {
-          "line": 1254,
+          "line": 1255,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get_entries"
@@ -4550,78 +4553,78 @@
       ],
       "client_call_candidates": [
         {
-          "line": 134,
+          "line": 135,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 308,
+          "line": 309,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 319,
+          "line": 320,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 601,
+          "line": 602,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 722,
+          "line": 723,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1223,
+          "line": 1224,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1662,
+          "line": 1660,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 436,
+          "line": 437,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 498,
+          "line": 499,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 565,
+          "line": 566,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 683,
+          "line": 684,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1000,
+          "line": 1001,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "homeassistant/expose_entity"
           ]
         },
         {
-          "line": 1727,
+          "line": 1725,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/remove"
           ]
         },
         {
-          "line": 1254,
+          "line": 1255,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get_entries"
@@ -4819,12 +4822,13 @@
         "beta"
       ],
       "beta": true,
-      "family": "system-and-platform",
+      "family": "privileged-files",
       "migration_risk": "high",
       "risk_reasons": [
-        "Core vs Supervisor availability",
-        "restart/disconnection outcome",
-        "native response contracts"
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,

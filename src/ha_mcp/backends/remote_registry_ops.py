@@ -6,6 +6,8 @@ from typing import Any
 
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 
+from .remote_config_ops import CONFIG_READ_OPERATIONS
+
 _RADIO_COMMANDS: dict[str, tuple[str, Any]] = {
     "radio.zha.devices": ("zha/devices", []),
     "radio.zwave.node_status": ("zwave_js/node_status", {}),
@@ -22,6 +24,7 @@ REGISTRY_OPERATIONS = frozenset(
         "entities.registry.list",
         "entities.enrich",
         *_RADIO_COMMANDS,
+        *CONFIG_READ_OPERATIONS,
     }
 )
 
@@ -89,6 +92,10 @@ async def execute_registry_operation(
     client: Any, operation: str, arguments: dict[str, Any]
 ) -> Any:
     """Keep capability negotiation and read-only fallbacks in the remote backend."""
+    if operation in CONFIG_READ_OPERATIONS:
+        from .remote_config_ops import execute_config_operation
+
+        return await execute_config_operation(client, operation, arguments)
     if operation in _RADIO_COMMANDS:
         return await _radio_read(client, operation, arguments)
     if operation in {

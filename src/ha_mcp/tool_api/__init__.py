@@ -61,6 +61,9 @@ ArgumentValidator = Callable[[dict[str, Any]], dict[str, Any]]
 PolicyGuard = Callable[
     [str, dict[str, Any], CallContext, bool], Awaitable[ToolResult | None]
 ]
+ResultFilter = Callable[
+    [str, dict[str, Any], CallContext, ToolResult], Awaitable[ToolResult]
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,7 @@ class ToolDefinition:
     validate: ArgumentValidator | None = field(default=None, repr=False, compare=False)
     tags: frozenset[str] = frozenset()
     source_module: str | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def read_only(self) -> bool:
@@ -103,6 +107,7 @@ __all__ = [
     "BackendTools",
     "CallContext",
     "PolicyGuard",
+    "ResultFilter",
     "ToolDefinition",
     "ToolFailure",
     "ToolResult",

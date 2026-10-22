@@ -296,6 +296,53 @@ async def test_policy_guard_is_inside_owned_operation_budget() -> None:
     assert result.is_error and result.status == "not_started" and not invoked
 
 
+@pytest.mark.parametrize("failure", [False, True])
+async def test_result_filter_sees_normalized_success_and_errors(failure: bool) -> None:
+    seen = []
+
+    async def invoke() -> dict:
+        if failure:
+            raise ToolFailure("UPSTREAM", "private", data={"private": "hidden"})
+        return {"private": "hidden"}
+
+    async def filter_result(
+        name: str, arguments: dict, context: CallContext, result: ToolResult
+    ) -> ToolResult:
+        seen.append(result)
+        return ToolResult(
+            {"public": True}, is_error=result.is_error, status="not_started"
+        )
+
+    result = await Engine(Backend(), result_filter=filter_result).call_owned(
+        "imported", invoke, ACTOR, writes=True, arguments={"x": 1}
+    )
+    assert result.data == {"public": True}
+    assert result.status == ("outcome_unknown" if failure else "confirmed")
+    assert result.operation_id == seen[0].operation_id
+
+
+async def test_filter_failure_never_leaks_result_or_claims_write_was_not_started() -> (
+    None
+):
+    writes = []
+
+    async def invoke() -> dict:
+        writes.append(1)
+        return {"private": "secret"}
+
+    async def filter_result(
+        name: str, arguments: dict, context: CallContext, result: ToolResult
+    ) -> ToolResult:
+        raise RuntimeError("filter unavailable")
+
+    result = await Engine(Backend(), result_filter=filter_result).call_owned(
+        "imported", invoke, ACTOR, writes=True
+    )
+    assert writes == [1] and result.status == "confirmed" and result.is_error
+    assert "private" not in result.data and "secret" not in str(result.data)
+    assert result.data["error"]["code"] == "RESULT_FILTER_FAILED"
+
+
 def test_shared_catalog_imports_neither_ha_nor_remote_clients() -> None:
     code = "from ha_mcp.runtime.catalog import build_initial_catalog; import sys; assert 'ha_mcp.server' not in sys.modules; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server.', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
     result = subprocess.run(
