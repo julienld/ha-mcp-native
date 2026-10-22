@@ -65,26 +65,77 @@ def capture_baseline(path: Path = PROOF) -> None:
     )
 
 
-def wheel_receipt(expected: dict[str, Any]) -> dict[str, Any]:
+def _safe_archive_info(direct: dict[str, Any]) -> dict[str, Any] | str | None:
+    """Retain hash evidence, never URL queries or arbitrary installer fields."""
+    archive = direct.get("archive_info")
+    if archive is None:
+        return None
+    if not isinstance(archive, dict):
+        return "<invalid>"
+    safe: dict[str, Any] = {}
+    if "hashes" in archive:
+        hashes = archive["hashes"]
+        if not isinstance(hashes, dict):
+            safe["hashes"] = "<invalid>"
+        else:
+            safe["hashes"] = {}
+            if "sha256" in hashes:
+                digest = hashes["sha256"]
+                safe["hashes"]["sha256"] = (
+                    digest
+                    if isinstance(digest, str)
+                    and re.fullmatch(r"[a-fA-F0-9]{64}", digest)
+                    else "<invalid>"
+                )
+    if "hash" in archive:
+        legacy = archive["hash"]
+        safe["hash"] = (
+            legacy
+            if isinstance(legacy, str)
+            and re.fullmatch(r"[a-z0-9_-]{1,20}=[a-fA-F0-9]{16,128}", legacy)
+            else "<invalid>"
+        )
+    return safe
+
+
+def wheel_receipt(
+    expected: dict[str, Any], *, evidence: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    if evidence is None:
+        evidence = {}
     distribution = metadata.distribution("ha-mcp")
     if distribution.metadata["Name"] != "ha-mcp":
         raise ValueError("Installed distribution name differs from the released wheel")
     direct = json.loads(distribution.read_text("direct_url.json") or "null")
     if not isinstance(direct, dict):
         raise ValueError("Installed wheel has no PEP 610 receipt")
+    evidence.update(
+        {
+            "url_matches": direct.get("url") == expected["wheel_url"],
+            "archive_info": _safe_archive_info(direct),
+            "sha256_status": "unverified",
+        }
+    )
     if direct.get("url") != expected["wheel_url"] or any(
         key in direct for key in ("dir_info", "vcs_info", "subdirectory")
     ):
         raise ValueError("Installed wheel did not originate at the public manifest URL")
     archive = direct.get("archive_info", {})
+    if not isinstance(archive, dict) or not isinstance(archive.get("hashes", {}), dict):
+        raise ValueError("Installed wheel has malformed archive hash evidence")
     actual = archive.get("hashes", {}).get("sha256")
     old = archive.get("hash")
     if actual is None and isinstance(old, str) and old.startswith("sha256="):
         actual = old.removeprefix("sha256=")
+    if actual is None:
+        evidence["sha256_status"] = "missing"
+        raise ValueError("Installed wheel receipt has no SHA-256 digest")
     if actual != expected["wheel_sha256"] or (
         old is not None and old != "sha256=" + expected["wheel_sha256"]
     ):
+        evidence["sha256_status"] = "mismatch"
         raise ValueError("Installed wheel archive digest differs from the release")
+    evidence["sha256_status"] = "match"
     # Only the verified public URL is returned, never arbitrary receipt fields.
     return {
         "name": "ha-mcp",
@@ -127,7 +178,8 @@ def observe_dependencies(
     if release["dependency"] not in manifest.get("requirements", []):
         observation["errors"].append("The published wheel requirement was rewritten")
     try:
-        observation["wheel"] = wheel_receipt(expected)
+        observation["receipt"] = {}
+        observation["wheel"] = wheel_receipt(expected, evidence=observation["receipt"])
         if observation["wheel"]["version"] != release["library_version"]:
             observation["errors"].append(
                 "Installed wheel version differs from the release"

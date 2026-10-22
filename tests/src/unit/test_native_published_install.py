@@ -130,6 +130,44 @@ def test_receipt_cannot_mix_conflicting_old_and_new_hash_fields(
     assert not observe(install_receipt, world)["observations"][-1]["verified"]
 
 
+def test_missing_uv_archive_hash_is_retained_as_missing_not_mismatch(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.direct["archive_info"] = {}
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert not observation["verified"]
+    assert observation["receipt"]["archive_info"] == {}
+    assert observation["receipt"]["sha256_status"] == "missing"
+    assert observation["receipt"]["url_matches"] is True
+    assert "no SHA-256" in observation["errors"][0]
+
+
+def test_mismatched_hash_remains_a_refusal_with_observed_digest(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.direct["archive_info"]["hashes"]["sha256"] = "c" * 64
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert not observation["verified"]
+    assert observation["receipt"]["sha256_status"] == "mismatch"
+    assert observation["receipt"]["archive_info"]["hashes"]["sha256"] == "c" * 64
+
+
+def test_failed_receipt_evidence_never_persists_signed_url_or_arbitrary_fields(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.direct["url"] = (
+        "https://release-assets.githubusercontent.com/file?sig=PRIVATE"
+    )
+    world.direct["archive_info"] = {"hashes": {"sha256": "PRIVATE"}, "token": "PRIVATE"}
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert not observation["verified"]
+    assert observation["receipt"]["url_matches"] is False
+    assert "PRIVATE" not in json.dumps(observation)
+
+
 def test_baseline_refuses_preinstalled_distribution(
     tmp_path, monkeypatch, install_receipt
 ):
@@ -158,15 +196,21 @@ def test_pip_check_execution_failure_is_not_an_empty_conflict_set(
 def test_published_lane_uses_same_full_bench_without_preinstall_or_manifest_rewrite():
     dockerfile = (ROOT / "tests/native/Dockerfile").read_text()
     published, candidate = dockerfile.split("FROM ${HA_IMAGE} AS candidate")
-    assert "pip install" not in "\n".join(
+    published_commands = "\n".join(
         line for line in published.splitlines() if not line.startswith("#")
     )
+    assert "pip install" not in published_commands
+    assert "install_package(" not in published_commands
     assert "COPY dist/native/*.whl" not in published
     assert "manifest['requirements'] =" not in published
     assert "capture_baseline()" in published
-    assert "pip install" in candidate and "manifest['requirements'] =" in candidate
+    # Core upgrades dependencies; plain pip reused satisfied packages and hid
+    # conflicts that appeared only during the real manifest installation.
+    assert "from homeassistant.util.package import install_package" in candidate
+    assert "install_package(str(wheel), upgrade=True" in candidate
+    assert "manifest['requirements'] =" in candidate
     assert candidate.index("capture_baseline(Path(") < candidate.index(
-        "RUN pip install"
+        "assert install_package("
     )
 
     workflow = yaml.safe_load(

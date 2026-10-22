@@ -69,7 +69,9 @@ The published dispatch skips the source unit job, which must already be green at
 the selected source revision. It reruns the complete real Core bench against the
 published artifacts; it does not repeat the unchanged unit suite.
 
-The ordinary candidate image also smoke-tests the full baseline collector before
-installing its local wheel, writing `/opt/public-baseline-smoke.json` separately
-from its historical five-package dependency proof. This qualifies that collector
-against the real Core image before any public asset is available.
+The ordinary candidate image also collects every preinstalled distribution before
+installing its local wheel. It calls Core's own installer with its normal upgrade
+behavior and constraints, then refuses any changed preinstalled version or new
+dependency conflict. A plain pip install without upgrade can reuse satisfied
+versions and conceal conflicts that Core's real installation would introduce.
+The separate public lane remains the proof of the unchanged manifest URL.

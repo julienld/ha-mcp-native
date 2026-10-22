@@ -19,32 +19,38 @@ FROM ${HA_IMAGE} AS candidate
 COPY tests/native/fixtures/native_fixture/dependency_receipt.py /opt/native_dependency_receipt.py
 COPY dist/native/*.whl /opt/native-wheels/
 RUN python - <<'PY'
-import importlib.metadata as metadata
 import json
-import subprocess
 import sys
 from pathlib import Path
 sys.path.insert(0, '/opt')
-from native_dependency_receipt import capture_baseline
+from native_dependency_receipt import capture_baseline, dependency_issues, installed_versions
 # Exercise the published lane's baseline collector on real, untouched Core even
-# before release assets exist. Keep the candidate's original five-package proof.
+# before release assets exist.
 capture_baseline(Path('/opt/public-baseline-smoke.json'))
-versions = {name: metadata.version(name) for name in ['rich', 'mcp', 'pydantic', 'httpx', 'cryptography']}
-issues = subprocess.run(['python', '-m', 'pip', 'check'], capture_output=True, text=True).stdout.splitlines()
-Path('/opt/native-dependencies.json').write_text(json.dumps({'before': versions, 'before_issues': issues}))
+Path('/opt/native-dependencies.json').write_text(json.dumps({'before': installed_versions(), 'before_issues': dependency_issues()}))
 PY
-RUN pip install --no-cache-dir -c /usr/src/homeassistant/homeassistant/package_constraints.txt /opt/native-wheels/*.whl
 RUN python - <<'PY'
-import importlib.metadata as metadata
-import json
-import subprocess
 from pathlib import Path
+from homeassistant.util.package import install_package
+wheel, = Path('/opt/native-wheels').glob('*.whl')
+assert install_package(str(wheel), upgrade=True, constraints='/usr/src/homeassistant/homeassistant/package_constraints.txt'), 'Core installer failed'
+PY
+RUN python - <<'PY'
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, '/opt')
+from native_dependency_receipt import dependency_issues, installed_versions
 p = Path('/opt/native-dependencies.json')
 proof = json.loads(p.read_text())
-proof['after'] = {name: metadata.version(name) for name in proof['before']}
-proof['after_issues'] = subprocess.run(['python', '-m', 'pip', 'check'], capture_output=True, text=True).stdout.splitlines()
-assert proof['before'] == proof['after'], proof
-assert not (set(proof['after_issues']) - set(proof['before_issues'])), proof
+after = installed_versions()
+proof['after'] = {name: after.get(name) for name in proof['before']}
+proof['added'] = {name: version for name, version in after.items() if name not in proof['before']}
+proof['after_issues'] = dependency_issues()
+changed = {name: {'before': version, 'after': after.get(name)} for name, version in proof['before'].items() if after.get(name) != version}
+assert not changed, changed
+new_issues = set(proof['after_issues']) - set(proof['before_issues'])
+assert not new_issues, new_issues
 p.write_text(json.dumps(proof))
 PY
 # Use the exact integration archive paired with the installed wheel.
