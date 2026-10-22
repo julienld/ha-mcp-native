@@ -12,8 +12,9 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from ha_mcp.runtime.snapshot_payloads import _FlowHelperReadError
 from ha_mcp.runtime.snapshot_store import SnapshotStore
-from ha_mcp.tool_api import CallContext, UnsupportedOperation
+from ha_mcp.tool_api import CallContext
 
 from .const import SERVER_CONFIG_SUBDIR
 from .native_server_policy import environment_name
@@ -57,9 +58,40 @@ class NativeSnapshots:
             "backup_id"
         ):
             return None
+        try:
+            current = await self._helper_config(payload)
+        except _FlowHelperReadError as error:
+            # A partial/scrubbed value is never a usable restore point. Keep
+            # the existing best-effort backup contract and expose the reason.
+            return {"warnings": [f"No pre-write backup was taken: {error.reason}"]}
+        domain = payload.get("backup_domain", f"helper_{payload['helper_type']}")
+        source = payload.get("source_tool", "ha_config_set_helper")
+        if (domain, source) != (
+            f"helper_{payload['helper_type']}",
+            "ha_config_set_helper",
+        ) and (domain, source, payload["helper_type"]) not in {
+            ("zone", "ha_set_zone", "zone"),
+            ("zone", "ha_remove_zone", "zone"),
+        }:
+            raise ValueError("Unsupported native snapshot domain/source pair")
+        store = self._store()
+
+        def capture() -> None:
+            from homeassistant.helpers.json import json_bytes
+
+            normalized = json.loads(json_bytes(current))
+            store.capture(domain, str(payload["backup_id"]), normalized, source)
+
+        return await self._capture(capture)
+
+    async def _helper_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from .native_operations.snapshot_sources import flow_snapshot, subentry_snapshot
+
         if payload.get("kind") == "flow":
-            raise UnsupportedOperation("backups.helper.flow.capture")
-        current = copy.deepcopy(payload["current_item"])
+            return await flow_snapshot(self.manager.hass, payload)
+        if payload.get("kind") == "subentry":
+            return await subentry_snapshot(self.manager.hass, payload)
+        current: dict[str, Any] = copy.deepcopy(payload["current_item"])
         entity_id = payload.get("entity_id")
         icon = None
         if entity_id:
@@ -70,19 +102,9 @@ class NativeSnapshots:
         # The registry is read before the first await, alongside the exact item
         # selected by the backend, never after a new alias/ID lookup.
         current["registry_icon"] = icon
-        store = self._store()
+        return current
 
-        def capture() -> None:
-            from homeassistant.helpers.json import json_bytes
-
-            normalized = json.loads(json_bytes(current))
-            store.capture(
-                f"helper_{payload['helper_type']}",
-                str(payload["backup_id"]),
-                normalized,
-                "ha_config_set_helper",
-            )
-
+    async def _capture(self, capture: Any) -> dict[str, Any] | None:
         future = self.manager.hass.async_add_executor_job(capture)
         self.pending.add(future)
 

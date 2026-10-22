@@ -12,7 +12,7 @@ from ...runtime.helper_params import (
     _prepare_typed_params as _shared_prepare_typed_params,
 )
 from ...runtime.helper_params import (
-    _simple_config_model as _shared_simple_config_model,
+    _simple_config_model as _simple_config_model,
 )
 from ..component_helper_collections import fetch_helper_schemas
 from .schemas import (
@@ -20,7 +20,6 @@ from .schemas import (
     SIMPLE_HELPER_TYPES,
 )
 
-_simple_config_model = legacy_errors_sync(_shared_simple_config_model)
 _merge_simple_helper_config = legacy_errors_sync(_shared_merge_simple_helper_config)
 _prepare_typed_params = legacy_errors_sync(_shared_prepare_typed_params)
 

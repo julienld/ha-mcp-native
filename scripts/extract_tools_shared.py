@@ -98,7 +98,9 @@ class SharedToolExtractor:
             ):
                 bound = self._bound_method(node, path)
                 if bound is not None:
-                    return bound[1]
+                    method = copy.deepcopy(bound[1])
+                    method.decorator_list = [bound[0]]
+                    return method
         return self._imported_function(path, tree, name, visited)
 
     def _imported_function(

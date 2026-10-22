@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -192,3 +193,22 @@ def test_explicit_current_name_overrides_inherited_alias_setting(
         )
     )
     assert load_policy(tmp_path).tool_states["ha_manage_blueprints"] == "enabled"
+
+
+async def test_cancelled_ui_waiter_does_not_cancel_owned_file_io(
+    tmp_path: Path,
+) -> None:
+    future = asyncio.get_running_loop().create_future()
+    ui = settings(tmp_path)
+    ui.manager.hass.async_add_executor_job = lambda *_args: future
+    waiter = asyncio.create_task(ui._io(lambda: None))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not future.cancelled()
+    stopping = asyncio.create_task(ui.async_stop())
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    future.set_result(None)
+    await stopping

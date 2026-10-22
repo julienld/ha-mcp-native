@@ -10,17 +10,54 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from aiohttp import web
 
 from ha_mcp.runtime import Engine
 from ha_mcp.runtime.catalog import define_tool
-from ha_mcp.runtime.config_reads import AutomationReadTools
+from ha_mcp.runtime.config_reads import (
+    AutomationReadTools,
+    SceneReadTools,
+    ScriptReadTools,
+)
 from ha_mcp.tool_api import CallContext, UnsupportedOperation
 from ha_mcp.tools.tool_hints import read_only_hints
 
-from .test_component_ws_search import FakeEntityReg, FakeHass, FakeRegEntry, FakeState
+from .test_component_ws_search import (
+    FakeEntityReg,
+    FakeHass,
+    FakeRegEntry,
+    FakeState,
+    make_view,
+    wsapi,
+)
 from .test_native_engine_backend import authorize
 from .test_native_engine_backend import native as native
+
+
+@pytest.fixture(autouse=True)
+def _real_aiohttp_router() -> Any:
+    """Exercise real route closures even when embedded tests installed stubs.
+
+    Collection-time embedded stubs replace both aiohttp and yarl. Restore the
+    exact table afterwards so this owner-contract test cannot pollute peers.
+    """
+    roots = ("aiohttp", "yarl")
+
+    def belongs(name: str) -> bool:
+        return any(name == root or name.startswith(root + ".") for root in roots)
+
+    saved = {
+        name: module for name, module in tuple(sys.modules.items()) if belongs(name)
+    }
+    for name in saved:
+        sys.modules.pop(name, None)
+    try:
+        importlib.import_module("aiohttp.web")
+        yield
+    finally:
+        for name in tuple(sys.modules):
+            if belongs(name):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved)
 
 
 class _CoreAutomationView:
@@ -48,14 +85,16 @@ def _http_handler(view: Any) -> Any:
     return handle
 
 
-def _register_owner(monkeypatch: pytest.MonkeyPatch, owner: Any) -> web.Application:
+def _register_owner(
+    monkeypatch: pytest.MonkeyPatch, owner: Any, domain: str = "automation"
+) -> Any:
     monkeypatch.setitem(
         sys.modules,
-        "homeassistant.components.config.automation",
-        SimpleNamespace(EditAutomationConfigView=_CoreAutomationView),
+        f"homeassistant.components.config.{domain}",
+        SimpleNamespace(**{f"Edit{domain.title()}ConfigView": type(owner)}),
     )
-    app = web.Application()
-    app.router.add_route("GET", _CoreAutomationView.url, _http_handler(owner))
+    app = importlib.import_module("aiohttp.web").Application()
+    app.router.add_route("GET", owner.url, _http_handler(owner))
     return app
 
 
@@ -118,3 +157,104 @@ async def test_native_config_refuses_a_route_owned_by_another_view(
     with pytest.raises(UnsupportedOperation):
         module.config_view(SimpleNamespace(http=SimpleNamespace(app=app)), "automation")
     assert owner.reads == 0
+
+
+class _CoreScriptView(_CoreAutomationView):
+    name = "api:config:script:config"
+    url = "/api/config/script/config/{config_key}"
+
+    def _get_value(self, hass: Any, current: list[dict[str, Any]], key: str) -> Any:
+        return next((row["config"] for row in current if row["id"] == key), None)
+
+
+async def test_native_script_returns_the_canonical_key_of_a_renamed_entity(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _CoreScriptView()
+    owner.current = [
+        {
+            "id": "original_key",
+            "config": {"alias": "Renamed", "sequence": [{"delay": 2}]},
+        }
+    ]
+    entry = FakeRegEntry(
+        "script.renamed", unique_id="original_key", categories={"script": "one"}
+    )
+    registry = FakeEntityReg({entry.entity_id: entry})
+    helpers = sys.modules["homeassistant.helpers"]
+    monkeypatch.setattr(
+        helpers, "entity_registry", SimpleNamespace(async_get=lambda hass: registry)
+    )
+    monkeypatch.setattr(helpers.config_validation, "entity_id", lambda value: value)
+    hass = FakeHass()
+    hass.http = SimpleNamespace(app=_register_owner(monkeypatch, owner, "script"))
+    authorize(hass)
+    backend = native.NativeBackend(hass)
+    definition = define_tool(
+        backend,
+        ScriptReadTools,
+        "ha_config_get_script",
+        annotations=read_only_hints("Get Script Config", open_world=False),
+    )
+    result = await Engine(backend, [definition]).call(
+        "ha_config_get_script", {"script_id": "script.renamed"}, CallContext("actor")
+    )
+    assert not result.is_error
+    assert result.data["script_id"] == "original_key"
+    assert result.data["config"]["sequence"] == [{"delay": 2}]
+    assert result.data["config"]["category"] == "one"
+
+
+class _CoreSceneView(_CoreAutomationView):
+    name = "api:config:scene:config"
+    url = "/api/config/scene/config/{config_key}"
+
+
+async def test_native_scene_discovery_finds_body_values_without_exposing_vendor_config(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _CoreSceneView()
+    owner.current = [
+        {
+            "id": "saved",
+            "name": "Movie",
+            "entities": {"light.desk": {"effect": "Northern Lights"}},
+        }
+    ]
+    entry = FakeRegEntry("scene.renamed", unique_id="saved", platform="homeassistant")
+    vendor = FakeRegEntry("scene.hue", unique_id="vendor", platform="hue")
+    view = make_view(entity={entry.entity_id: entry, vendor.entity_id: vendor})
+    monkeypatch.setattr(wsapi, "_resolve_registries", lambda hass: view)
+    helpers = sys.modules["homeassistant.helpers"]
+    monkeypatch.setattr(
+        helpers, "entity_registry", SimpleNamespace(async_get=lambda hass: view.entity)
+    )
+    monkeypatch.setattr(helpers.config_validation, "entity_id", lambda value: value)
+    hass = FakeHass(
+        states=[
+            FakeState("scene.renamed", friendly_name="Movie"),
+            FakeState("scene.hue", friendly_name="Hue Relax"),
+        ]
+    )
+    hass.http = SimpleNamespace(app=_register_owner(monkeypatch, owner, "scene"))
+    authorize(hass)
+    backend = native.NativeBackend(hass)
+    definition = define_tool(
+        backend,
+        SceneReadTools,
+        "ha_config_get_scene",
+        annotations=read_only_hints("Get or Find Scenes", open_world=False),
+    )
+    engine = Engine(backend, [definition])
+    result = await engine.call(
+        "ha_config_get_scene",
+        {"query": "northern lights", "search_in_config": True},
+        CallContext("actor"),
+    )
+    assert not result.is_error, result.data
+    assert [row["scene_id"] for row in result.data["scenes"]] == ["saved"]
+    assert result.data["scenes"][0]["match_in_config"] is True
+    assert "config" not in result.data["scenes"][0]
+    assert owner.reads == 1

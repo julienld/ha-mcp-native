@@ -187,6 +187,10 @@ async def _scene_inventory(hass: HomeAssistant, arguments: dict[str, Any]) -> An
     while True:
         extra = await _search_prep(hass, params)
         result = _do_search(hass, params, **extra)
+        if result.get("partial") or result.get("diagnostics"):
+            raise ToolFailure(
+                "READ_FAILED", "Core returned an incomplete scene inventory"
+            )
         page = result["entities"]
         before = len(records)
         records.update((row["entity_id"], row) for row in page)

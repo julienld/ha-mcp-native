@@ -573,3 +573,37 @@ def get_error_message(response: dict[str, Any]) -> str | None:
         if isinstance(error, str):
             return error
     return None
+
+
+class HomeAssistantConnectionError(HomeAssistantError):
+    """Connection error to Home Assistant."""
+
+
+class HomeAssistantAuthError(HomeAssistantError):
+    """Authentication error with Home Assistant.
+
+    Sibling of ``HomeAssistantAPIError`` (not a subclass). The codebase has
+    18 ``except HomeAssistantAPIError`` sites (ws_waiters polling,
+    tools_integrations registry lookups, etc.) that deliberately rely on
+    auth errors NOT matching so they can propagate to a paired
+    ``except (HomeAssistantConnectionError, HomeAssistantAuthError): raise``
+    block. Subclassing AuthError under APIError silently swallowed those
+    auth errors as part of the local "this entity is not registered yet"
+    polling logic. Sites that specifically need to catch both must list
+    them explicitly (see ``_get_supervisor_log`` and
+    ``_get_system_service_log`` in ``log_sources_supervisor.py``).
+    """
+
+
+class HomeAssistantAPIError(HomeAssistantError):
+    """API error from Home Assistant."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        response_data: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_data = response_data

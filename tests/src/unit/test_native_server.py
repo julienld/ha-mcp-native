@@ -192,3 +192,13 @@ def test_strict_bps_uses_shared_ack_protocol_and_strips_key() -> None:
     arguments = {"BestPracticeKey": key, "name": "example"}
     assert runtime.check_best_practices("ha_config_set_helper", arguments) is None
     assert arguments == {"name": "example"}
+
+
+async def test_already_cancelled_lifespan_does_not_prevent_owned_cleanup() -> None:
+    runtime = manager()
+    runtime._supervisor = asyncio.create_task(asyncio.Event().wait())
+    runtime._supervisor.cancel()
+    await asyncio.gather(runtime._supervisor, return_exceptions=True)
+    await runtime.async_stop()
+    assert runtime._stopped
+    runtime.engine.stop.assert_awaited_once()

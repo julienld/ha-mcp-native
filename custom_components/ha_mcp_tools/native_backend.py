@@ -11,6 +11,7 @@ import voluptuous as vol
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.json import json_bytes
 
+from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.runtime.service_policy import check_service_policy
 from ha_mcp.runtime.skill_files import read_skill_files
 from ha_mcp.runtime.skills import SkillGuideReader
@@ -101,6 +102,8 @@ class NativeBackend:
             return json.loads(json_bytes(result))
         if operation in HELPER_DIRECT_OPERATIONS:
             function, writes = HELPER_DIRECT_OPERATIONS[operation]
+            if writes:
+                check_mutation_admission(context)
             if writes and context.read_only:
                 raise ToolFailure(
                     "READ_ONLY",
@@ -132,6 +135,7 @@ class NativeBackend:
             "config.flow.configure",
             "config.flow.abort",
         }:
+            check_mutation_admission(context)
             from .native_operations.flows import NativeFlows
 
             if self._flows is None:
@@ -151,6 +155,8 @@ class NativeBackend:
         if operation not in COMMAND_OPERATIONS:
             raise UnsupportedOperation(operation)
         command, writes = COMMAND_OPERATIONS[operation]
+        if writes:
+            check_mutation_admission(context)
         if writes and context.read_only:
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
         schema, do, prep = self._commands[command]
@@ -200,6 +206,7 @@ class NativeBackend:
     async def _capture_helper_backup(
         self, arguments: dict[str, Any], context: CallContext
     ) -> dict[str, Any]:
+        check_mutation_admission(context)
         if context.read_only:
             raise ToolFailure(
                 "READ_ONLY",

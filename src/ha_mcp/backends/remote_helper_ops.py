@@ -274,15 +274,26 @@ async def _flow_records(
 async def _write_storage(client: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     from ha_mcp.tools.component_helper_collections import write_helper_item
 
-    helper_type = arguments["helper_type"]
     payload = dict(arguments)
-    expected = payload.pop("expected_item", None)
+    payload.pop("expected_item", None)
     wait = payload.pop("wait_for_entity", False)
+    await _check_expected(client, arguments)
+    result = await write_helper_item(client, **payload)
+    return (
+        result
+        if result is not None
+        else await _legacy_write(client, payload, wait=wait)
+    )
+
+
+async def _check_expected(client: Any, arguments: dict[str, Any]) -> None:
+    """Same optimistic readback check for update and delete operations."""
+    expected = arguments.get("expected_item")
     if expected is not None:
         current = await _execute(
             client,
             "helpers.storage.read",
-            {"helper_type": helper_type, "item_id": arguments["item_id"]},
+            {"helper_type": arguments["helper_type"], "item_id": arguments["item_id"]},
         )
         if current.get("item") != expected:
             raise ToolFailure(
@@ -290,9 +301,3 @@ async def _write_storage(client: Any, arguments: dict[str, Any]) -> dict[str, An
                 "The helper changed after its snapshot was read; no update was sent.",
                 status="not_started",
             )
-    result = await write_helper_item(client, **payload)
-    return (
-        result
-        if result is not None
-        else await _legacy_write(client, payload, wait=wait)
-    )

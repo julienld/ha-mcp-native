@@ -22,7 +22,7 @@ from ha_mcp._vendor.mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from ..errors import ErrorCode, create_error_response
 from ..renamed_tools import current_tool_name
 from ..tool_dispatch import CALL_PROXY_META_TOOLS
-from ..tools.helpers import raise_tool_error
+from ..utils.tool_errors import raise_tool_error
 from .approval_queue import ApprovalQueue, PendingApproval, compute_args_hash
 from .model import Policy
 

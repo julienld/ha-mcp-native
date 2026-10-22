@@ -233,6 +233,7 @@ class HelperStorageTools(BackendTools):
             backup = await self.backend.execute(
                 "helpers.backup.capture",
                 {
+                    **self._backup_identity(helper_type),
                     "helper_type": helper_type,
                     "action": "update",
                     "backup_id": helper_id,
@@ -265,6 +266,10 @@ class HelperStorageTools(BackendTools):
             response.setdefault("warnings", []).extend(backup["warnings"])
         await self._attach_helper_skill(response, MandatoryBPS)
         return response
+
+    def _backup_identity(self, helper_type: str) -> dict[str, Any]:
+        """Domain wrappers may supply a separately validated backup identity."""
+        return {}
 
     async def _stored_item(self, helper_type: str, helper_id: str) -> dict[str, Any]:
         result = await self.backend.execute(

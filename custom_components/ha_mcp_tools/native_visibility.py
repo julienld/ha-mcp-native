@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from ha_mcp.errors import create_entity_not_found_error
 from ha_mcp.tool_api import CallContext, ToolFailure, ToolResult
@@ -122,8 +122,11 @@ class NativeVisibility:
             raise VisibilityDataUnavailable(
                 "Core visibility inputs are unavailable"
             ) from error
-        return await self.manager.hass.async_add_executor_job(
-            _HiddenMatcher.from_hidden, hidden
+        return cast(
+            _HiddenMatcher,
+            await self.manager.hass.async_add_executor_job(
+                _HiddenMatcher.from_hidden, hidden
+            ),
         )
 
     async def before(

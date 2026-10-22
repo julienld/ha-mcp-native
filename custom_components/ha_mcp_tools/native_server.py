@@ -364,6 +364,17 @@ class NativeServerManager:
 
     async def _cleanup(self) -> None:
         self.accepting = False
+        await self._drain_owned_resources()
+        tasks = tuple(self._http_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._stop_requested.set()
+        await self._finish_lifespan()
+        self._stopped = True
+
+    async def _drain_owned_resources(self) -> None:
         if self.engine is not None:
             await self.engine.stop()
         if self.approval_gate is not None:
@@ -375,12 +386,10 @@ class NativeServerManager:
             await stop_backend()
         if self.snapshots is not None:
             await self.snapshots.async_stop()
-        tasks = tuple(self._http_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._stop_requested.set()
+        if self.settings_ui is not None:
+            await self.settings_ui.async_stop()
+
+    async def _finish_lifespan(self) -> None:
         if self._supervisor is not None:
             try:
                 async with asyncio.timeout(10):
@@ -388,9 +397,11 @@ class NativeServerManager:
             except TimeoutError:
                 self._supervisor.cancel()
                 await asyncio.gather(self._supervisor, return_exceptions=True)
+            except asyncio.CancelledError:
+                if not self._supervisor.cancelled():
+                    raise
             except Exception:
                 _LOGGER.exception("Native MCP lifespan ended with an error")
-        self._stopped = True
 
     async def _owner_id(self) -> str:
         """Migrate an existing credential's owner, without issuing a new token."""

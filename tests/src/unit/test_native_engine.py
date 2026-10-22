@@ -349,3 +349,26 @@ def test_shared_catalog_imports_neither_ha_nor_remote_clients() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stderr
+
+
+async def test_retired_names_are_adapted_before_canonical_policy_and_dispatch() -> None:
+    calls = []
+
+    async def blueprint(arguments: dict, context: CallContext) -> dict:
+        calls.append(arguments)
+        return arguments
+
+    tool = ToolDefinition(
+        "ha_manage_blueprints", "Blueprints", {"type": "object"}, blueprint
+    )
+    engine = Engine(Backend(), [tool])
+    listed = await engine.call("ha_get_blueprint", {}, ACTOR)
+    fetched = await engine.call("ha_get_blueprint", {"path": "test.yaml"}, ACTOR)
+    assert listed.data == {"action": "list"}
+    assert fetched.data == {"action": "get", "path": "test.yaml"}
+    engine.enabled_tools = set()
+    with pytest.raises(ToolFailure, match="not enabled"):
+        await engine.call(
+            "ha_import_blueprint", {"url": "https://example.test/a"}, ACTOR
+        )
+    assert len(calls) == 2

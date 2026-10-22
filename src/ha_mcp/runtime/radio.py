@@ -16,6 +16,8 @@ async def _optional_radio(
     try:
         return True, await backend.execute(operation, arguments, context)
     except (ToolFailure, TimeoutError, OSError) as error:
+        if isinstance(error, PermissionError):
+            raise
         if isinstance(error, ToolFailure) and error.code not in {
             "RADIO_UNAVAILABLE",
             "UNSUPPORTED_OPERATION",

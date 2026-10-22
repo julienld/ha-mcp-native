@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
+from ha_mcp.renamed_tools import adapt_retired_arguments, current_tool_name
 from ha_mcp.tool_api import (
     Backend,
     CallContext,
@@ -18,6 +19,8 @@ from ha_mcp.tool_api import (
     ToolFailure,
     ToolResult,
 )
+
+from .mutation_guard import MutationAdmission, current_admission
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,12 +81,14 @@ class Engine:
         self, name: str, arguments: dict[str, Any], context: CallContext
     ) -> ToolResult:
         await self.backend.authorize(context)
+        if not isinstance(arguments, dict):
+            raise ToolFailure("INVALID_ARGUMENTS", "Tool arguments must be an object.")
+        arguments = adapt_retired_arguments(name, arguments) or {}
+        name = current_tool_name(name)
         definition = self.tools.get(name)
         if definition is None:
             raise ToolFailure("UNKNOWN_TOOL", f"Unknown tool {name!r}.")
         self._check_policy(name, context, not definition.read_only)
-        if not isinstance(arguments, dict):
-            raise ToolFailure("INVALID_ARGUMENTS", "Tool arguments must be an object.")
         validated = (
             definition.validate(arguments) if definition.validate else dict(arguments)
         )
@@ -228,7 +233,15 @@ class Engine:
             await self.backend.authorize(context)
             self._check_policy(name, context, writes)
         record["status"] = "executing"
-        return await invoke()
+        token = current_admission.set(
+            MutationAdmission(
+                context, writes, lambda: self._check_policy(name, context, writes)
+            )
+        )
+        try:
+            return await invoke()
+        finally:
+            current_admission.reset(token)
 
     @staticmethod
     def _failure_status(record: dict[str, Any], writes: bool) -> str:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +15,7 @@ from aiohttp import web
 
 from .const import COMPONENT_VERSION, SERVER_CONFIG_SUBDIR
 from .native_server_policy import _read_object, env_tool_states, load_policy
+from .native_settings_backups import NativeBackupSettings
 
 _LOGGER = logging.getLogger(__name__)
 _SUPPORTED_FLAGS = (
@@ -36,9 +39,27 @@ class NativeSettings:
         self.manager = manager
         self.directory = Path(manager.hass.config.path(SERVER_CONFIG_SUBDIR))
         self.worker_id = uuid4().hex
+        self._pending_io: set[asyncio.Future[Any]] = set()
+        self.backups = NativeBackupSettings(self)
 
     async def _io(self, function: Any, *args: Any) -> Any:
-        return await self.manager.hass.async_add_executor_job(function, *args)
+        future = asyncio.ensure_future(
+            self.manager.hass.async_add_executor_job(function, *args)
+        )
+        self._pending_io.add(future)
+        future.add_done_callback(self._io_done)
+        return await asyncio.shield(future)
+
+    def _io_done(self, future: asyncio.Future[Any]) -> None:
+        self._pending_io.discard(future)
+        if not future.cancelled():
+            future.exception()
+
+    async def async_stop(self) -> None:
+        if self._pending_io:
+            _, pending = await asyncio.wait(tuple(self._pending_io), timeout=10)
+            if pending:
+                raise RuntimeError("Owned settings I/O did not finish before unload")
 
     async def handle(self, request: web.Request, path: str) -> web.Response:
         if not self.manager.is_running:
@@ -61,7 +82,13 @@ class NativeSettings:
             "api/policy/decision-pin": self._decision_pin,
             "api/visibility/config": self._visibility_config,
         }
-        handler = routes.get(path.strip("/"))
+        route = path.strip("/")
+        handler = routes.get(route)
+        if route == "api/settings/backups" or route.startswith("api/settings/backups/"):
+            handler = partial(
+                self.backups.handle,
+                suffix=route.removeprefix("api/settings/backups").lstrip("/"),
+            )
         if handler is None:
             return web.json_response(
                 {
@@ -296,7 +323,7 @@ class NativeSettings:
         return web.json_response({"success": True, "is_addon": False, "fields": fields})
 
     def _save_backup_config(self, body: Any) -> dict[str, Any]:
-        from ha_mcp.settings_ui._handlers_backups import _validate_backup_payload
+        from ha_mcp.config_backup_validation import _validate_backup_payload
 
         clean, error = _validate_backup_payload(body)
         if error is not None:

@@ -334,3 +334,38 @@ async def test_same_public_flow_uses_existing_remote_flow_methods(
     client.submit_config_flow_step.assert_awaited_once_with(
         "flow", {"name": "Daily Meter", "source": "sensor.energy", "cycle": "daily"}
     )
+
+
+@pytest.mark.parametrize("change", ["read_only", "disabled", "revoked"])
+async def test_helper_rechecks_policy_and_actor_after_snapshot_await(
+    native: object, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    collection = FakeCollection(
+        {"example": {"id": "example", "name": "Original", "initial": False}}
+    )
+    registry = FakeRegistry()
+    registry.add("input_boolean.example", "input_boolean", "example")
+    monkeypatch.setattr(wsapi.er, "async_get", lambda hass: registry)
+    hass = _hass(collection, "input_boolean")
+    user = authorize(hass)
+
+    async def backup(payload: dict, context: CallContext) -> None:
+        if change == "read_only":
+            engine.read_only = True
+        elif change == "disabled":
+            engine.enabled_tools = set()
+        else:
+            user.is_active = False
+
+    engine = helper_engine(native.NativeBackend(hass, helper_backup=backup))
+    result = await engine.call(
+        "ha_config_set_helper",
+        {
+            "helper_type": "input_boolean",
+            "helper_id": "example",
+            "name": "Blocked",
+            "MandatoryBPS": False,
+        },
+        CallContext("actor"),
+    )
+    assert result.is_error and collection.data["example"]["name"] == "Original"

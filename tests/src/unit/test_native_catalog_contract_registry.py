@@ -130,17 +130,22 @@ async def test_native_bulk_entity_read_keeps_duplicate_order_and_extended_metada
     validator.assert_called_once_with(["light.a", "light.missing", "light.a"])
 
 
-async def test_optional_radio_cannot_soften_an_authorization_refusal() -> None:
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        ToolFailure("AUTH_FORBIDDEN", "Credential revoked"),
+        PermissionError("Credential revoked"),
+    ],
+)
+async def test_optional_radio_cannot_soften_an_authorization_refusal(
+    refusal: Exception,
+) -> None:
     """A lost credential must fail the tool instead of returning earlier device data."""
     from ha_mcp.runtime.radio import enrich_zha_metrics
 
-    backend = SimpleNamespace(
-        execute=AsyncMock(
-            side_effect=ToolFailure("AUTH_FORBIDDEN", "Credential revoked")
-        )
-    )
+    backend = SimpleNamespace(execute=AsyncMock(side_effect=refusal))
     warnings: list[str] = []
-    with pytest.raises(ToolFailure, match="Credential revoked"):
+    with pytest.raises(type(refusal), match="Credential revoked"):
         await enrich_zha_metrics(
             backend, CallContext("actor"), {"ieee_address": "00:11"}, warnings
         )

@@ -27,6 +27,9 @@ from ...runtime.helper_schema import (
     StorageHelperType as StorageHelperType,
 )
 from ...runtime.helper_schema import (
+    __all__ as _SHARED_EXPORTS,
+)
+from ...runtime.helper_schema import (
     _core_helper_fields as _core_helper_fields,
 )
 from ...runtime.helper_schema import (
@@ -45,6 +48,9 @@ from ...runtime.helper_schema import (
     get_simple_helper_schema as get_simple_helper_schema,
 )
 from ..config_write_helpers import attach_skill_content
+
+__all__ = list(_SHARED_EXPORTS)
+__all__.append("_attach_helper_skill")
 
 
 def _attach_helper_skill(response: dict[str, Any], MandatoryBPS: bool) -> None:

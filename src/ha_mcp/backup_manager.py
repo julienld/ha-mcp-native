@@ -158,6 +158,21 @@ from .runtime.snapshot_files import (
 from .runtime.snapshot_files import (
     _snapshot_order as _snapshot_order,
 )
+from .runtime.snapshot_payloads import (
+    InvalidBackupSnapshotError as InvalidBackupSnapshotError,
+)
+from .runtime.snapshot_payloads import (
+    _contains_redacted_leaf as _contains_redacted_leaf,
+)
+from .runtime.snapshot_payloads import _flow_options as _flow_options
+from .runtime.snapshot_payloads import _FlowHelperBackupSkip as _FlowHelperBackupSkip
+from .runtime.snapshot_payloads import _FlowHelperReadError as _FlowHelperReadError
+from .runtime.snapshot_payloads import (
+    _snapshot_validation_message as _snapshot_validation_message,
+)
+from .runtime.snapshot_payloads import _subentry_data as _subentry_data
+from .runtime.snapshot_payloads import _subentry_row as _subentry_row
+from .runtime.snapshot_payloads import _subentry_target as _subentry_target
 from .utils.data_paths import get_data_dir
 from .utils.registry_update_lock import registry_update_lock
 
@@ -243,19 +258,6 @@ class BackupRestoreError(HomeAssistantError):
         }
 
 
-class InvalidBackupSnapshotError(ValueError):
-    """Persisted snapshot data is invalid, independently of live HA access."""
-
-
-def _snapshot_validation_message(error: ValueError) -> str:
-    """Keep local field-only validation messages, never raw YAML parser text."""
-    return (
-        str(error)
-        if isinstance(error, InvalidBackupSnapshotError)
-        else "Snapshot is invalid; inspect its YAML and schema version"
-    )
-
-
 def _validate_snapshot_envelope(data: dict[str, Any]) -> None:
     """Validate stored identities before selecting or dispatching a handler."""
     for key in ("domain", "entity_id", "config"):
@@ -275,19 +277,6 @@ def _handler_config(data: dict[str, Any]) -> Any:
     if data["domain"] == "dashboard":
         return dashboard_snapshot(data)[0]
     return data["config"]
-
-
-class _FlowHelperReadError(HomeAssistantError):
-    """A local validation failure with a safe diagnostic code."""
-
-    def __init__(self, message: str, reason: str) -> None:
-        super().__init__(message)
-        self.reason = reason
-
-
-class _FlowHelperBackupSkip(_FlowHelperReadError):
-    """Nothing to back up: no stored or disclosed options, or no helper flow Core
-    lists. Best-effort capture logs it at INFO."""
 
 
 def _flow_failure_reason(step: str, error: BaseException) -> str:
@@ -2613,38 +2602,6 @@ def _make_blueprint_handler(domain: str) -> DomainHandler:
     return DomainHandler(domain=f"blueprint_{domain}", fetch=fetch, restore=restore)
 
 
-def _flow_options(config: Any, helper_type: str) -> dict[str, Any]:
-    """Require persisted flow-helper options that can safely be restored."""
-    from .redaction import sentinel_option_keys
-
-    label = _flow_label(helper_type)
-    if not isinstance(config, dict):
-        raise _FlowHelperReadError(
-            f"{label} helper options must be an object", "invalid_options"
-        )
-    if not config:
-        raise _FlowHelperBackupSkip(  # e.g. otp: all of it is in entry.data
-            f"{label} helper has no stored options to back up or restore",
-            "invalid_options",
-        )
-    # The component's resolved-!secret scrub predates the server sentinels.
-    # Neither kind of placeholder is a usable recovery value.
-    if sentinel_option_keys(config) or _contains_redacted_leaf(config):
-        raise _FlowHelperReadError(
-            f"{label} helper options contain redacted values; capture is incomplete",
-            "redacted_options",
-        )
-    return config
-
-
-def _contains_redacted_leaf(value: Any) -> bool:
-    if isinstance(value, dict):
-        return any(_contains_redacted_leaf(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_contains_redacted_leaf(item) for item in value)
-    return isinstance(value, str) and value == "**redacted**"
-
-
 async def _fetch_flow_helper(client: Any, entity_id: str, helper_type: str) -> Any:
     """Read a flow helper's options through the component, without starting a flow.
 
@@ -3114,32 +3071,6 @@ async def _recreate_flow_helper(
     return response
 
 
-def _subentry_target(entity_id: str) -> tuple[str, str]:
-    """``<entry_id>/<subentry_id>``, the id a config_subentry backup is keyed by."""
-    entry_id, _, subentry_id = entity_id.partition("/")
-    if not entry_id or not subentry_id:
-        raise _FlowHelperReadError(
-            "Config subentry backups are keyed by <entry_id>/<subentry_id>",
-            "invalid_target",
-        )
-    return entry_id, subentry_id
-
-
-def _subentry_data(data: Any) -> dict[str, Any]:
-    from .redaction import sentinel_option_keys
-
-    if not isinstance(data, dict):
-        raise _FlowHelperReadError(
-            "Config subentry data must be an object", "invalid_data"
-        )
-    if sentinel_option_keys(data) or _contains_redacted_leaf(data):
-        raise _FlowHelperReadError(
-            "Config subentry data contains redacted values; capture is incomplete",
-            "redacted_data",
-        )
-    return data
-
-
 async def _list_config_subentries(client: Any, entry_id: str) -> list[dict[str, Any]]:
     """The entry's subentries with their data, through the component.
 
@@ -3192,21 +3123,6 @@ async def _list_config_subentries(client: Any, entry_id: str) -> list[dict[str, 
         )
         if isinstance(sub, dict)
     ]
-
-
-def _subentry_row(
-    subentries: list[dict[str, Any]], entry_id: str, subentry_id: str
-) -> dict[str, Any] | None:
-    match = next((s for s in subentries if s.get("subentry_id") == subentry_id), None)
-    if match is None:
-        return None
-    return {
-        "entry_id": entry_id,
-        "subentry_id": subentry_id,
-        "subentry_type": match.get("subentry_type"),
-        "title": match.get("title"),
-        "data": _subentry_data(match.get("data")),
-    }
 
 
 async def _fetch_config_subentry(client: Any, entity_id: str) -> Any:

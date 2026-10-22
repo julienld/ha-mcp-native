@@ -13,6 +13,7 @@ from ha_mcp.tool_api.parameters import hidden_param_names
 from ha_mcp.tools.tool_hints import read_only_hints, write_hints
 
 from .actions import ServiceCallTools
+from .config_reads import AutomationReadTools, SceneReadTools, ScriptReadTools
 from .devices import DeviceDiscoveryTools
 from .entities import EntityDiscoveryTools
 from .exposure import ExposureTools
@@ -23,6 +24,7 @@ from .registries import AreaDiscoveryTools
 from .services import ServiceDiscoveryTools
 from .skills import SkillGuideTools
 from .states import StateTools
+from .zones import ZoneReadTools
 
 
 def define_tool(
@@ -217,5 +219,37 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
                     }
                 }
             },
+        ),
+        define_tool(
+            backend,
+            AutomationReadTools,
+            "ha_config_get_automation",
+            source_module="tools_config_automations",
+            annotations=read_only_hints("Get Automation Config", open_world=False),
+            tags=frozenset({"Automations"}),
+        ),
+        define_tool(
+            backend,
+            ScriptReadTools,
+            "ha_config_get_script",
+            source_module="tools_config_scripts",
+            annotations=read_only_hints("Get Script Config", open_world=False),
+            tags=frozenset({"Scripts"}),
+        ),
+        define_tool(
+            backend,
+            ZoneReadTools,
+            "ha_get_zone",
+            source_module="tools_zones",
+            annotations=read_only_hints("Get Zone", open_world=False),
+            tags=frozenset({"Zones"}),
+        ),
+        define_tool(
+            backend,
+            SceneReadTools,
+            "ha_config_get_scene",
+            source_module="tools_config_scenes",
+            annotations=read_only_hints("Get or Find Scenes", open_world=False),
+            tags=frozenset({"Scenes"}),
         ),
     ]
