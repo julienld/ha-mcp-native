@@ -32,9 +32,12 @@ class ToolResult:
 class ToolFailure(Exception):
     """A classified failure whose payload can cross either tool facade."""
 
-    def __init__(self, code: str, message: str, *, data: Any = None) -> None:
+    def __init__(
+        self, code: str, message: str, *, data: Any = None, status: str | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.status = status
         self.data = (
             data
             if data is not None
@@ -49,11 +52,15 @@ class UnsupportedOperation(ToolFailure):
         super().__init__(
             "UNSUPPORTED_OPERATION",
             f"This backend does not implement operation {operation!r}.",
+            status="not_started",
         )
 
 
 ToolHandler = Callable[[dict[str, Any], CallContext], Awaitable[Any]]
 ArgumentValidator = Callable[[dict[str, Any]], dict[str, Any]]
+PolicyGuard = Callable[
+    [str, dict[str, Any], CallContext, bool], Awaitable[ToolResult | None]
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +89,19 @@ class Backend(Protocol):
         """Invoke a supported semantic operation, without transport fallback."""
 
 
+class BackendTools:
+    """Bind a domain's shared tool methods to one backend and validated actor."""
+
+    def __init__(self, backend: Backend, context: CallContext) -> None:
+        self.backend = backend
+        self.context = context
+
+
 __all__ = [
     "Backend",
+    "BackendTools",
     "CallContext",
+    "PolicyGuard",
     "ToolDefinition",
     "ToolFailure",
     "ToolResult",

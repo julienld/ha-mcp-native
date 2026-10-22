@@ -16,9 +16,11 @@ from pydantic import Field
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..backup_manager import get_backup_manager
 from ..config import get_global_settings
 from ..errors import TOOL_ERROR_LOG_LEVEL, ErrorCode, create_error_response
+from ..runtime.labels import LabelDiscoveryTools
 from ..utils.registry_update_lock import registry_update_lock
 from .auto_backup import with_auto_backup
 from .coercion import JSON_STRING_COERCION, parse_string_list_param
@@ -57,7 +59,7 @@ def _string_labels(entry: dict[str, Any] | None) -> list[str]:
     return [lbl for lbl in (entry.get("labels") or []) if isinstance(lbl, str)]
 
 
-class LabelTools:
+class LabelTools(LabelDiscoveryTools):
     """Label management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
@@ -583,100 +585,20 @@ class LabelTools:
             payload["assigned_areas"] = assigned_areas
         return payload
 
-    @tool(
+    def _raise_read_error(self, error: Exception, context: dict[str, Any]) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        suggestions = [
+            "Check Home Assistant connection",
+            "Verify WebSocket connection is active",
+        ]
+        exception_to_structured_error(error, context=context, suggestions=suggestions)
+
+    ha_config_get_label = tool(
         name="ha_config_get_label",
         tags={"Labels & Categories"},
         annotations=read_only_hints("Get Label", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_label(
-        self,
-        label_id: Annotated[
-            str | None,
-            Field(
-                description="ID of the label to retrieve.",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get label info - list all labels or get a specific one by ID.
-
-        Without a label_id: Lists all Home Assistant labels with their configurations.
-        With a label_id: Returns configuration for that specific label.
-
-        EXAMPLES:
-        - List all labels: ha_config_get_label()
-        - Get specific label: ha_config_get_label("my_label_id")
-
-        Use ha_config_set_label() to create or update labels.
-        Use ha_set_entity(labels=["label1", "label2"]) to assign labels to entities,
-        ha_set_device(labels=[...]) for devices, or
-        ha_set_area_or_floor(kind="area", labels=[...]) for areas.
-        """
-        try:
-            # ``None`` stays the documented "list-all" sentinel; explicit
-            # empty/whitespace is rejected by ``validate_identifier_not_empty``.
-            if label_id is not None:
-                validate_identifier_not_empty(
-                    label_id,
-                    "label_id",
-                    suggestions=[
-                        "Omit label_id entirely to list all labels",
-                        "Pass a valid non-empty label_id",
-                    ],
-                    context={"action": "get"},
-                )
-            labels = await self._list_labels(context={"label_id": label_id})
-
-            if label_id is None:
-                return {
-                    "success": True,
-                    "count": len(labels),
-                    "labels": labels,
-                    "message": f"Found {len(labels)} label(s)",
-                }
-
-            label = next(
-                (lbl for lbl in labels if lbl.get("label_id") == label_id), None
-            )
-
-            if label:
-                return {
-                    "success": True,
-                    "label_id": label_id,
-                    "label": label,
-                    "message": f"Found label: {label.get('name', label_id)}",
-                }
-            else:
-                available_ids = [lbl.get("label_id") for lbl in labels[:10]]
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.RESOURCE_NOT_FOUND,
-                        f"Label not found: {label_id}",
-                        context={
-                            "label_id": label_id,
-                            "available_label_ids": available_ids,
-                        },
-                        suggestions=[
-                            "Use ha_config_get_label() without label_id to see all labels"
-                        ],
-                    )
-                )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting labels: {e}")
-            exception_to_structured_error(
-                e,
-                context={"label_id": label_id},
-                suggestions=[
-                    "Check Home Assistant connection",
-                    "Verify WebSocket connection is active",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error raises
-        return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
+    )(log_tool_usage(legacy_errors(LabelDiscoveryTools.ha_config_get_label)))
 
     @tool(
         name="ha_config_set_label",

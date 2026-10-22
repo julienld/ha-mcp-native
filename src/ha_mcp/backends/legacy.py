@@ -13,12 +13,15 @@ def legacy_errors(function: Callable[..., Any]) -> Callable[..., Any]:
 
     @functools.wraps(function)
     async def invoke(*args: Any, **kwargs: Any) -> Any:
+        from ha_mcp._vendor.fastmcp.exceptions import ToolError
         from ha_mcp.tools.helpers import exception_to_structured_error, raise_tool_error
 
         try:
             return await function(*args, **kwargs)
         except ToolFailure as exc:
             raise_tool_error(exc.data)
+        except ToolError:
+            raise
         except Exception as exc:
             # The old classifier raises ToolError; do not log secrets from args.
             bound = inspect.signature(function).bind_partial(*args, **kwargs)

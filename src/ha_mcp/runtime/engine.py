@@ -12,6 +12,7 @@ from uuid import uuid4
 from ha_mcp.tool_api import (
     Backend,
     CallContext,
+    PolicyGuard,
     ToolDefinition,
     ToolFailure,
     ToolResult,
@@ -34,6 +35,7 @@ class Engine:
         drain_timeout: float = 10,
         cancel_timeout: float = 1,
         max_records: int = 128,
+        policy_guard: PolicyGuard | None = None,
     ) -> None:
         if min(max_operations, operation_timeout, max_records) <= 0:
             raise ValueError("Operation limits must be positive")
@@ -51,6 +53,7 @@ class Engine:
         self.drain_timeout = drain_timeout
         self.cancel_timeout = cancel_timeout
         self.max_records = max_records
+        self.policy_guard = policy_guard
         self.tasks: set[asyncio.Task[ToolResult]] = set()
         self.operations: dict[str, dict[str, Any]] = {}
 
@@ -86,6 +89,7 @@ class Engine:
             lambda: definition.handler(validated, context),
             context,
             writes=not definition.read_only,
+            arguments=validated,
         )
 
     async def call_owned(
@@ -95,6 +99,7 @@ class Engine:
         context: CallContext,
         *,
         writes: bool,
+        arguments: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Use for imported tools too; never automatically retry an invocation."""
         await self.backend.authorize(context)
@@ -110,7 +115,7 @@ class Engine:
             "writes": writes,
         }
         task = asyncio.create_task(
-            self._run(operation_id, name, invoke, context, writes),
+            self._run(operation_id, name, invoke, context, writes, arguments or {}),
             name=f"ha-mcp-operation-{operation_id}",
         )
         self.tasks.add(task)
@@ -131,11 +136,21 @@ class Engine:
         invoke: Callable[[], Awaitable[Any]],
         context: CallContext,
         writes: bool,
+        arguments: dict[str, Any],
     ) -> ToolResult:
         record = self.operations[operation_id]
         try:
             await self.backend.authorize(context)
             self._check_policy(name, context, writes)
+            if self.policy_guard is not None:
+                guarded = await self.policy_guard(name, arguments, context, writes)
+                if guarded is not None:
+                    record["status"] = guarded.status or "not_started"
+                    return replace(
+                        guarded, status=record["status"], operation_id=operation_id
+                    )
+                await self.backend.authorize(context)
+                self._check_policy(name, context, writes)
             record["status"] = "executing"
             async with asyncio.timeout(self.operation_timeout):
                 raw = await invoke()
@@ -148,6 +163,8 @@ class Engine:
             raise
         except Exception as exc:
             status = self._failure_status(record, writes)
+            if isinstance(exc, ToolFailure) and exc.status is not None:
+                status = exc.status
             record["status"] = status
             if isinstance(exc, ToolFailure):
                 data = exc.data

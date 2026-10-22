@@ -244,6 +244,41 @@ async def test_disabled_tools_cannot_be_called_through_owned_entry() -> None:
         )
 
 
+async def test_policy_guard_sees_validated_arguments_and_can_defer() -> None:
+    backend = Backend()
+    seen = []
+
+    async def guard(
+        name: str, arguments: dict, context: CallContext, writes: bool
+    ) -> ToolResult:
+        seen.append((name, arguments, context.user_id, writes))
+        return ToolResult({"approval_required": True}, status="pending")
+
+    engine = Engine(backend, build_initial_catalog(backend), policy_guard=guard)
+    result = await engine.call("ha_list_services", {"limit": 3}, ACTOR)
+    assert result.status == "pending" and result.operation_id
+    assert seen[0][1]["limit"] == 3 and seen[0][1]["offset"] == 0
+    assert backend.calls == []
+
+
+async def test_identity_rechecked_after_policy_await_before_mutation() -> None:
+    backend = Backend()
+    writes = []
+
+    async def guard(
+        name: str, arguments: dict, context: CallContext, mutates: bool
+    ) -> None:
+        backend.revoked = True
+
+    async def write() -> None:
+        writes.append(1)
+
+    result = await Engine(backend, policy_guard=guard).call_owned(
+        "imported", write, ACTOR, writes=True, arguments={"value": 2}
+    )
+    assert result.status == "not_started" and writes == []
+
+
 def test_shared_catalog_imports_neither_ha_nor_remote_clients() -> None:
     code = "from ha_mcp.runtime.catalog import build_initial_catalog; import sys; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
     result = subprocess.run(

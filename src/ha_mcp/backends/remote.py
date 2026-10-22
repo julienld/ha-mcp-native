@@ -43,6 +43,14 @@ class RemoteBackend:
             }
         if operation == "states.read":
             return await self._states(arguments["entity_ids"])
+        from .remote_registry_ops import REGISTRY_OPERATIONS, execute_registry_operation
+
+        if operation in REGISTRY_OPERATIONS:
+            return await execute_registry_operation(self.client, operation, arguments)
+        from .remote_service_ops import SERVICE_OPERATIONS, execute_service_operation
+
+        if operation in SERVICE_OPERATIONS:
+            return await execute_service_operation(self.client, operation, arguments)
         raise UnsupportedOperation(operation)
 
     async def _states(self, entity_ids: list[str]) -> dict[str, Any]:

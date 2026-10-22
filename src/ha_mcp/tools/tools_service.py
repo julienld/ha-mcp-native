@@ -14,6 +14,7 @@ from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantClient,
@@ -31,6 +32,21 @@ from ..errors import (
     create_validation_error,
 )
 from ..read_only import require_write_access
+from ..runtime.action_constants import (
+    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING as _COMPONENT_RESPONSE_UNCONFIRMED_WARNING,
+)
+from ..runtime.action_constants import _NON_ENVELOPE_WARNING as _NON_ENVELOPE_WARNING
+from ..runtime.action_constants import (
+    _NON_STATE_CHANGING_DOMAINS as _NON_STATE_CHANGING_DOMAINS,
+)
+from ..runtime.action_constants import (
+    _STATE_CHANGING_SERVICES as _STATE_CHANGING_SERVICES,
+)
+from ..runtime.action_params import (
+    _parse_json_dict_param as _shared_parse_json_dict_param,
+)
+from ..runtime.actions import ServiceCallTools as SharedServiceCallTools
+from ..tool_api import ToolFailure
 from ..utils.entity_membership import normalize_member_entity_ids
 from .backup_access import guard_snapshot_route
 from .bulk_selector import (
@@ -42,21 +58,19 @@ from .bulk_selector import (
     InfrastructureErrorCause,
     resolve_bulk_selector,
 )
-from .coercion import JSON_STRING_COERCION, parse_json_param, parse_string_list_param
+from .coercion import JSON_STRING_COERCION, parse_json_param
 from .component_api import (
     component_supports,
     get_component_caps,
     invalidate_caps,
     is_unknown_command,
 )
-from .config_entry_flow import is_component_domain
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
     raise_tool_error,
     register_tool_methods,
 )
-from .response_helpers import compact_service_result, project_entity_record
 from .tool_hints import read_only_hints, write_hints
 from .util_helpers import (
     _SERVICE_TO_STATE,
@@ -593,69 +607,24 @@ class _AmbiguousDispatch:
 _COMPONENT_DISPATCH_AMBIGUOUS = _AmbiguousDispatch()
 
 
-def _parse_json_dict_param(
-    data: str | dict[str, Any] | None,
-    *,
-    type_error_message: str,
-) -> dict[str, Any] | None:
-    if data is None:
-        return None
-    raw: Any = None
-    try:
-        raw = parse_json_param(data, "data")
-    except ValueError as e:
-        raise_tool_error(
-            create_validation_error(
-                f"Invalid data parameter: {e}",
-                parameter="data",
-                invalid_json=True,
-            )
-        )
-    if raw is not None and not isinstance(raw, dict):
-        raise_tool_error(
-            create_validation_error(
-                type_error_message,
-                parameter="data",
-                details=f"Received type: {type(raw).__name__}",
-            )
-        )
-    return raw if isinstance(raw, dict) else None
-
-
 def _parse_event_data(data: str | dict[str, Any] | None) -> dict[str, Any] | None:
     return _parse_json_dict_param(
         data, type_error_message="Event data must be a JSON object (dict)"
     )
 
 
+def _parse_json_dict_param(data: Any, *, type_error_message: str) -> Any:
+    try:
+        return _shared_parse_json_dict_param(
+            data, type_error_message=type_error_message
+        )
+    except ToolFailure as exc:
+        raise_tool_error(exc.data)
+
+
 logger = logging.getLogger(__name__)
 
 # Services that produce observable state changes on entities
-_STATE_CHANGING_SERVICES = {
-    "turn_on",
-    "turn_off",
-    "toggle",
-    "open",
-    "close",
-    "lock",
-    "unlock",
-    "set_temperature",
-    "set_hvac_mode",
-    "set_fan_mode",
-    # fan.set_speed was removed in the HA percentage migration (gone in 2026.6);
-    # its state-changing successors are set_percentage / set_preset_mode.
-    "set_percentage",
-    "set_preset_mode",
-    "select_option",
-    "set_value",
-    "set_datetime",
-    "set_cover_position",
-    "set_position",
-    "play_media",
-    "media_play",
-    "media_pause",
-    "media_stop",
-}
 
 # Domains where a service call does not move the TARGET entity's own primary
 # state to a value the verifier can wait for. ``scene`` belongs here with
@@ -663,17 +632,6 @@ _STATE_CHANGING_SERVICES = {
 # but the scene entity's own state is a last-activated timestamp that never
 # becomes "on"/"off" — so waiting for ``turn_on`` -> "on" always times out and
 # only appends a spurious "could not be verified" warning (~10s wasted).
-_NON_STATE_CHANGING_DOMAINS = {
-    "automation",
-    "script",
-    "scene",
-    "homeassistant",
-    "notify",
-    "tts",
-    "persistent_notification",
-    "logbook",
-    "system_log",
-}
 
 #: Emitted when a ``return_response=true`` reply is not HA's
 #: ``{"changed_states": [...], "service_response": ...}`` envelope. Without it an
@@ -681,12 +639,6 @@ _NON_STATE_CHANGING_DOMAINS = {
 #: "the records could not be separated out". Module-level so the tests that
 #: pin the behaviour assert against this exact string instead of a prose fragment
 #: that goes tautologically green when the wording is edited.
-_NON_ENVELOPE_WARNING = (
-    "Home Assistant's return_response reply did not match the expected "
-    "{changed_states, service_response} envelope, so no changed-state records "
-    "could be separated from the response data. An empty 'result' here does NOT "
-    "mean nothing changed — the whole reply is reported under 'service_response'."
-)
 
 #: Emitted when the component served a ``return_response`` call but returned no
 #: ``service_response`` key. The component only sets that key for a non-null
@@ -694,12 +646,6 @@ _NON_ENVELOPE_WARNING = (
 #: have returned nothing, or the component may have discarded the response on its
 #: dispatched-but-unconfirmed path. Only raised alongside ``partial`` — the case
 #: where the discard is actually possible — so a plain null response stays quiet.
-_COMPONENT_RESPONSE_UNCONFIRMED_WARNING = (
-    "The service was dispatched but its confirmation did not arrive, and no "
-    "response data came back with it. A null 'service_response' here does NOT "
-    "prove the service returned nothing — the response may have been produced "
-    "and lost with the confirmation. Re-read state to confirm the outcome."
-)
 
 # ``_SERVICE_TO_STATE`` (the service -> expected primary-state map) is the single
 # source of truth in ``util_helpers`` — imported above and shared with the bulk
@@ -764,168 +710,12 @@ def _build_service_suggestions(
     ]
 
 
-class ServiceTools:
+class ServiceTools(SharedServiceCallTools):
     """Service call and device operation tools for Home Assistant."""
 
     def __init__(self, client: HomeAssistantClient, device_tools: Any) -> None:
         self._client = client
         self._device_tools = device_tools
-
-    @staticmethod
-    def _parse_service_data(
-        data: str | dict[str, Any] | None,
-        entity_id: str | None,
-    ) -> dict[str, Any]:
-        """Parse and validate the data parameter into a service_data dict."""
-        service_data: dict[str, Any] = (
-            _parse_json_dict_param(
-                data, type_error_message="Data parameter must be a JSON object"
-            )
-            or {}
-        )
-        if entity_id:
-            service_data["entity_id"] = entity_id
-        return service_data
-
-    @staticmethod
-    def _validate_service_call_params(
-        domain: str | None, service: str | None
-    ) -> tuple[str, str]:
-        """Validate service-mode params and return the (domain, service) pair.
-
-        Raises a structured ToolError when domain/service are missing (the caller
-        likely wants the ws_command escape hatch), when the domain targets the
-        reserved ha_mcp_tools namespace, or when backup controls block the service.
-        """
-        if not domain or not service:
-            raise_tool_error(
-                create_validation_error(
-                    "domain and service are required for a service call. To send "
-                    "a raw WebSocket command instead, pass ws_command.",
-                    parameter="domain" if not domain else "service",
-                )
-            )
-        # ha_mcp_tools.* services are restricted to the ha-mcp server's dedicated
-        # wrappers (which inject the required caller token); forwarding to that
-        # domain would bypass them. is_component_domain normalises case because
-        # HA core's service registry lowercases the domain on fallback lookup.
-        if is_component_domain(domain):
-            raise_tool_error(
-                create_validation_error(
-                    (
-                        "ha_call_service cannot invoke services in the "
-                        "'ha_mcp_tools' domain. Use the dedicated MCP tool "
-                        "instead: ha_list_files, ha_read_file, ha_write_file, "
-                        "ha_delete_file, or ha_config_set_yaml."
-                    ),
-                    parameter="domain",
-                )
-            )
-        guard_snapshot_route(domain=domain, service=service)
-        return domain, service
-
-    @staticmethod
-    def _reject_incompatible_ws_params(
-        entity_id: str | None,
-        return_response: bool,
-        verbose: bool,
-        result_fields: str | list[str] | None,
-        result_attribute_keys: str | list[str] | None,
-    ) -> None:
-        """Reject service-mode-only params when the ws_command escape hatch is used.
-
-        These shape a registered-service call and have no meaning for a raw
-        WebSocket command; silently ignoring them would be a confusing no-op, so
-        (mirroring the domain/service "not both" guard) they must be omitted.
-        """
-        offenders = [
-            name
-            for name, is_set in (
-                ("entity_id", entity_id is not None),
-                ("return_response", return_response),
-                ("verbose", verbose),
-                ("result_fields", result_fields is not None),
-                ("result_attribute_keys", result_attribute_keys is not None),
-            )
-            if is_set
-        ]
-        if offenders:
-            raise_tool_error(
-                create_validation_error(
-                    "These parameters apply only to service calls and must be "
-                    f"omitted when ws_command is set: {', '.join(offenders)}.",
-                    parameter="ws_command",
-                )
-            )
-
-    @staticmethod
-    def _parse_result_projection_params(
-        result_fields: str | list[str] | None,
-        result_attribute_keys: str | list[str] | None,
-    ) -> tuple[list[str] | None, list[str] | None]:
-        """Parse and validate result_fields / result_attribute_keys into lists.
-
-        Raises a structured VALIDATION_INVALID_PARAMETER ToolError on malformed
-        input for either parameter.
-        """
-        try:
-            parsed_result_fields = parse_string_list_param(
-                result_fields, "result_fields", allow_csv=True
-            )
-        except ValueError as e:
-            raise_tool_error(create_validation_error(str(e), parameter="result_fields"))
-        try:
-            parsed_result_attribute_keys = parse_string_list_param(
-                result_attribute_keys, "result_attribute_keys", allow_csv=True
-            )
-        except ValueError as e:
-            raise_tool_error(
-                create_validation_error(str(e), parameter="result_attribute_keys")
-            )
-        return parsed_result_fields, parsed_result_attribute_keys
-
-    @staticmethod
-    def _build_timeout_response(
-        domain: str,
-        service: str,
-        entity_id: str | None,
-        data: str | dict[str, Any] | None,
-        *,
-        return_response: bool = False,
-    ) -> dict[str, Any]:
-        """Build a partial-success response for service call timeouts.
-
-        When ``return_response`` was requested the key is emitted here too, so a
-        caller never has to branch on whether the key exists: every successful
-        reply carries it. It is necessarily null — the reply never arrived — and
-        that null proves nothing about what the service returned, so it comes
-        with the same ambiguity warning the component's unconfirmed path uses.
-        """
-        response: dict[str, Any] = {
-            "success": True,
-            "partial": True,
-            "domain": domain,
-            "service": service,
-            "entity_id": entity_id,
-            "parameters": data,
-            "message": (
-                f"Service {domain}.{service} was dispatched but Home Assistant "
-                f"did not respond within the timeout period. The operation is likely "
-                f"still running in the background."
-            ),
-            "warnings": [
-                "Response timed out. This is normal for long-running services "
-                f"like updates or firmware installs. Use ha_get_state('{entity_id}') "
-                "to check the current status."
-                if entity_id
-                else "Response timed out. This is normal for long-running services. "
-                "The service was dispatched and may still be executing."
-            ],
-        }
-        if return_response:
-            response["service_response"] = None
-            response["warnings"].append(_COMPONENT_RESPONSE_UNCONFIRMED_WARNING)
-        return response
 
     async def _validate_entity_before_wait(self, entity_id: str | None) -> str | None:
         """Fetch entity_id's pre-call state, failing fast on a settled bad target.
@@ -1067,114 +857,6 @@ class ServiceTools:
             )
             return False
         return isinstance(current, dict) and current.get("state") == "unavailable"
-
-    @staticmethod
-    def _split_return_response_envelope(
-        result: Any, *, return_response: bool
-    ) -> tuple[Any, Any, bool, list[str]]:
-        """Split HA's reply into (changed states, response, present, warnings).
-
-        HA answers ``return_response=true`` with an envelope
-        ``{"changed_states": [...], "service_response": ...}``. The response data
-        belongs at the top level of ha_call_service's reply exactly ONCE — the
-        placement the component path (``_build_component_call_response``) already
-        uses — so it is peeled off here, BEFORE projection, leaving only the
-        changed states to project into ``result``. Returning it in both places
-        shipped it twice, byte-identical, doubling its token cost (issue #2085).
-
-        A legitimately null ``service_response`` is still reported as present
-        (``True``) so the caller emits the key.
-
-        With ``return_response`` false there is no envelope to split: HA returns a
-        plain changed-states list, so it passes through untouched and no
-        ``service_response`` key is emitted (``present`` False). That is the
-        overwhelming majority of calls.
-
-        Anything else — a non-dict reply, a missing key, or a ``changed_states``
-        that is not a list — means a non-conforming responder (HA core always
-        sends both keys, with a list). Every such shape takes ONE path: the whole
-        reply becomes the response data, ``result`` stays empty, and a warning
-        says so. Uniformity is the point — peeling a recognised key out of an
-        unrecognised envelope would silently discard whatever else it carried,
-        and an empty ``result`` would otherwise read as an affirmative "no entity
-        states changed". A caller that asked for response data must never get back
-        neither the data nor an explanation.
-        """
-        if not return_response:
-            return result, None, False, []
-        if (
-            isinstance(result, dict)
-            and "service_response" in result
-            and isinstance(result.get("changed_states"), list)
-        ):
-            return result["changed_states"], result["service_response"], True, []
-        # Any other shape is non-conforming. Hand the WHOLE reply back as the
-        # response data rather than guessing which part is which: splitting one
-        # recognised key out of an unrecognised envelope discards the rest (a
-        # non-list ``changed_states`` would vanish entirely) and would make the
-        # warning's "the whole reply is reported under 'service_response'" a lie.
-        # Projecting nothing into ``result`` keeps the records from shipping twice.
-        return [], result, True, [_NON_ENVELOPE_WARNING]
-
-    @staticmethod
-    def _project_service_result(
-        result: Any,
-        *,
-        entity_id: str | None,
-        verbose: bool,
-        fields: list[str] | None,
-        attribute_keys: list[str] | None,
-    ) -> tuple[Any, list[str]]:
-        """Apply compact / explicit projection to a service-call ``result``.
-
-        Issue #1446. Precedence:
-
-        - ``verbose=True``: bypass every transformation; return ``result`` as-is.
-          (``result`` here is always changed-state records, never an envelope:
-          the legacy path splits the envelope off before calling this — see
-          ``_split_return_response_envelope`` — and the component path passes
-          transition ``new_state``s, which are never enveloped to begin with.)
-        - Explicit ``fields`` or ``attribute_keys``: apply per-record projection
-          via ``project_entity_record`` to every record. No compaction; this is
-          the power-user path.
-        - Default: apply ``compact_service_result`` (filter to ``entity_id``
-          record when single string, drop top-level metadata + heavy lists).
-
-        Returns ``(projected, warnings)``. ``warnings`` collects per-record
-        typo-guard diagnostics from ``project_entity_record`` (e.g. all-empty
-        ``attribute_keys`` filter) — deduplicated so an N-record list with the
-        same typo doesn't emit N copies of the same warning.
-        """
-        if verbose:
-            return result, []
-        if fields is None and attribute_keys is None:
-            return compact_service_result(result, entity_id), []
-        if not isinstance(result, list):
-            return result, []
-        warnings: list[str] = []
-        # ``result_attribute_keys`` only takes effect when ``attributes`` is in
-        # the projected ``result_fields`` (or ``result_fields`` is None). Surface
-        # a warning rather than silently ignoring the parameter — mirrors
-        # ha_get_state's attribute_keys_no_effect handling.
-        if (
-            attribute_keys is not None
-            and fields is not None
-            and "attributes" not in fields
-        ):
-            warnings.append(
-                "result_attribute_keys was ignored because 'attributes' is not "
-                "in result_fields. Add 'attributes' to result_fields (or omit "
-                "result_fields) to apply result_attribute_keys."
-            )
-        projected: list[Any] = []
-        seen_warnings: set[str] = set()
-        for record in result:
-            new_record, warn = project_entity_record(record, fields, attribute_keys)
-            projected.append(new_record)
-            if warn and warn not in seen_warnings:
-                seen_warnings.add(warn)
-                warnings.append(warn)
-        return projected, warnings
 
     def _handle_connection_error(
         self,
@@ -1389,56 +1071,17 @@ class ServiceTools:
         timeout: float,
         return_response: bool,
     ) -> dict[str, Any] | _AmbiguousDispatch | None:
-        """Route one service call through the component ``call_service`` capability.
+        """Send once through the component and distinguish not-sent from unknown.
 
-        Returns one of three outcomes:
+        None permits the first legacy dispatch only after a capability miss,
+        connection establishment failure, explicit CommandNotSent, or the
+        specific unknown_command response. A generic command error is ambiguous:
+        a Core handler can mutate before raising. Timeouts, socket failures and
+        malformed success frames are likewise never replayed.
 
-        * the component's frozen result envelope — ``{domain, service, dispatched,
-          confirmed, partial, transitions, service_response?}`` — when the component
-          advertises ``call_service``, the frame lands, and its response arrives (the
-          caller maps it and does NOT re-POST, even for a ``partial`` confirmation);
-        * ``None`` when the component provably never dispatched, so the caller runs
-          its legacy REST POST as a safe first fire;
-        * ``_COMPONENT_DISPATCH_AMBIGUOUS`` when the frame WAS sent but its
-          response/confirmation never arrived — the caller reports ``partial`` and
-          does NOT re-POST.
-
-        Verb resolution stays server-side (D6): the fully-formed ``domain`` /
-        ``service`` / ``service_data`` / ``entity_ids`` are handed to the component,
-        which fires exactly what it is given and never guesses a service name.
-
-        **D9 — at-most-once (correctness-critical).** The boundary is PRE-SEND vs
-        POST-SEND, NOT "error vs success":
-
-        * PRE-SEND → ``None`` (safe legacy first fire): a capability miss, an
-          ``unknown_command``, or a connection-ESTABLISHMENT failure
-          (``get_websocket_client`` raising before the frame is sent) all mean the
-          component never dispatched. A command-ERROR RESPONSE is also ``None``: it is
-          pre-dispatch for the component's own guards (the D1 domain block and
-          ``ServiceNotFound`` raise before any ``async_call``), and for a non-unknown
-          command error it is the ONE documented residual — an ``async_call`` that
-          mutated state and THEN raised could double-apply on the legacy re-POST
-          (accepted per the approved design; no idempotency token exists anywhere in
-          the write path).
-        * POST-SEND → never retried: a confirmation that lapsed comes back as a
-          normal result dict (``partial=True`` / ``dispatched=True``). A response-wait
-          TIMEOUT (``HomeAssistantCommandTimeout`` — the frame was sent) or any
-          post-send transport drop is AMBIGUOUS-dispatched: the component's
-          ``@async_response`` handler is a background HA task, so the client
-          abandoning the message id does NOT cancel the write, and
-          ``async_call(blocking=True)`` is itself unbounded (a long ``update.install``
-          / script legitimately outlives the 30s response-wait). These return the
-          sentinel so the caller reports ``partial`` and MUST NOT re-POST — re-POSTing
-          here is the double-fire this split exists to prevent.
-
-        **Security (layered defense-in-depth).** The server-side reserved-domain guard
-        (``_validate_service_call_params``) gates BOTH this component route AND the
-        legacy REST fallback, refusing ``ha_mcp_tools`` before either runs — it is the
-        authoritative single-call gate. The component's own D1 block is the
-        authoritative refusal AT the component for any future consumer that reaches it
-        directly; here a component D1 refusal would surface as a command-error
-        response → ``None`` → legacy REST, and that REST POST is itself gated by the
-        same server guard, so no ``ha_mcp_tools`` invocation can reach REST.
+        The native backend calls the same prep/do owner directly and has no
+        transport fallback. Both paths retain the resolved-domain guard and
+        expected-state confirmation hint.
         """
         caps = await get_component_caps(self._client)
         if not component_supports(caps, "call_service"):
@@ -1462,9 +1105,7 @@ class ServiceTools:
         # ``send_command`` transmits the frame INSIDE itself, AFTER its readiness guard
         # and the actual socket write — so exception TYPE marks the send boundary:
         # ``HomeAssistantCommandNotSent`` is raised ONLY at the readiness guard (the one
-        # provably-never-sent site → safe legacy first fire); a command-ERROR response is
-        # pre-dispatch by the component's guards / the documented mutate-then-raise
-        # residual → legacy; a response-wait TIMEOUT, a send() that raised (bytes may
+        # provably-never-sent site → safe legacy first fire); only unknown_command proves that no owner ran; a response-wait TIMEOUT, a send() that raised (bytes may
         # already be on the socket), or a post-send transport drop (a mid-await socket
         # close raises plain ``HomeAssistantConnectionError``) is POST-SEND/AMBIGUOUS →
         # partial, never retried.
@@ -1498,18 +1139,17 @@ class ServiceTools:
             )
             return None
         except HomeAssistantCommandError as exc:
-            # unknown_command means the command vanished: invalidate the cached caps so
-            # the next call re-probes. Any other command error → legacy re-POST (the
-            # documented at-most-once residual, see D9 above).
+            # Only unknown_command proves that this owner never ran. Core can
+            # mutate and then raise any other error: do not replay that write.
             if is_unknown_command(exc):
                 invalidate_caps(self._client)
-            else:
-                logger.warning(
-                    "%s command error; falling back to legacy: %r",
-                    WS_CALL_SERVICE,
-                    exc,
-                )
-            return None
+                return None
+            logger.warning(
+                "%s command error; reporting unknown outcome without retry: %r",
+                WS_CALL_SERVICE,
+                exc,
+            )
+            return _COMPONENT_DISPATCH_AMBIGUOUS
         except Exception as exc:  # noqa: BLE001
             # HomeAssistantCommandTimeout (response-wait expired — the frame WAS sent)
             # or any post-send transport drop (e.g. a pooled-WS drop after send). The
@@ -1532,206 +1172,6 @@ class ServiceTools:
         if not isinstance(result, dict) or result.get("dispatched") is not True:
             return _COMPONENT_DISPATCH_AMBIGUOUS
         return result
-
-    @staticmethod
-    def _component_verified_state(
-        transitions: list[Any], entity_id: str | None
-    ) -> str | None:
-        """The confirmed post-state for ``entity_id`` from the component transitions.
-
-        ``ha_call_service`` targets a single entity, so the component returns one
-        transition for it. Returns the transition's ``new_state.state`` (the REAL
-        post-dispatch state), or ``None`` when the entity vanished / has no state.
-        """
-        for transition in transitions:
-            if not isinstance(transition, dict):
-                continue
-            if entity_id is None or transition.get("entity_id") == entity_id:
-                new_state = transition.get("new_state")
-                if isinstance(new_state, dict):
-                    return new_state.get("state")
-        return None
-
-    @staticmethod
-    def _raise_for_missing_or_unavailable_target(
-        transitions: list[Any], entity_id: str
-    ) -> None:
-        """Report why a confirmation never landed, once it's certain it never will.
-
-        Only reached when the component result was NOT confirmed. No-op
-        (returns) unless ``entity_id`` is a single literal entity ID (see
-        ``is_single_entity_target``): a comma-joined multi-target or a Home
-        Assistant magic broadcast target (``"all"`` / ``"none"``) is never a
-        literal entity in the state machine, so its transition row carries a
-        null ``old_state`` unconditionally -- that proves nothing about
-        whether the (possibly successful) broadcast landed, unlike a genuine
-        single-entity miss.
-
-        For a real single-entity target: the transition's ``old_state`` is
-        ``None`` for an entity absent from the state machine at pre-dispatch
-        time — the component excludes it from the wait entirely (it
-        structurally cannot ever confirm), so an unconfirmed result with a
-        null ``old_state`` is unambiguous: raise ENTITY_NOT_FOUND immediately.
-        A real state dict whose ``state`` is ``"unavailable"`` stayed IN the
-        component's confirmation wait (unlike a nonexistent target, it can
-        legitimately reconnect and transition mid-dispatch — the caller only
-        reaches this branch after that chance has already lapsed); what
-        happened to it by ``new_state`` (the best-available POST-dispatch
-        read: ``_post_state`` re-reads live if the listener's exact
-        expected-state event never arrived) then decides the outcome:
-
-        * ``new_state`` is ``None`` — the entity was REMOVED during the
-          dispatch, a more specific outcome than "still unavailable" (which
-          would falsely assert it still exists), so raise ENTITY_NOT_FOUND.
-        * ``new_state`` still shows ``"unavailable"`` — raise
-          ENTITY_UNAVAILABLE.
-        * ``new_state`` shows anything else — the target reconnected but
-          settled on some state other than the hint (e.g. a lock that
-          reached "locking", not yet "locked"), demonstrably no longer
-          unavailable even though this op never confirmed. Reporting it as
-          ENTITY_UNAVAILABLE from the stale pre-state alone would discard
-          that real result, so no-op instead.
-
-        No-op also for any other unconfirmed target — a real, available
-        entity whose confirming event simply never arrived, OR no transition
-        row at all (``_dispatched_unconfirmed_result``'s empty
-        ``transitions`` after a post-dispatch formatting failure — the write
-        already landed, so an absent row proves nothing about existence) —
-        leaving the caller's existing generic partial/timeout wording for
-        those genuine-ambiguity cases.
-        """
-        if not is_single_entity_target(entity_id):
-            return
-        transition = next(
-            (
-                t
-                for t in transitions
-                if isinstance(t, dict) and t.get("entity_id") == entity_id
-            ),
-            None,
-        )
-        if transition is None:
-            return
-        old_state = transition.get("old_state")
-        if old_state is None:
-            raise_tool_error(create_entity_not_found_error(entity_id))
-        if not (
-            isinstance(old_state, dict) and old_state.get("state") == "unavailable"
-        ):
-            return
-        new_state = transition.get("new_state")
-        if new_state is None:
-            # Removed during the dispatch -- a more specific outcome than
-            # "still unavailable", which would falsely assert it still exists.
-            raise_tool_error(create_entity_not_found_error(entity_id))
-        if isinstance(new_state, dict) and new_state.get("state") == "unavailable":
-            raise_tool_error(create_entity_unavailable_after_dispatch_error(entity_id))
-
-    def _build_component_call_response(
-        self,
-        component_result: dict[str, Any],
-        *,
-        domain: str,
-        service: str,
-        entity_id: str | None,
-        data: str | dict[str, Any] | None,
-        should_wait: bool,
-        return_response: bool,
-        verbose: bool,
-        fields: list[str] | None,
-        attribute_keys: list[str] | None,
-    ) -> dict[str, Any]:
-        """Map the component ``call_service`` result into ha_call_service's shape.
-
-        The component's real pre->post transition replaces the WS-subscribe-and-sample
-        verification (``_SERVICE_TO_STATE`` is now handed to the component as a
-        confirmation-timing HINT, not read here as the returned value): the
-        transition ``new_state`` records are the same ``State.as_dict()`` shape the
-        legacy REST POST returns, so they feed the SAME ``_project_service_result``
-        projection; the confirmed target's ``new_state.state`` becomes
-        ``verified_state``; and the component's ``partial`` flag (dispatched but the
-        confirming event lapsed) drives the same partial-success shape the legacy
-        timeout path produces (``_build_timeout_response``).
-        """
-        transitions = component_result.get("transitions") or []
-        # A nonexistent target's pre-dispatch read excludes it from the wait
-        # entirely, so it can never reach ``confirmed``; an "unavailable" one
-        # stays eligible and CAN reach it (a genuine reconnect-and-confirm) —
-        # only an UNCONFIRMED result is checked here, before building a generic
-        # partial/timeout response, using the same ``old_state``/``new_state``
-        # signal ``device_control.py``'s bulk-op mapping already reads from
-        # this identical transitions shape. A genuine confirmation lapse on a
-        # real, available target (old_state present, not "unavailable") falls
-        # through unchanged to the existing partial-success wording below.
-        if (
-            should_wait
-            and entity_id is not None
-            and not component_result.get("confirmed")
-        ):
-            self._raise_for_missing_or_unavailable_target(transitions, entity_id)
-        # The transition new_states are State.as_dict() records — the same shape the
-        # legacy REST POST returns — so the existing projection helpers apply
-        # unchanged (compact filters to the target, drops metadata / heavy lists).
-        new_states = [
-            transition["new_state"]
-            for transition in transitions
-            if isinstance(transition, dict)
-            and isinstance(transition.get("new_state"), dict)
-        ]
-        projected_result, projection_warnings = self._project_service_result(
-            new_states,
-            entity_id=entity_id,
-            verbose=verbose,
-            fields=fields,
-            attribute_keys=attribute_keys,
-        )
-        response: dict[str, Any] = {
-            "success": True,
-            "domain": domain,
-            "service": service,
-            "entity_id": entity_id,
-            "parameters": data,
-            "result": projected_result,
-            "message": f"Successfully executed {domain}.{service}",
-        }
-        if projection_warnings:
-            response.setdefault("warnings", []).extend(projection_warnings)
-        if return_response:
-            # Emit the key whenever it was requested, even for a null response —
-            # the legacy path does the same (``_split_return_response_envelope``),
-            # and gating on ``is not None`` made the two paths answer the same
-            # call with different shapes. The component only sets the key for a
-            # non-null response, so a null one arrives as an absent key here.
-            response["service_response"] = component_result.get("service_response")
-            # ...which makes an absent key ambiguous: genuinely-null response, or
-            # one the component produced and dropped with the confirmation on its
-            # dispatched-unconfirmed path. Only the latter is possible when
-            # ``partial``, so warn there rather than on every null.
-            if "service_response" not in component_result and component_result.get(
-                "partial"
-            ):
-                response.setdefault("warnings", []).append(
-                    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING
-                )
-        if should_wait:
-            if component_result.get("partial"):
-                # Reached only when _raise_for_missing_or_unavailable_target above
-                # did NOT raise -- i.e. a genuine confirmation lapse on a real,
-                # available target whose confirming state_changed simply never
-                # arrived within the wait. success stays True here (the same
-                # partial-success contract the legacy timeout path reports);
-                # unlike this generic case, a target proven nonexistent or still
-                # unavailable is a raised ToolError, not a partial success.
-                response["partial"] = True
-                response.setdefault("warnings", []).append(
-                    "Service executed but state change could not be verified "
-                    "within timeout."
-                )
-            else:
-                verified_state = self._component_verified_state(transitions, entity_id)
-                if verified_state is not None:
-                    response["verified_state"] = verified_state
-        return response
 
     async def _maybe_component_call_service(
         self,
@@ -1806,315 +1246,43 @@ class ServiceTools:
             attribute_keys=attribute_keys,
         )
 
-    @tool(
+    ha_call_service = tool(
         name="ha_call_service",
         tags={"Service & Device Control"},
         annotations=write_hints(
             "Call Service", destructive=True, idempotent=False, open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_call_service(
-        self,
-        domain: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Service domain (e.g. 'light', 'climate', 'automation'). Required for a"
-                    " service call."
-                ),
-            ),
-        ] = None,
-        service: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Service name within domain (e.g. 'turn_on', 'set_temperature', "
-                    "'trigger'). Required for a service call."
-                ),
-            ),
-        ] = None,
-        entity_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Entity ID(s) the service call targets — one ID ('light.living_room') "
-                    "or several comma-separated ('light.a,light.b'). Optional for services "
-                    "that don't target a specific entity."
-                ),
-            ),
-        ] = None,
-        data: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Extra service-call parameters beyond entity_id (e.g. "
-                    "{'temperature': 22} for climate.set_temperature). Also carries "
-                    "the raw command payload when ws_command is set. If entity_id "
-                    "is also present in data, the entity_id parameter wins."
-                ),
-            ),
-        ] = None,
-        return_response: Annotated[
-            bool,
-            Field(
-                description=(
-                    "If True, the service's response data is returned once, as the "
-                    "top-level 'service_response' key — never nested inside 'result'."
-                ),
-            ),
-        ] = False,
-        wait: Annotated[
-            bool,
-            Field(
-                description=(
-                    "If True (default), wait for the entity state to change "
-                    "before returning. Applies only to state-changing services "
-                    "called with a single entity_id. A comma-separated "
-                    "multi-target does not get confirmed by this: it falls "
-                    "through to a legacy path that polls for the literal "
-                    "composite entity_id and times out after 10s. Set "
-                    "wait=False for multi-target calls."
-                ),
-            ),
-        ] = True,
-        verbose: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Return HA's raw changed-state records unchanged. With "
-                    "return_response=True the response data still surfaces once as the "
-                    "top-level service_response key, never nested in result. Large for "
-                    "nested-group targets — prefer result_fields / result_attribute_keys."
-                ),
-            ),
-        ] = False,
-        result_fields: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Project each record in 'result' to only these top-level keys (e.g. "
-                    "['entity_id', 'state']). Setting this DISABLES default compaction — no"
-                    " entity-id filter, no metadata strip — and applies the explicit "
-                    "projection instead."
-                ),
-            ),
-        ] = None,
-        result_attribute_keys: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Project each record's 'attributes' dict to only these keys (e.g. "
-                    "['brightness', 'rgb_color']). Setting this DISABLES default "
-                    "compaction. Requires 'attributes' to be present in result_fields (or "
-                    "result_fields=None)."
-                ),
-            ),
-        ] = None,
-        ws_command: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "Advanced escape hatch: send a raw one-shot Home Assistant "
-                    "WebSocket command that is NOT a registered service and that "
-                    "no dedicated tool covers. When set, "
-                    "omit domain/service and the other service params. "
-                    "Streaming/two-phase and "
-                    "service-invoking commands (call_service, execute_script) are "
-                    "rejected."
-                ),
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Call any Home Assistant service or one-shot WebSocket command: the catch-all escape hatch.
+    )(log_tool_usage(legacy_errors(SharedServiceCallTools.ha_call_service)))
 
-        When NOT to use: a dedicated tool that covers the job. It validates the
-        request, reports the outcome in its own terms, and stays available where
-        a security policy gates this tool. For example: turn an automation on or
-        off or run it now with ha_config_set_automation (enabled / run_actions);
-        start or stop a script with ha_config_set_script (run); activate a scene
-        with ha_config_set_scene (activate); manage apps (add-ons) with
-        ha_manage_app; handle updates and Repairs issues with ha_manage_updates;
-        set an integration's log level with ha_set_integration (log_level).
-
-        When to use: a service no dedicated tool covers. Services follow the
-        pattern domain.service (e.g., light.turn_on, climate.set_temperature);
-        ha_list_services lists them with their fields.
-
-        EXAMPLES:
-        - ha_call_service("light", "turn_on", entity_id="light.living_room")
-        - ha_call_service("climate", "set_temperature", entity_id="climate.thermostat", data={"temperature": 22})
-
-        Result compaction (default ON): ``result`` is trimmed to the targeted
-        entity's record (drops parent-group propagation) and stripped of
-        ``context`` / ``last_*`` metadata and heavy attribute lists
-        (``effect_list``, ``hue_scenes``).
-
-        For detailed service documentation, use ha_get_skill_guide.
-
-        **WebSocket command escape hatch (advanced):**
-        Some Home Assistant operations are WebSocket-only commands, not
-        registered services. Pass ``ws_command`` (instead of domain/service) to
-        send one no dedicated tool covers, with its parameters in ``data``:
-        ha_call_service(ws_command="<command type>", data={...}). Only one-shot
-        request/response commands are supported, and the other service
-        parameters (entity_id, return_response, etc.) don't apply.
-
-        Unavailable in Read Only Mode, including read-like services and WebSocket
-        commands. Use dedicated read tools while that mode is enabled.
-        """
-        # Guard the escape hatch itself as well as the MCP catalog/middleware:
-        # direct dispatch must never reach either transport in read-only mode.
+    def _require_write_access(self) -> None:
         require_write_access("ha_call_service")
 
-        # WebSocket-command escape hatch (issue #1839): reach one-shot WS
-        # commands that aren't registered services.
-        if ws_command is not None:
-            self._reject_incompatible_ws_params(
-                entity_id,
-                return_response,
-                verbose,
-                result_fields,
-                result_attribute_keys,
-            )
-            return await self._call_ws_command(
-                ws_command, data, domain=domain, service=service
-            )
+    async def _check_service_policy(self, domain: str, service: str) -> None:
+        guard_snapshot_route(domain=domain, service=service)
 
-        domain, service = self._validate_service_call_params(domain, service)
-        try:
-            service_data = self._parse_service_data(data, entity_id)
+    async def _call_raw_service(
+        self,
+        domain: str,
+        service: str,
+        service_data: dict[str, Any],
+        *,
+        return_response: bool,
+    ) -> Any:
+        return await self._client.call_service(
+            domain, service, service_data, return_response=return_response
+        )
 
-            return_response_bool = return_response
-            wait_bool = wait
-            verbose_bool = verbose
-            parsed_result_fields, parsed_result_attribute_keys = (
-                self._parse_result_projection_params(
-                    result_fields, result_attribute_keys
-                )
-            )
-
-            # Determine if we should wait for state change:
-            # Only for state-changing services with an entity_id set, not for
-            # trigger/reload/fire-and-forget services or services without entities.
-            # A comma-separated multi-target entity_id is not excluded here — it
-            # still falls through to the legacy path, which polls for the literal
-            # composite entity_id and times out after 10s (see the wait Field
-            # description and _maybe_component_call_service).
-            # This server-side decision (D6) also chooses whether to hand the
-            # component wait+entity_ids: a non-state-changing call passes wait
-            # implicitly false and no confirmation targets.
-            should_wait = (
-                wait_bool
-                and entity_id is not None
-                and service in _STATE_CHANGING_SERVICES
-                and domain not in _NON_STATE_CHANGING_DOMAINS
-            )
-
-            # Route a confirmable single call through the component capability (D8);
-            # a returned response means it served the call, None means fall through to
-            # the legacy REST path below (a safe first fire, D9 at-most-once).
-            component_response = await self._maybe_component_call_service(
-                domain=domain,
-                service=service,
-                service_data=service_data,
-                entity_id=entity_id,
-                data=data,
-                should_wait=should_wait,
-                return_response=return_response_bool,
-                verbose=verbose_bool,
-                fields=parsed_result_fields,
-                attribute_keys=parsed_result_attribute_keys,
-            )
-            if component_response is not None:
-                return component_response
-
-            # Legacy REST path (component absent, or it never dispatched): capture
-            # initial state before the call for the WS-subscribe verification. A
-            # settled 404 (single-entity target definitely does not exist) raises
-            # here, BEFORE the dispatch below, so a known-invalid call never
-            # reaches the service POST or the 10s confirmation wait. An
-            # "unavailable" target is NOT fast-failed here -- dispatching is
-            # exactly what might reconnect it; see _verify_state_change for its
-            # post-dispatch classification instead.
-            initial_state = None
-            if should_wait:
-                initial_state = await self._validate_entity_before_wait(entity_id)
-
-            result = await self._client.call_service(
-                domain, service, service_data, return_response=return_response_bool
-            )
-
-            # Peel the return_response envelope apart BEFORE projection so the
-            # response data is emitted once, top-level, and only the changed
-            # states reach ``result`` (issue #2085).
-            result, service_response, has_response_envelope, envelope_warnings = (
-                self._split_return_response_envelope(
-                    result, return_response=return_response_bool
-                )
-            )
-
-            projected_result, projection_warnings = self._project_service_result(
-                result,
-                entity_id=entity_id,
-                verbose=verbose_bool,
-                fields=parsed_result_fields,
-                attribute_keys=parsed_result_attribute_keys,
-            )
-
-            response: dict[str, Any] = {
-                "success": True,
-                "domain": domain,
-                "service": service,
-                "entity_id": entity_id,
-                "parameters": data,
-                "result": projected_result,
-                "message": f"Successfully executed {domain}.{service}",
-            }
-            call_warnings = [*projection_warnings, *envelope_warnings]
-            if call_warnings:
-                response.setdefault("warnings", []).extend(call_warnings)
-
-            if has_response_envelope:
-                response["service_response"] = service_response
-
-            # Wait for entity state to change
-            if should_wait and entity_id is not None:
-                await self._verify_state_change(
-                    entity_id,
-                    service,
-                    initial_state,
-                    response,
-                )
-
-            return response
-        except HomeAssistantConnectionError as error:
-            return self._handle_connection_error(
-                error,
-                domain=domain,
-                service=service,
-                entity_id=entity_id,
-                data=data,
-                # The parameter, not ``return_response_bool`` — that local is
-                # bound inside the try and would be unbound if the error fired
-                # before it.
-                return_response=return_response,
-            )
-        except ToolError:
-            raise
-        except Exception as error:  # noqa: BLE001
-            self._raise_unexpected_call_service_error(
-                error, domain=domain, service=service, entity_id=entity_id
-            )
-            return (
-                None  # unreachable: _raise_unexpected_call_service_error always raises
-            )
+    def _map_service_error(self, error: Exception, **kwargs: Any) -> Any:
+        if isinstance(error, HomeAssistantConnectionError):
+            return self._handle_connection_error(error, **kwargs)
+        if isinstance(error, (ToolError, ToolFailure)):
+            raise error
+        self._raise_unexpected_call_service_error(
+            error,
+            domain=kwargs["domain"],
+            service=kwargs["service"],
+            entity_id=kwargs["entity_id"],
+        )
 
     @tool(
         name="ha_get_operation_status",

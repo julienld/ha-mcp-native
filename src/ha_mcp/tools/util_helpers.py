@@ -12,6 +12,10 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
+from ..runtime.action_constants import _SERVICE_TO_STATE as _SERVICE_TO_STATE
+from ..runtime.action_constants import (
+    is_single_entity_target as is_single_entity_target,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,38 +30,6 @@ logger = logging.getLogger(__name__)
 # confirmation. Lives here (a low-level module both consumers already import from)
 # so the two write paths share one map with no import cycle. The legacy
 # WS-subscribe verifier (``tools_service._verify_state_change``) reads it too.
-_SERVICE_TO_STATE: dict[str, str] = {
-    "turn_on": "on",
-    "turn_off": "off",
-    "open": "open",
-    "close": "closed",
-    "lock": "locked",
-    "unlock": "unlocked",
-}
-
-
-def is_single_entity_target(entity_id: str | None) -> bool:
-    """True when ``entity_id`` looks like exactly one real, literal entity ID.
-
-    False for two shapes a not-found/unavailable lookup miss cannot settle
-    anything about:
-
-    * A comma-separated multi-target list ("light.a,light.b") — a valid
-      service-call payload the single-entity ``/api/states/<id>`` endpoint
-      has no syntax for, so its 404 on the literal joined string proves
-      nothing about the individual targets.
-    * A Home Assistant magic broadcast target — ``ENTITY_MATCH_ALL`` ("all")
-      or ``ENTITY_MATCH_NONE`` ("none"), both defined in
-      ``homeassistant/const.py`` and neither a literal entity in the state
-      machine, so a states-endpoint miss for either is expected and proves
-      nothing about whether the underlying service call can succeed.
-
-    A normal entity ID always has a ``domain.object_id`` shape (contains a
-    dot); the absence of one is the general, defensive signal used here
-    rather than hardcoding just "all"/"none" by name, so any other future
-    magic target is covered the same way.
-    """
-    return entity_id is not None and "," not in entity_id and "." in entity_id
 
 
 def websocket_error_message(error: Any) -> str:

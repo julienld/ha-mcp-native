@@ -9,6 +9,9 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ..config import Settings, get_global_settings
 from ..errors import ErrorCode, create_error_response
+from ..runtime.action_constants import (
+    _SNAPSHOT_SERVICE_ACTIONS as _SNAPSHOT_SERVICE_ACTIONS,
+)
 from .helpers import raise_tool_error
 
 _VALID_COMBOS: set[tuple[str, str]] = {
@@ -127,14 +130,6 @@ def _enforce_backup_controls(
 # Generic routes (ha_call_service and the Code Mode bridges) that perform the
 # same full-snapshot operations as ha_manage_backup(scope="snapshot"), mapped to
 # the equivalent action so the backup controls cannot be bypassed through them.
-_SNAPSHOT_SERVICE_ACTIONS: dict[tuple[str, str], str] = {
-    ("backup", "create"): "create",
-    ("backup", "create_automatic"): "create",
-    ("hassio", "backup_full"): "create",
-    ("hassio", "backup_partial"): "create",
-    ("hassio", "restore_full"): "restore",
-    ("hassio", "restore_partial"): "restore",
-}
 _SNAPSHOT_WS_ACTIONS: dict[str, str] = {
     "backup/details": "list",
     "backup/info": "list",

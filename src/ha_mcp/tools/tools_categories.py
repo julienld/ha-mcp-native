@@ -9,14 +9,16 @@ To assign categories to entities, use ha_set_entity(categories=...).
 """
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..errors import ErrorCode, create_error_response
+from ..runtime.labels import CategoryDiscoveryTools
 from .auto_backup import with_auto_backup
 from .helpers import (
     exception_to_structured_error,
@@ -30,133 +32,45 @@ from .tool_hints import read_only_hints, write_hints
 logger = logging.getLogger(__name__)
 
 
-class CategoryTools:
+class CategoryTools(CategoryDiscoveryTools):
     """Category management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
+    def _raise_read_error(self, error: Exception, context: dict[str, Any]) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        suggestions = [
+            "Check Home Assistant connection",
+            "Verify WebSocket connection is active",
+        ]
+        suggestions.append(
+            "Ensure scope is valid (e.g., 'automation', 'script', 'scene', 'helpers')"
+        )
+        exception_to_structured_error(error, context=context, suggestions=suggestions)
+
+    async def _list_categories(
+        self, scope: str, category_id: str | None
+    ) -> list[dict[str, Any]]:
+        result = await self._client.send_websocket_message(
+            {"type": "config/category_registry/list", "scope": scope}
+        )
+        if not result.get("success"):
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.SERVICE_CALL_FAILED,
+                    result.get("error", "Failed to get categories"),
+                    context={"scope": scope, "category_id": category_id},
+                )
+            )
+        return result.get("result", [])
+
+    ha_config_get_category = tool(
         name="ha_config_get_category",
         tags={"Labels & Categories"},
         annotations=read_only_hints("Get Category", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_category(
-        self,
-        scope: Annotated[
-            str,
-            Field(
-                description="Domain scope for categories (e.g., 'automation', 'script', 'scene', 'helpers').",
-            ),
-        ],
-        category_id: Annotated[
-            str | None,
-            Field(
-                description="ID of the category to retrieve.",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get category info - list all categories for a scope or get a specific one by ID.
-
-        Without a category_id: Lists all Home Assistant categories for the given scope.
-        With a category_id: Returns configuration for that specific category.
-
-        Categories are domain-scoped organizational groups for automations, scripts, scenes, and helpers.
-
-        EXAMPLES:
-        - List helper categories: ha_config_get_category("helpers")
-        - Get specific category: ha_config_get_category("automation", category_id="my_category_id")
-
-        Use ha_config_set_category() to create or update categories.
-        Use ha_set_entity(categories={"automation": "category_id"}) to assign categories to entities.
-        """
-        try:
-            # ``None`` stays the documented "list-all" sentinel; explicit
-            # empty/whitespace is rejected by ``validate_identifier_not_empty``.
-            if category_id is not None:
-                validate_identifier_not_empty(
-                    category_id,
-                    "category_id",
-                    suggestions=[
-                        "Omit category_id to list all categories for the scope",
-                        "Pass a valid non-empty category_id",
-                    ],
-                    context={"action": "get", "scope": scope},
-                )
-            message: dict[str, Any] = {
-                "type": "config/category_registry/list",
-                "scope": scope,
-            }
-
-            result = await self._client.send_websocket_message(message)
-
-            if not result.get("success"):
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        result.get("error", "Failed to get categories"),
-                        context={"scope": scope, "category_id": category_id},
-                    )
-                )
-
-            categories = result.get("result", [])
-
-            if category_id is None:
-                return {
-                    "success": True,
-                    "count": len(categories),
-                    "categories": categories,
-                    "scope": scope,
-                    "message": f"Found {len(categories)} category(ies) for scope '{scope}'",
-                }
-
-            category = next(
-                (cat for cat in categories if cat.get("category_id") == category_id),
-                None,
-            )
-
-            if category:
-                return {
-                    "success": True,
-                    "category_id": category_id,
-                    "category": category,
-                    "scope": scope,
-                    "message": f"Found category: {category.get('name', category_id)}",
-                }
-            else:
-                available_ids = [cat.get("category_id") for cat in categories[:10]]
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.RESOURCE_NOT_FOUND,
-                        f"Category not found: {category_id}",
-                        context={
-                            "category_id": category_id,
-                            "scope": scope,
-                            "available_category_ids": available_ids,
-                        },
-                        suggestions=[
-                            f"Use ha_config_get_category('{scope}') without category_id to see all categories"
-                        ],
-                    )
-                )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting categories: {e}")
-            exception_to_structured_error(
-                e,
-                context={"scope": scope, "category_id": category_id},
-                suggestions=[
-                    "Check Home Assistant connection",
-                    "Verify WebSocket connection is active",
-                    "Ensure scope is valid (e.g., 'automation', 'script', 'scene', 'helpers')",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-        return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
+    )(log_tool_usage(legacy_errors(CategoryDiscoveryTools.ha_config_get_category)))
 
     @tool(
         name="ha_config_set_category",

@@ -5,18 +5,14 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from ha_mcp.errors import ErrorCode, create_error_response, create_validation_error
-from ha_mcp.tool_api import Backend, CallContext
+from ha_mcp.tool_api import BackendTools
 from ha_mcp.tools.coercion import JSON_STRING_COERCION, parse_string_list_param
 
 from .errors import raise_failure
 from .projection import build_pagination_metadata, project_fields, result_fields_warning
 
 
-class ServiceDiscoveryTools:
-    def __init__(self, backend: Backend, context: CallContext) -> None:
-        self.backend = backend
-        self.context = context
-
+class ServiceDiscoveryTools(BackendTools):
     async def _fetch_catalog(
         self, domain: str | None, warnings: list[str]
     ) -> tuple[Any, dict[str, Any]]:

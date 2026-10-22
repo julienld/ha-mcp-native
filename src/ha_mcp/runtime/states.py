@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from ha_mcp.errors import create_entity_not_found_error, create_validation_error
-from ha_mcp.tool_api import Backend, CallContext
+from ha_mcp.tool_api import BackendTools
 from ha_mcp.tools.coercion import JSON_STRING_COERCION, parse_string_list_param
 
 from .errors import raise_failure
@@ -79,11 +79,7 @@ def _build_bulk_states_response(
     return response
 
 
-class StateTools:
-    def __init__(self, backend: Backend, context: CallContext) -> None:
-        self.backend = backend
-        self.context = context
-
+class StateTools(BackendTools):
     async def _timezone(self, data: dict[str, Any]) -> dict[str, Any]:
         result = await self.backend.execute("instance.timezone", {}, self.context)
         return timezone_metadata(
@@ -98,7 +94,8 @@ class StateTools:
             raise_failure(
                 result.get("errors", {}).get(entity_id, _missing_entity(entity_id))
             )
-        return result["states"][entity_id]
+        record: dict[str, Any] = result["states"][entity_id]
+        return record
 
     async def _resolve_bulk_state_results(
         self, entity_ids: list[str]
