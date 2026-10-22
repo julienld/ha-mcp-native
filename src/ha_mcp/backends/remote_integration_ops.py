@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from ha_mcp.tool_api import UnsupportedOperation
+from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import json_values_equal
 
 from .remote_integration_reads import (
     INSPECTION_OPERATIONS,
@@ -57,6 +58,13 @@ async def execute_integration_operation(
             }
         )
     if operation == "integrations.enabled.set":
+        current = await client.get_config_entry(arguments["entry_id"])
+        if not json_values_equal(current, arguments["expected_entry"]):
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                "The integration changed after its snapshot was read; no enable/disable command was sent.",
+                status="not_started",
+            )
         return await client.send_websocket_message(
             {
                 "type": "config_entries/disable",

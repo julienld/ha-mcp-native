@@ -259,7 +259,7 @@ async def test_no_modified_at_bump_within_the_commit_timeout_gives_up_early(
     stalling for the whole (much larger) caller-supplied timeout.
     """
     monkeypatch.setattr(
-        "ha_mcp.tools.config_entry_reload_watch._COMMIT_VISIBLE_TIMEOUT", 0.25
+        "ha_mcp.runtime.entry_reload._COMMIT_VISIBLE_TIMEOUT", 0.25
     )
     entry_id = "entry-1"
     queue = _queue_of(

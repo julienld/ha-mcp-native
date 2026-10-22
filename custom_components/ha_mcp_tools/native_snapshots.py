@@ -324,7 +324,15 @@ class NativeSnapshots:
                 if isinstance(config, dict)
                 else data["entity_id"]
             )
-            async with registry_update_lock(data["domain"], target):
+            lock_domain = data["domain"]
+            if lock_domain == "area_or_floor":
+                from ha_mcp.runtime.snapshot_registry_restore import registry_target
+
+                lock_domain, identity, _metadata = registry_target(
+                    lock_domain, data["entity_id"], config
+                )
+                target = identity[f"{lock_domain}_id"]
+            async with registry_update_lock(lock_domain, target):
                 return await restore_snapshot_data(
                     store,
                     name,

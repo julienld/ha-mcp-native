@@ -785,9 +785,18 @@ class TestModuleScope:
         assert isinstance(logs_scope.consts.get("MAX_LIMIT"), int)
 
     def test_zero_arg_helpers_resolve_across_modules(self):
-        scope = extract_tools._module_scope(
-            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_config_scenes.py"
+        from extract_tools_shared import SharedToolExtractor
+
+        resolver = SharedToolExtractor(
+            extract_tools._import_source,
+            extract_tools._module_scope,
+            extract_tools._extract_tool_from_node,
         )
+        method = resolver.resolve_function(
+            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_config_scenes.py",
+            "ha_config_set_scene",
+        )
+        scope = extract_tools._module_scope(method._source_path)
 
         resolved = scope.funcs["get_security_documentation"]
 

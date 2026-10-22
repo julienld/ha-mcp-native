@@ -4,7 +4,38 @@ Implementation guide, 22 October 2026. These are working interfaces, not a claim
 that the full catalog has native parity. The immutable catalogs and
 [compatibility contract](compatibility.md) remain the review references.
 
-## Keep one business implementation
+## Target architecture: native first
+
+Julien clarified the direction during implementation on 22 October: the custom
+component is the canonical production path. Tools should call Core relatively
+directly. The external server's REST/WebSocket implementation becomes a
+compatibility mode that can eventually be deprecated. That deprecation has not
+been activated.
+
+New native handlers belong in the component and receive `hass` and the validated
+`CallContext`. Call Core owners directly; use a small, typed service for a domain
+whose ownership, captures or asynchronous lifecycle require one. Do not add a
+universal operation-string dispatcher or a remote imitation of `hass`.
+
+Keep `Engine`, public tool contracts, coercion and pure algorithms reusable.
+`define_tool(handler=...)` can retain one signature/schema source while binding a
+native handler. Every MCP, Assist or remote-component entry must still enter the
+same Engine for policy, actor validation and operation ownership.
+
+The planned remote-component path delegates a bounded tool name and arguments
+to that canonical Engine, with versioned catalog/capability discovery. Select
+component delegation or the isolated legacy implementation before invocation.
+Never fall back or retry a mutation after a lost or uncertain reply. The older
+installation without the component retains its compatibility implementation;
+it must not dictate the shape of new Core handlers.
+
+The semantic backends below describe the first migration increment already in
+the repository. They remain useful for existing tools and tests, but implementing
+another pair of backends is not a prerequisite for each new native tool. Thin
+existing paths progressively when it removes real indirection, keeping working
+features available throughout the transition.
+
+## Retain useful shared code
 
 Move the existing public method, its signature, parameter metadata and result
 projection to a class in `ha_mcp.runtime`. Bind it with `BackendTools`; its two

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,11 +71,16 @@ class NativeSnapshotDomains:
         await self.manager.backend.authorize(actor)
         domain = data["domain"]
         if domain in {"automation", "script", "scene"}:
+            from homeassistant.helpers.json import json_bytes
+
             from .native_operations.core_views import read_config_item
 
-            return await read_config_item(
+            current = await read_config_item(
                 self.manager.hass, domain, config_storage_key(data)
             )
+            # Core's YAML owner returns annotated nodes. Cross the same public
+            # value boundary as NativeBackend before diffing or writing a snapshot.
+            return json.loads(json_bytes(current))
         if domain in {"category", "area_or_floor"}:
             from ha_mcp.runtime.snapshot_registry_restore import current_registry
 

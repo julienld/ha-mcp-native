@@ -111,6 +111,10 @@ class Checks:
 
     def passed(self, name: str) -> None:
         self.results.append(name)
+        (OUT / "evidence.json").write_text(
+            json.dumps({"complete": False, "checks": self.results}, indent=2) + "\n",
+            encoding="utf-8",
+        )
         print("PASS", name, flush=True)
 
     def headers(
@@ -487,6 +491,7 @@ async def main() -> None:
             evidence.pop("path", None)
             evidence["llm_api_count"] = len(evidence.pop("llm_apis", []))
             evidence["checks"] = checks.results
+            evidence["complete"] = True
             (OUT / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     finally:
         logs = docker("logs", CONTAINER, check=False)

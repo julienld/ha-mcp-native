@@ -131,11 +131,21 @@ class FlowSession(BackendTools):
         current = await self.get_config_entry(entry_id)
         helper_type = self.helper_type
         if helper_type is None:
-            kinds = await self.backend.execute(
-                "helpers.flow.types",
-                {"helper_type": current.get("domain", "")},
-                self.context,
-            )
+            try:
+                kinds = await self.backend.execute(
+                    "helpers.flow.types",
+                    {"helper_type": current.get("domain", "")},
+                    self.context,
+                )
+            except Exception as error:  # noqa: BLE001 - capture classification is best effort
+                self.warnings.append(
+                    f"No pre-write backup was taken: {type(error).__name__} while identifying the helper flow"
+                )
+                return self._expected_revision() or (
+                    {"expected_modified_at": current["modified_at"]}
+                    if "modified_at" in current
+                    else {}
+                )
             helper_type = (
                 current.get("domain")
                 if current.get("domain") in kinds["types"]

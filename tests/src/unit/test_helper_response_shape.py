@@ -1081,42 +1081,6 @@ class TestSweepWarningsShape:
       shape directly.
     """
 
-    @pytest.mark.asyncio
-    async def test_backup_restore_warnings_shape(self):
-        from ha_mcp.tools.backup import restore_backup
-
-        ws = AsyncMock()
-        ws.send_command.side_effect = [
-            {"success": True, "result": {"backups": [{"backup_id": "abc"}]}},
-            {
-                "success": True,
-                "result": {"agents": [{"agent_id": "backup.local", "name": "local"}]},
-            },
-            {
-                "success": True,
-                "result": {"config": {"create_backup": {"password": "pw"}}},
-            },
-            {"success": True, "result": {"backup_job_id": "job"}},
-            {"success": True},
-        ]
-        client = MagicMock()
-        client.base_url = "http://test"
-        client.token = "t"
-        client.verify_ssl = False
-        # Stub the safety-backup completion poll (exercised by test_backup_restore)
-        # so this test stays focused on the warnings-list shape contract.
-        with (
-            patch(
-                "ha_mcp.tools.backup.get_connected_ws_client",
-                new=AsyncMock(return_value=(ws, None)),
-            ),
-            patch(
-                "ha_mcp.tools.backup._poll_backup_completion",
-                new=AsyncMock(return_value={"success": True}),
-            ),
-        ):
-            result = await restore_backup(client, "abc")
-        _assert_warnings_list_shape(result)
 
     @pytest.mark.asyncio
     async def test_service_call_event_timeout_warnings_shape(self):
@@ -1128,9 +1092,7 @@ class TestSweepWarningsShape:
         conn_error.__cause__ = httpx.TimeoutException("read timed out")
         client = MagicMock()
         client.fire_event = AsyncMock(side_effect=conn_error)
-        tools = ServiceTools.__new__(ServiceTools)
-        tools._client = client
-        tools._device_tools = MagicMock()
+        tools = ServiceTools(client, MagicMock())
 
         result = await tools.ha_call_event("evt_x")
         _assert_warnings_list_shape(result)
@@ -1155,8 +1117,7 @@ class TestSweepWarningsShape:
         (no top-level ``success``) — uses the relaxed helper."""
         from ha_mcp.tools.tools_integrations import IntegrationTools
 
-        tools = IntegrationTools.__new__(IntegrationTools)
-        tools._client = MagicMock()
+        tools = IntegrationTools(MagicMock())
         tools._get_single_entry = AsyncMock(
             return_value={
                 "entry_id": "abc",

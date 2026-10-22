@@ -48,11 +48,18 @@ class EntryRemovalTools(StorageRemovalTools):
     async def _remove_entry(
         self, entry_id: str, current: dict[str, Any]
     ) -> dict[str, Any]:
-        kinds = await self.backend.execute(
-            "helpers.flow.types",
-            {"helper_type": current.get("domain", "")},
-            self.context,
-        )
+        try:
+            kinds = await self.backend.execute(
+                "helpers.flow.types",
+                {"helper_type": current.get("domain", "")},
+                self.context,
+            )
+        except Exception as error:  # noqa: BLE001 - backup discovery remains best effort
+            result = await self._capture_and_remove_entry(entry_id, None, current)
+            result.setdefault("warnings", []).append(
+                f"No pre-write backup was taken: {type(error).__name__} while identifying the helper flow"
+            )
+            return result
         helper_type = (
             current.get("domain")
             if current.get("domain") in kinds["types"]
@@ -61,7 +68,10 @@ class EntryRemovalTools(StorageRemovalTools):
         return await self._capture_and_remove_entry(entry_id, str(helper_type), current)
 
     async def _capture_and_remove_entry(
-        self, entry_id: str, helper_type: str, expected: dict[str, Any] | None = None
+        self,
+        entry_id: str,
+        helper_type: str | None,
+        expected: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from ha_mcp.utils.config_hash import json_values_equal
 
@@ -78,22 +88,26 @@ class EntryRemovalTools(StorageRemovalTools):
                     "The integration changed before its removal snapshot.",
                     status="not_started",
                 )
-            backup = await self.backend.execute(
-                "helpers.backup.capture",
-                {
-                    "kind": "integration" if helper_type == "integration" else "flow",
-                    "helper_type": helper_type,
-                    "action": "remove",
-                    "entry_id": entry_id,
-                    "backup_domain": "integration"
-                    if helper_type == "integration"
-                    else f"helper_{helper_type}",
-                    "source_tool": "ha_remove_helpers_integrations",
-                    "backup_id": entry_id,
-                    "current_entry": current,
-                },
-                self.context,
-            )
+            backup: dict[str, Any] = {}
+            if helper_type is not None:
+                backup = await self.backend.execute(
+                    "helpers.backup.capture",
+                    {
+                        "kind": "integration"
+                        if helper_type == "integration"
+                        else "flow",
+                        "helper_type": helper_type,
+                        "action": "remove",
+                        "entry_id": entry_id,
+                        "backup_domain": "integration"
+                        if helper_type == "integration"
+                        else f"helper_{helper_type}",
+                        "source_tool": "ha_remove_helpers_integrations",
+                        "backup_id": entry_id,
+                        "current_entry": current,
+                    },
+                    self.context,
+                )
             result: dict[str, Any] = await self.backend.execute(
                 "config.entries.remove",
                 {

@@ -139,10 +139,10 @@ async def exercise_snapshot_panel(
     assert backups, response.json()
     name = backups[0]["name"]
     diff = await checks.client.get(panel + "/" + name + "/diff")
-    diff.raise_for_status()
+    assert diff.status_code == 200, diff.text
     assert "Native transform" in diff.text, diff.json()
     restored = await checks.client.post(panel + "/" + name + "/restore", json={})
-    restored.raise_for_status()
+    assert restored.status_code == 200, restored.text
     assert restored.json()["success"], restored.json()
     reread = await checks.call("ha_config_get_script", {"script_id": "native_contract"})
     assert reread["config"] == initial["config"], reread
@@ -227,7 +227,7 @@ async def exercise_todo(checks: Any, base: str) -> None:
     name = backups[0]["name"]
     for _ in range(2):
         restored = await checks.client.post(panel + "/" + name + "/restore", json={})
-        restored.raise_for_status()
+        assert restored.status_code == 200, restored.text
         assert restored.json()["success"], restored.json()
     read = await checks.call("ha_get_todo", {"entity_id": entity_id})
     assert len(read["items"]) == 1 and read["items"][0]["status"] == "completed", read

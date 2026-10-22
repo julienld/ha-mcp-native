@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -35,6 +35,7 @@ def entry_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNames
     )
     settings = SimpleNamespace(
         enable_auto_backup=True,
+        redact_secrets=False,
         auto_backup_throttle_minutes=0,
         auto_backup_retain_per_entity=5,
         auto_backup_dir=str(tmp_path),
@@ -102,6 +103,7 @@ def entry_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNames
     client.send_websocket_message = AsyncMock(side_effect=set_enabled)
     monkeypatch.setattr(bm, "_ws_send", snapshot_read)
     monkeypatch.setattr(auto_backup, "get_global_settings", lambda: settings)
+    monkeypatch.setattr("ha_mcp.config.get_global_settings", lambda: settings)
     return SimpleNamespace(
         entry=entry,
         entity=entity,
@@ -237,9 +239,12 @@ async def test_template_enable_disable_keeps_integration_backup(
     snapshot = mutation["snapshots"][0]
     assert snapshot["domain"] == "integration"
     assert snapshot["config"] == original
-    # Only the own-entry guard reads the entry; the backup keeps the whole
-    # integration fragment without resolving a helper domain.
-    entry_backup.client.get_config_entry.assert_awaited_once_with("template-entry")
+    # Own-entry admission, capture identity and the final optimistic check all
+    # read the same canonical target; the write itself is dispatched once.
+    assert (
+        entry_backup.client.get_config_entry.await_args_list
+        == [call("template-entry")] * 3
+    )
 
 
 @pytest.mark.parametrize("operation", ["options", "delete"])
@@ -270,15 +275,23 @@ async def test_other_integration_mutations_keep_existing_backup(
 @pytest.mark.parametrize("operation", ["options", "delete"])
 @pytest.mark.parametrize("capture_state", ["disabled", "lookup_failed"])
 async def test_generic_template_mutation_preserves_best_effort_capture_policy(
-    entry_backup: SimpleNamespace, operation: str, capture_state: str
+    entry_backup: SimpleNamespace,
+    operation: str,
+    capture_state: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if capture_state == "disabled":
         entry_backup.manager._settings.enable_auto_backup = False
     else:
-        entry_backup.client.get_config_entry.side_effect = [
-            bm.HomeAssistantError("entry lookup temporarily unavailable"),
-            deepcopy(entry_backup.entry),
-        ]
+        monkeypatch.setattr(
+            entry_backup.manager,
+            "_fetch_config_for_snapshot",
+            AsyncMock(
+                side_effect=bm.HomeAssistantError(
+                    "snapshot lookup temporarily unavailable"
+                )
+            ),
+        )
 
     if operation == "options":
         result = await entry_backup.tools.ha_set_integration(
@@ -291,11 +304,15 @@ async def test_generic_template_mutation_preserves_best_effort_capture_policy(
 
     assert result["success"] is True
     assert entry_backup.mutations == [{"snapshots": [], "locked": True}]
-    # The mutation itself reads the entry once (the options walker, or the
-    # delete's own-entry guard), independently of backup.
-    assert entry_backup.client.get_config_entry.await_count == (
-        1 + int(capture_state == "lookup_failed")
-    )
+    # Backup failure cannot suppress admission/current-image reads. The options
+    # walker reads twice; removal also compares after awaited snapshot I/O.
+    assert entry_backup.client.get_config_entry.await_args_list == [
+        call("template-entry")
+    ] * (2 if operation == "options" else 3)
+    if capture_state == "lookup_failed":
+        assert any(
+            "No pre-write backup was taken" in warning for warning in result["warnings"]
+        )
 
 
 @pytest.mark.parametrize("confirm", [False, True])
@@ -339,10 +356,12 @@ async def test_entity_only_removal_captures_only_the_resolved_helper(
     would list every config entry looking for the entity_id)."""
     entry_backup.entry["domain"] = "utility_meter"
     capture = auto_backup._capture_pre_write_snapshot
-    captured_by: list[str] = []
+    captured_by: list[dict[str, Any]] = []
 
     async def record(func: Any, *args: Any, **kwargs: Any) -> Any:
-        captured_by.append(func.__name__)
+        captured_by.append(
+            {"tool": func.__name__, "target": args[1], "domain": kwargs["domain"]}
+        )
         return await capture(func, *args, **kwargs)
 
     monkeypatch.setattr(auto_backup, "_capture_pre_write_snapshot", record)
@@ -365,4 +384,52 @@ async def test_entity_only_removal_captures_only_the_resolved_helper(
     assert result["success"] is True
     snapshots = entry_backup.mutations[0]["snapshots"]
     assert [s["domain"] for s in snapshots] == ["helper_utility_meter"]
-    assert "ha_remove_helpers_integrations" not in captured_by
+    assert captured_by == [
+        {
+            "tool": "ha_remove_helpers_integrations",
+            "target": {"target": "template-entry"},
+            "domain": "helper_utility_meter",
+        }
+    ]
+
+
+@pytest.mark.parametrize("operation", ["options", "delete"])
+async def test_unreadable_admission_target_never_dispatches_mutation(
+    entry_backup: SimpleNamespace, operation: str
+) -> None:
+    entry_backup.client.get_config_entry.side_effect = bm.HomeAssistantError(
+        "entry unavailable"
+    )
+    with pytest.raises(ToolError):
+        if operation == "options":
+            await entry_backup.tools.ha_set_integration(
+                entry_id="template-entry", config={"state": "{{ 99 }}"}
+            )
+        else:
+            await entry_backup.tools.ha_remove_helpers_integrations(
+                target="template-entry", confirm=True
+            )
+    entry_backup.client.start_options_flow.assert_not_awaited()
+    entry_backup.client.delete_config_entry.assert_not_awaited()
+    assert entry_backup.mutations == []
+
+
+async def test_enable_disable_rechecks_the_exact_entry_after_backup(
+    entry_backup: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture = entry_backup.manager._fetch_config_for_snapshot
+
+    async def concurrently_changed(*args: Any, **kwargs: Any) -> Any:
+        before = await capture(*args, **kwargs)
+        entry_backup.entry["title"] = "Changed externally during snapshot"
+        return before
+
+    monkeypatch.setattr(
+        entry_backup.manager, "_fetch_config_for_snapshot", concurrently_changed
+    )
+    with pytest.raises(ToolError, match="CONFIG_CONFLICT"):
+        await entry_backup.tools.ha_set_integration(
+            entry_id="template-entry", enabled=False
+        )
+    entry_backup.client.send_websocket_message.assert_not_awaited()
+    assert entry_backup.mutations == []

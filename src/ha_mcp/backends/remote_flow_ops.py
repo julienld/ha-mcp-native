@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from ha_mcp.errors import ErrorCode, create_error_response
+from ha_mcp.runtime.errors import raise_failure, websocket_error_message
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
 
@@ -13,7 +15,26 @@ async def read_flow_operation(
     if operation == "config.subentries.list":
         response = await client.list_config_subentries(arguments["entry_id"])
         if not isinstance(response, dict) or response.get("success") is not True:
-            raise ToolFailure("RESOURCE_NOT_FOUND", "Could not list config subentries.")
+            error = websocket_error_message(
+                response.get("error", "Operation failed")
+                if isinstance(response, dict)
+                else "Operation failed"
+            )
+            raise_failure(
+                create_error_response(
+                    ErrorCode.SERVICE_CALL_FAILED,
+                    f"Failed to list config subentries: {error}",
+                    context={"entry_id": arguments["entry_id"]},
+                )
+            )
+        if not isinstance(response.get("result"), list):
+            raise_failure(
+                create_error_response(
+                    ErrorCode.SERVICE_CALL_FAILED,
+                    "Unexpected config subentry list response",
+                    context={"entry_id": arguments["entry_id"], "details": response},
+                )
+            )
         return response["result"]
     if operation == "config.flow.settings":
         from ha_mcp.redaction import redaction_enabled

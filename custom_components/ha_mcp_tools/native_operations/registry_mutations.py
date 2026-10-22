@@ -13,30 +13,8 @@ from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 from ha_mcp.utils.config_hash import json_values_equal
 
 from ..helper_collections import _INVALID_ERRORS
+from .command_validation import _validated_payload as _validated_payload
 from .registry_failures import registry_outcome_unknown, registry_target_missing
-
-
-def _validated_payload(
-    hass: HomeAssistant, command: str, payload: dict[str, Any]
-) -> dict[str, Any]:
-    if {"id", "type"}.intersection(payload):
-        raise UnsupportedOperation("registry.payload.envelope")
-    registration = (hass.data.get("websocket_api") or {}).get(command)
-    if not registration or not callable(registration[1]):
-        raise UnsupportedOperation(command + ".validator")
-    try:
-        validated: dict[str, Any] = registration[1](
-            {"id": 1, "type": command, **payload}
-        )
-    except _INVALID_ERRORS as error:
-        data = create_validation_error(str(error))
-        raise ToolFailure(
-            data["error"]["code"],
-            data["error"]["message"],
-            data=data,
-            status="not_started",
-        ) from error
-    return {key: value for key, value in validated.items() if key not in {"id", "type"}}
 
 
 def _category_owners(hass: HomeAssistant) -> tuple[Any, Any]:

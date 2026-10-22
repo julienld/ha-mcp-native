@@ -227,3 +227,57 @@ async def test_native_area_restore_preserves_floor_assignment_in_core_payload(ru
         "kind": "area",
         **before,
     }
+
+
+async def test_area_restore_waits_for_the_shared_writer_lock_before_reading_safety(
+    runtime, monkeypatch
+):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from ha_mcp.tool_api import CallContext
+    from ha_mcp.utils import registry_update_lock as locks
+
+    manager, snapshots, store, _path, _rows, _calls = runtime
+    current = {"area_id": "room", "name": "Before writer", "floor_id": None}
+    read = []
+
+    async def execute(operation, args, actor):
+        if operation == "registry.area.read":
+            read.append(copy.deepcopy(current))
+            return copy.deepcopy(current)
+        assert args["expected_item"] == current
+        return {"success": True, "result": args["data"]}
+
+    manager.backend.execute = execute
+    original = locks.registry_update_lock
+    reached = asyncio.Event()
+
+    @asynccontextmanager
+    async def observed(kind, identifier):
+        if (kind, identifier) == ("area", "room"):
+            reached.set()
+        async with original(kind, identifier):
+            yield
+
+    monkeypatch.setattr(locks, "registry_update_lock", observed)
+    saved = {"kind": "area", "area_id": "room", "name": "Restored", "floor_id": None}
+    path = store.capture("area_or_floor", "area:room", saved, "fixture")
+    task = None
+    try:
+        async with original("area", "room"):
+            task = asyncio.create_task(
+                snapshots.restore_snapshot(path.name, CallContext("owner"))
+            )
+            await asyncio.wait_for(reached.wait(), 2)
+            assert not read, "A queued restore must not capture an obsolete preimage"
+            current["name"] = "Completed writer"
+        result = await task
+        assert (
+            store.read_snapshot(result["safety_backup"])["config"]["name"]
+            == "Completed writer"
+        )
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

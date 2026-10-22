@@ -211,3 +211,26 @@ async def test_todo_capture_uses_prepared_item_without_a_second_live_read(runtim
     assert record["entity_id"] == "todo.shopping::Buy milk"
     assert record["config"] == {"todo_entity_id": "todo.shopping", **item}
     assert not calls
+
+
+async def test_core_yaml_nodes_can_be_rendered_in_the_backup_panel(
+    runtime, monkeypatch
+):
+    from custom_components.ha_mcp_tools.native_operations import core_views
+    from ha_mcp.runtime.snapshot_projection import panel_diff
+    from ha_mcp.tool_api import CallContext
+
+    class NodeDict(dict):
+        pass
+
+    manager, snapshots, store, _path, _rows, _calls = runtime
+    current = NodeDict(sequence=[NodeDict(action="light.turn_off")])
+    monkeypatch.setattr(core_views, "read_config_item", AsyncMock(return_value=current))
+    path = store.capture(
+        "script", "script.test", {"sequence": [{"action": "light.turn_on"}]}, "fixture"
+    )
+    data, live = await snapshots.snapshot_comparison(path.name, CallContext("owner"))
+    result = await snapshots._io(panel_diff, path.name, data, live)
+    assert result["success"]
+    assert "+- action: light.turn_off" in result["diff"]
+    assert "-- action: light.turn_on" in result["diff"]
