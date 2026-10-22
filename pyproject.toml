@@ -180,6 +180,7 @@ extend-exclude = [
     "src/ha_mcp/_vendor/fastmcp",
     "src/ha_mcp/_vendor/mcp",
     "src/ha_mcp/_vendor/mcp_types",
+    "src/ha_mcp/_vendor/rich",
     # Vendored skills submodule (src/ha_mcp/resources/skills-vendor) — upstream's
     # code, shipped as package data. Kept in sync with PATHS_IGNORE in
     # scripts/codeql_quality_gate.py.

@@ -225,9 +225,11 @@ async def exercise(checks: Checks) -> dict:
         # invalid credential and an authenticated user without admin access.
         assert response.status_code in (401, 403), response.status_code
     checks.passed("missing_and_non_admin_identity_rejected")
+    legacy_headers = checks.headers()
+    legacy_headers.pop("Mcp-Method", None)
     response = await checks.client.post(
         BASE + checks.path,
-        headers=checks.headers(),
+        headers=legacy_headers,
         json=message(
             "initialize",
             {
