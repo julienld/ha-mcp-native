@@ -8,6 +8,7 @@ The live-settings read is patched at the ``ha_mcp.read_only`` import site.
 
 import ast
 import json
+import runpy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -919,6 +920,17 @@ def _decorated_tool_param_names(module_path: Path, tool_name: str) -> set[str]:
     and the ``@mcp.tool(...)`` closure pattern, where the function name IS
     the tool name)."""
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    scripts = _SRC_TOOLS_DIR.parents[2] / "scripts"
+    extractor = runpy.run_path(str(scripts / "extract_tools.py"))
+    shared = runpy.run_path(str(scripts / "extract_tools_shared.py"))
+    resolver = shared["SharedToolExtractor"](
+        extractor["_import_source"],
+        extractor["_module_scope"],
+        extractor["_extract_tool_from_node"],
+    )
+    resolved = resolver.resolve_function(module_path, tool_name)
+    if resolved is not None:
+        tree.body.append(resolved)
 
     def _names_match(node: ast.AST) -> bool:
         # @tool(name="ha_...") explicit name kwarg.

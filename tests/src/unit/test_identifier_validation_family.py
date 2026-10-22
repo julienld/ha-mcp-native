@@ -846,11 +846,12 @@ class TestFlowHelperDirectGuard:
         # guard-message rewording; tighten to positive proof — mock the
         # validator and assert it was not invoked on the None path, which
         # is independent of any downstream behaviour.
+        from ha_mcp.runtime.flows import helpers as shared_helper_flow
         from ha_mcp.tools.config_helpers import flow as helper_flow
 
         validator_mock = MagicMock()
         monkeypatch.setattr(
-            helper_flow,
+            shared_helper_flow,
             "validate_identifier_not_empty",
             validator_mock,
         )
