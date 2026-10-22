@@ -5,7 +5,7 @@ from typing import Any
 
 
 async def exercise_backups(checks: Any) -> None:
-    seeded = await checks.control("seed_backups")
+    seeded = await checks.control("seed_backups", {})
     await _exercise_edit_backup(checks, seeded["state_entity"])
     first = await checks.call(
         "ha_manage_backup",
@@ -76,7 +76,7 @@ async def exercise_backups(checks: Any) -> None:
             "native_backup_lists_real_archives_refuses_newest_and_deletes_only_the_older_target"
         )
     finally:
-        await checks.control("cleanup_backups")
+        await checks.control("cleanup_backups", {})
 
 
 async def _exercise_edit_backup(checks: Any, entity_id: str) -> None:

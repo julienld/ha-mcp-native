@@ -99,6 +99,8 @@ class FixtureView(HomeAssistantView):
         observed = await self._observation(request, operation)
         if observed is not None:
             return observed
+        if operation != "probe":
+            return web.json_response({"error": "unknown_operation"}, status=404)
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         connections = await self.hass.async_add_executor_job(
             lambda: psutil.Process().net_connections(kind="inet")
