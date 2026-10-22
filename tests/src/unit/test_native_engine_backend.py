@@ -69,10 +69,14 @@ def native(monkeypatch: pytest.MonkeyPatch) -> Any:
     )
     module = importlib.import_module("custom_components.ha_mcp_tools.native_backend")
     monkeypatch.setattr(module, "json_bytes", lambda value: json.dumps(value).encode())
-    mutations = importlib.import_module(
-        "custom_components.ha_mcp_tools.native_operations.storage_api"
-    )
-    monkeypatch.setattr(mutations, "json_bytes", module.json_bytes)
+    # These owners may already have been imported by another test module.
+    # Replacing sys.modules above does not replace their `from ... import`
+    # bindings; install the same real serializer for this native fake world.
+    for owner_name in ("storage_api", "registry_access"):
+        owner = importlib.import_module(
+            f"custom_components.ha_mcp_tools.native_operations.{owner_name}"
+        )
+        monkeypatch.setattr(owner, "json_bytes", module.json_bytes)
     monkeypatch.setattr(module, "Context", SimpleNamespace)
     monkeypatch.setattr(module, "vol", _REAL_VOL)
     monkeypatch.setattr(wsapi, "vol", _REAL_VOL)

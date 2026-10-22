@@ -81,6 +81,10 @@ _SHARED_ATTACH_SIBLINGS = {
     "ha_config_set_dashboard": ("dashboard_advice.py",),
 }
 _NATIVE_ATTACH_OWNERS = {
+    "ha_config_set_yaml": (
+        REPO_ROOT / "custom_components/ha_mcp_tools/native_operations/yaml_config.py",
+        "edit",
+    ),
     "ha_config_set_dashboard": (
         REPO_ROOT
         / "custom_components/ha_mcp_tools/native_operations/lovelace_dashboards.py",

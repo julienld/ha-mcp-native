@@ -109,7 +109,7 @@ async def test_missing_entry_and_backup_failure_never_dispatch_file_write(
         store, "capture", lambda *_args: (_ for _ in ()).throw(OSError("disk full"))
     )
     with pytest.raises(ToolFailure) as raised:
-        await service.delete_file("www/notes.txt")
+        await service.delete_file("www/notes.txt", confirm=True)
     assert (
         raised.value.code == "BACKUP_CAPTURE_FAILED" and target.read_text() == "before"
     )
@@ -169,3 +169,32 @@ def test_file_projection_matches_the_frozen_public_contract(filesystem):
         assert not _changed_inputs(expected["inputSchema"], definition.input_schema)
         assert definition.annotations == expected["annotations"]
         assert definition.description == expected["description"]
+
+
+@pytest.mark.parametrize("confirm", [None, False, True])
+async def test_delete_file_runs_the_public_facade_and_requires_confirmation(
+    filesystem, confirm
+):
+    from custom_components.ha_mcp_tools.native_filesystem_tools import (
+        filesystem_definitions,
+    )
+    from ha_mcp.runtime import Engine
+
+    _service, manager, _owner, target = filesystem
+    engine = Engine(manager.backend, filesystem_definitions(manager))
+    arguments = {"path": "www/notes.txt"}
+    if confirm is not None:
+        arguments["confirm"] = confirm
+    result = await engine.call("ha_delete_file", arguments, CallContext("owner"))
+    rows = manager.snapshots._store().list_snapshots(domain="file")
+    if confirm:
+        assert not result.is_error and result.data["success"]
+        assert not target.exists() and len(rows) == 1
+        assert (
+            manager.snapshots._store().read_snapshot(rows[0]["name"])["config"]
+            == "before"
+        )
+    else:
+        assert result.is_error and result.status == "not_started"
+        assert result.data["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+        assert target.read_text() == "before" and rows == []

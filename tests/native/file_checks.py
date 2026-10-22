@@ -85,10 +85,10 @@ async def _files(checks: Any, panel: str) -> None:
     restored = await _restore(checks, panel + "/backups", rows[0]["name"])
     assert restored["apply_status"] == "applied" and restored["safety_backup"], restored
     assert (await checks.call("ha_read_file", {"path": path}))["content"] == "before"
-    await checks.call("ha_delete_file", {"path": path})
+    await checks.call("ha_delete_file", {"path": path, "confirm": True})
     await _restore(checks, panel + "/backups", rows[0]["name"])
     assert (await checks.call("ha_read_file", {"path": path}))["content"] == "before"
-    await checks.call("ha_delete_file", {"path": path})
+    await checks.call("ha_delete_file", {"path": path, "confirm": True})
     checks.passed("native_file_CRUD_exact_backups_UI_restore_and_deleted_file_recovery")
 
     response = await checks.client.post(
@@ -100,7 +100,9 @@ async def _files(checks: Any, panel: str) -> None:
     await checks.call(
         "ha_write_file", {"path": "native-files/note.txt", "content": "custom"}
     )
-    await checks.call("ha_delete_file", {"path": "native-files/note.txt"})
+    await checks.call(
+        "ha_delete_file", {"path": "native-files/note.txt", "confirm": True}
+    )
     response = await checks.client.post(panel + "/fs-custom-paths", json={"paths": []})
     assert response.status_code == 200, response.text
     await _failure(

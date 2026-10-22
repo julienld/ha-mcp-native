@@ -36,7 +36,7 @@
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 72,
+    "native_catalog_declarations": 76,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -1775,7 +1775,7 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
@@ -2812,7 +2812,7 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
@@ -3479,7 +3479,7 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
@@ -4526,7 +4526,7 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
