@@ -217,7 +217,9 @@ async def _exercise_restore(
 async def exercise_dashboard_card_types(checks: Any) -> None:
     """Run after resource migration/CRUD to inspect the live combined catalog."""
     described = await _describe(checks, None)
-    assert described["success"] and "markdown" in described["card_types"], described
+    assert described["success"] and any(
+        row["type"] == "markdown" and row["name"] for row in described["card_types"]
+    ), described
     assert "custom_status" in described, described
     checks.passed(
         "native_dashboard_card_types_use_real_frontend_and_resource_producers"

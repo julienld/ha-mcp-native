@@ -39,9 +39,41 @@ def service(dashboards, monkeypatch):
         ),
     )
     monkeypatch.setattr(DashboardAdvice, "warnings", AsyncMock(return_value=[]))
-    monkeypatch.setattr(DashboardAdvice, "attach_skill", AsyncMock())
     engine = Engine(manager.backend, build_dashboard_tools(manager))
     return manager, engine, owner, collection, active
+
+
+@pytest.mark.parametrize("mode", ["config", "patch", "python_transform"])
+async def test_every_dashboard_edit_mode_returns_requested_skill_content(
+    service, monkeypatch, mode
+):
+    from custom_components.ha_mcp_tools.native_operations import dashboard_advice
+
+    manager, engine, owner, *_ = service
+    manager.policy.flags["enable_mandatory_bps"] = True
+    content = {"references/dashboard-guide.md": "Actual per-write guidance"}
+    monkeypatch.setattr(
+        dashboard_advice,
+        "read_skill_files",
+        lambda files, enabled: {"content": content, "vendor_missing": False},
+    )
+    candidate = {"views": [{"title": "New", "cards": []}]}
+    payload = {
+        "config": candidate,
+        "patch": [{"op": "replace", "path": "/views", "value": candidate["views"]}],
+        "python_transform": "config['views'].append({'title': 'New', 'cards': []})",
+    }[mode]
+    result = await engine.call(
+        "ha_config_set_dashboard",
+        {
+            "url_path": "my-dash",
+            mode: payload,
+            "config_hash": compute_config_hash(owner._data["config"]),
+        },
+        CallContext("owner"),
+    )
+    assert not result.is_error and result.data["skill_content"] == content
+    assert result.data["skill_content_hint"] and owner.calls[-1] == candidate
 
 
 async def test_dashboard_public_metadata_body_patch_transform_and_delete(service):

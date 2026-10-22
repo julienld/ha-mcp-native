@@ -59,6 +59,7 @@ _ATTACH_CALL_NAMES = frozenset(
     {
         "attach_skill_content",
         "apply_skill_content",
+        "attach_skill",
         "_attach_helper_skill",
         "_attach_dashboard_skill",
     }
@@ -75,7 +76,17 @@ _ATTACH_SIBLING_MODULES: dict[str, tuple[str, ...]] = {
         "config_helpers/update.py",
     )
 }
-_SHARED_ATTACH_SIBLINGS = {"ha_config_set_helper": ("helper_storage.py",)}
+_SHARED_ATTACH_SIBLINGS = {
+    "ha_config_set_helper": ("helper_storage.py",),
+    "ha_config_set_dashboard": ("dashboard_advice.py",),
+}
+_NATIVE_ATTACH_OWNERS = {
+    "ha_config_set_dashboard": (
+        REPO_ROOT
+        / "custom_components/ha_mcp_tools/native_operations/lovelace_dashboards.py",
+        "set",
+    ),
+}
 
 
 @cache
@@ -297,6 +308,12 @@ def test_write_tool_attaches_skill_content_somewhere(
     assert fn is not None, f"{tool_name} not found in {module_file}"
     source_path = getattr(fn, "_source_path", module_path)
 
+    if owner := _NATIVE_ATTACH_OWNERS.get(tool_name):
+        source_path, method = owner
+        owner_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        fn = _find_function_by_name(owner_tree, method)
+        assert fn is not None, f"{tool_name}'s native owner has no {method} method"
+
     # Count attach calls anywhere in the module — the helper tool wraps
     # at the class-level method, others wrap inline in the @tool method,
     # and dashboards/helpers use shared wrappers. All count. The helper
@@ -341,10 +358,13 @@ def test_write_tool_attaches_skill_content_somewhere(
         f"At least one return path is missing its attach call — this is the "
         f"PR #1448 bug class (silently broken MandatoryBPS on one branch)."
     )
+    if tool_name in _NATIVE_ATTACH_OWNERS:
+        # The advice helper's own apply call cannot hide a missing invocation
+        # from the actual native success path.
+        assert _count_attach_calls(fn) >= success_returns
 
     # A facade's old attach calls must not hide a missing attach in the native
     # implementation. Check the actual owner and only its declared siblings.
-    source_path = getattr(fn, "_source_path", module_path)
     if source_path != module_path:
         shared_paths = [
             source_path,
