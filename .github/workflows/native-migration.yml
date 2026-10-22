@@ -1,0 +1,54 @@
+name: Native migration
+
+on:
+  push:
+    branches: [feat/native-hacs]
+    paths:
+      - 'src/**'
+      - 'custom_components/**'
+      - 'tests/**'
+      - 'scripts/native_*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/native-migration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-migration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked project and browser test dependencies
+        run: |
+          uv sync --frozen --group dev
+          npm ci --prefix tests/js
+      - name: Run complete unit suite
+        working-directory: tests
+        run: uv run --frozen pytest src/unit/ -n 2 --tb=short -q --junitxml=unit-results.xml
+      - name: Preserve unit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-unit-results
+          path: tests/unit-results.xml
+          if-no-files-found: ignore
+          retention-days: 14
