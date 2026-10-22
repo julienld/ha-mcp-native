@@ -97,6 +97,30 @@
     "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
     "public_contract": "original schemas and safety annotations remain unchanged"
   },
+  "native_themes": {
+    "owner": "actual Core Frontend library/services and engine user's UserStore",
+    "read": "cached loaded store only; never trigger storage initialization or cancel its shared Future",
+    "write": "validate before admitted potentially migrating load; pin user/store/schema, compare typed before-image and drain owned I/O",
+    "identity": "only locally validated effective renderer app token; never substitute caller/server credentials or create a token",
+    "qualification": "Container proves actual theme defaults and absent renderer refusal; real Supervisor/Puppet discovery and engine account are not qualified",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_system_actions": {
+    "self_affecting": "restart/self-reload are scheduled requests, not completed restart/reload promises",
+    "handoff": "revalidate actor, credential, unchanged policy and target, then original Core job with a fresh actor Context and cleared MCP admission context",
+    "shutdown": "cancel pending handoffs before draining Engine; handed-off Core work cannot wait on its own manager",
+    "ordinary_reload": "await Core result and retain partial/unknown outcomes; no transport polling",
+    "qualification": "actual script, config-entry and self reloads; full process restart is not established by this Container bench",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_energy": {
+    "owner": "published Core EnergyManager, installed validator and original source normalizer",
+    "not_ready": "temporary unavailable result for an absent manager or its shared loading Future; never initiate storage load or migration from a read",
+    "normalization": "detached expected and writer payload copies; compare typed Core data after callbacks",
+    "dispatch": "one native save attempt, no rebase or replay after an uncertain outcome",
+    "post_save_race": "withhold config/hash/validation if authority, owner or preferences change during semantic validation; retain write_completed=true, operation_outcome=confirmed and requires_reread=true",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
   "native_bulk_operations": {
     "operation_ids": "device-* IDs are scoped to the invoking user, client and manager; Engine invocation IDs remain distinct",
     "repeated_target": "serialized per target with its own before-image, confirmation and overlap warning",

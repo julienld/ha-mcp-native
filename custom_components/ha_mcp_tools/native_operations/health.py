@@ -260,21 +260,9 @@ class NativeHealth(HealthResults):
         }
 
     async def _themes(self) -> dict[str, Any]:
-        from homeassistant.components.frontend import (
-            DATA_DEFAULT_DARK_THEME,
-            DATA_DEFAULT_THEME,
-            DATA_THEMES,
-        )
+        from .frontend_themes import theme_image
 
-        if self.hass.config.recovery_mode or self.hass.config.safe_mode:
-            return summarize_theme_listing({"themes": {}, "default_theme": "default"})
-        return summarize_theme_listing(
-            {
-                "themes": self.hass.data[DATA_THEMES],
-                "default_theme": self.hass.data[DATA_DEFAULT_THEME],
-                "default_dark_theme": self.hass.data.get(DATA_DEFAULT_DARK_THEME),
-            }
-        )
+        return summarize_theme_listing(theme_image(self.hass))
 
     async def _dead(self, snapshot: dict[str, Any] | Exception) -> dict[str, Any]:
         entries = self._rows(snapshot, "config_entries")

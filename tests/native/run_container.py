@@ -27,6 +27,7 @@ from configuration_checks import (
 )
 from dashboard_checks import exercise_dashboard_card_types, exercise_dashboards
 from device_checks import exercise_devices
+from energy_checks import exercise_energy
 from entity_checks import exercise_entities
 from event_checks import exercise_events
 from group_checks import exercise_groups
@@ -38,6 +39,8 @@ from overview_checks import exercise_overview
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
 from search_checks import exercise_search
+from system_checks import exercise_system_actions, exercise_system_self_reload
+from theme_checks import exercise_themes
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -405,7 +408,10 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_dashboard_card_types(checks)
     await exercise_search(checks, receipt, BASE)
     await exercise_history(checks)
+    await exercise_energy(checks)
+    await exercise_system_actions(checks)
     await exercise_logs(checks)
+    await exercise_themes(checks)
     await exercise_health(checks)
     await exercise_overview(checks, BASE)
 
@@ -452,8 +458,8 @@ async def exercise(checks: Checks) -> dict:
     )
     assert "result" in unpack(response)
     checks.passed("legacy_initialize")
+    await exercise_system_self_reload(checks)
     await exercise_llm(checks)
-    await checks.control("reload", {})
     final = await checks.ready()
     assert checks.path == original_path
     assert final["listeners"] == [8123], final
@@ -498,8 +504,10 @@ async def main() -> None:
         "lovelace:\n  mode: storage\n  dashboards:\n    native-yaml-search:\n"
         "      mode: yaml\n      title: Native YAML Search\n      show_in_sidebar: false\n"
         "      filename: native-search-dashboard.yaml\n"
-        "recorder:\n  commit_interval: 1\nhistory:\n"
-        "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nfrontend:\nnative_fixture:\n"
+        "recorder:\n  commit_interval: 1\nhistory:\nenergy:\n"
+        "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\n"
+        "frontend:\n  themes:\n    native_fixture_blue:\n      primary-color: '#2255aa'\n"
+        "    native_fixture_night:\n      primary-color: '#112244'\nnative_fixture:\n"
         "camera:\n  - platform: native_fixture\n",
         encoding="utf-8",
     )

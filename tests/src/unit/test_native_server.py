@@ -183,6 +183,30 @@ async def test_failed_drain_can_be_retried_without_losing_owned_engine() -> None
     assert runtime.device_operations.closed
 
 
+async def test_manager_cancels_deferred_restart_before_draining_the_engine() -> None:
+    from custom_components.ha_mcp_tools.native_operations.system_lifecycle import (
+        NativeSystemLifecycle,
+    )
+    from ha_mcp.tool_api import CallContext
+
+    runtime = manager()
+    runtime._supervisor = None
+    runtime.system_lifecycle = NativeSystemLifecycle(runtime, reply_delay=60)
+    runtime.system_lifecycle.schedule("restart", CallContext("owner"))
+    pending = next(iter(runtime.system_lifecycle.pending))
+
+    async def drain() -> None:
+        assert pending.done(), "A deferred self-restart can race the engine's unload"
+
+    runtime.engine.stop.side_effect = drain
+    try:
+        await runtime.async_stop()
+        assert runtime.system_lifecycle.closed and not runtime.system_lifecycle.pending
+        runtime.hass.services.async_call.assert_not_called()
+    finally:
+        await runtime.system_lifecycle.stop()
+
+
 def test_strict_bps_uses_shared_ack_protocol_and_strips_key() -> None:
     from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
     from ha_mcp.runtime.best_practices import AcknowledgmentState

@@ -141,12 +141,24 @@ async def test_native_theme_observer_uses_identified_core_user_store_only(
     module = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.screenshot_theme"
     )
-    store = SimpleNamespace(data={"theme": {"dark": False}}, async_set_item=AsyncMock())
+
+    class UserStore:
+        def __init__(self):
+            self.data = {"theme": {"dark": False}}
+            self.async_set_item = AsyncMock()
+
+    store = UserStore()
     load = AsyncMock(return_value=store)
+    future = asyncio.get_running_loop().create_future()
+    future.set_result(store)
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.components.frontend.storage",
-        SimpleNamespace(async_user_store=load),
+        SimpleNamespace(
+            async_user_store=load,
+            UserStore=UserStore,
+            DATA_STORAGE="frontend_user_data",
+        ),
     )
 
     def validate(token):
@@ -156,7 +168,10 @@ async def test_native_theme_observer_uses_identified_core_user_store_only(
             else None
         )
 
-    hass = SimpleNamespace(auth=SimpleNamespace(async_validate_access_token=validate))
+    hass = SimpleNamespace(
+        auth=SimpleNamespace(async_validate_access_token=validate),
+        data={"frontend_user_data": {"renderer-user": future}},
+    )
     observer = module.NativeThemeObserver(
         hass,
         CallContext("admin"),
@@ -168,9 +183,53 @@ async def test_native_theme_observer_uses_identified_core_user_store_only(
     store.data["theme"] = {"dark": True}
     await observer.detect_change()
     assert observer.taken and "changed" in observer.warnings[0]
-    assert load.call_args.args == (hass, "renderer-user")
+    load.assert_not_awaited()
     store.async_set_item.assert_not_awaited()
     assert "engine-placeholder" not in repr(observer) + json.dumps(observer.warnings)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+async def test_screenshot_theme_observation_never_initializes_or_cancels_a_user_store(
+    native, monkeypatch, pending
+):
+    module = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.screenshot_theme"
+    )
+
+    class UserStore:
+        def __init__(self):
+            self.data = {"theme": {"dark": False}}
+
+    load = AsyncMock(return_value=UserStore())
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.frontend.storage",
+        SimpleNamespace(
+            async_user_store=load,
+            UserStore=UserStore,
+            DATA_STORAGE="frontend_user_data",
+        ),
+    )
+    future = asyncio.get_running_loop().create_future()
+    hass = SimpleNamespace(
+        auth=SimpleNamespace(
+            async_validate_access_token=lambda _: SimpleNamespace(
+                user=SimpleNamespace(id="renderer-user", is_active=True)
+            )
+        ),
+        data={"frontend_user_data": {"renderer-user": future}} if pending else {},
+    )
+    observer = module.NativeThemeObserver(
+        hass,
+        CallContext("admin"),
+        AsyncMock(),
+        token="engine-placeholder",
+        settle_seconds=0,
+    )
+    await observer.take_snapshot()
+    assert not observer.taken and observer.warnings
+    load.assert_not_awaited()
+    assert not future.cancelled()
 
 
 async def test_explicit_renderer_never_inherits_a_different_apps_identity(

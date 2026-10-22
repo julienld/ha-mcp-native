@@ -68,6 +68,7 @@ def _prewarm() -> bool:
         "native_operations.dashboard_restore",
         "native_operations.blueprint_restore",
         "native_operations.device_operations",
+        "native_operations.system_lifecycle",
     ):
         importlib.import_module(f"{__package__}.{module}")
     for module in (
@@ -83,7 +84,10 @@ def _prewarm() -> bool:
         "homeassistant.components.blueprint.importer",
         "homeassistant.components.automation",
         "homeassistant.components.script",
+        "homeassistant.components.frontend.storage",
         "homeassistant.components.search",
+        "homeassistant.components.energy.data",
+        "homeassistant.components.energy.validate",
     ):
         importlib.import_module(module)
     from io import StringIO
@@ -206,6 +210,7 @@ class NativeServerManager:
         self.path = f"/api/webhook/{entry.data[DATA_WEBHOOK_ID]}"
         self.engine: Any = None
         self.device_operations: Any = None
+        self.system_lifecycle: Any = None
         self.backend: Any = None
         self.mcp: Any = None
         self.app: Any = None
@@ -257,6 +262,7 @@ class NativeServerManager:
         from .native_catalog import build_native_catalog
         from .native_code import NativeCode
         from .native_operations.device_operations import NativeDeviceOperations
+        from .native_operations.system_lifecycle import NativeSystemLifecycle
         from .native_settings import NativeSettings
         from .native_snapshots import NativeSnapshots
         from .native_visibility import NativeVisibility
@@ -283,6 +289,7 @@ class NativeServerManager:
         self.visibility = NativeVisibility(self)
         self.approval_gate = NativeApprovalGate(self)
         self.device_operations = NativeDeviceOperations()
+        self.system_lifecycle = NativeSystemLifecycle(self)
         self.engine = Engine(
             self.backend,
             tools=build_native_catalog(self),
@@ -520,6 +527,8 @@ class NativeServerManager:
         self._stopped = True
 
     async def _drain_owned_resources(self) -> None:
+        if (lifecycle := getattr(self, "system_lifecycle", None)) is not None:
+            await lifecycle.stop()
         if self.engine is not None:
             await self.engine.stop()
         if (device_operations := getattr(self, "device_operations", None)) is not None:

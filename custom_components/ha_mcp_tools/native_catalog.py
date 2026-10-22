@@ -11,6 +11,7 @@ from .native_calendar_tools import build_calendar_tools
 from .native_camera_tools import camera_definition
 from .native_dashboard_tools import build_dashboard_tools
 from .native_device_tools import build_device_tools
+from .native_energy_tools import energy_definition
 from .native_entity_tools import entity_removal_definition, entity_write_definition
 from .native_event_tools import event_definition
 from .native_group_tools import build_group_tools
@@ -22,6 +23,8 @@ from .native_operations.templates import template_definition
 from .native_overview_tools import overview_definition
 from .native_resource_tools import build_resource_tools
 from .native_search_tools import search_definition
+from .native_system_tools import system_definitions
+from .native_theme_tools import theme_definition
 from .native_trace_tools import trace_definition
 
 
@@ -38,12 +41,15 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *bulk_definitions(manager),
         entity_removal_definition(manager),
         entity_write_definition(manager),
+        energy_definition(manager),
         event_definition(manager),
         *build_group_tools(manager),
         camera_definition(manager),
         overview_definition(manager),
         search_definition(manager),
         health_definition(manager),
+        *system_definitions(manager),
+        theme_definition(manager),
         *build_calendar_tools(manager),
         *build_resource_tools(manager),
         *build_dashboard_tools(manager),

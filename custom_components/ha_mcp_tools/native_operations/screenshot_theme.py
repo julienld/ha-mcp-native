@@ -10,8 +10,8 @@ from typing import Any
 
 from ha_mcp.tool_api import CallContext
 from ha_mcp.utils.config_hash import json_values_equal
-from ha_mcp.utils.owned_executor import await_owned_io
 
+from .frontend_user_data import cached_theme_store, check_theme_store
 from .registry_access import Authorize, authorize_actor
 
 
@@ -28,8 +28,6 @@ class NativeThemeObserver:
     settle_seconds: float = 1.0
 
     async def _read(self) -> Any:
-        from homeassistant.components.frontend.storage import async_user_store
-
         await authorize_actor(self.actor, self.authorize)
         refresh = self.hass.auth.async_validate_access_token(self.token)
         if inspect.isawaitable(refresh):
@@ -39,9 +37,10 @@ class NativeThemeObserver:
         if self.user_id is not None and refresh.user.id != self.user_id:
             raise PermissionError("The engine credential owner changed")
         self.user_id = refresh.user.id
-        store = await await_owned_io(async_user_store(self.hass, self.user_id))
+        pin = cached_theme_store(self.hass, self.user_id)
         await authorize_actor(self.actor, self.authorize)
-        return copy.deepcopy(store.data.get("theme"))
+        check_theme_store(self.hass, pin)
+        return copy.deepcopy(pin.store.data.get("theme"))
 
     async def take_snapshot(self) -> None:
         await authorize_actor(self.actor, self.authorize)

@@ -265,6 +265,40 @@ write against simultaneous external file edits. Avoid editing a blueprint
 through another interface while it is being written or restored. Public schemas
 and hints remain unchanged; list, get and substitute are admitted as reads.
 
+Native themes read the actual Frontend library and use its original service
+validator and actor Context to change defaults. Engine-profile reads require an
+already loaded Core UserStore; cold or pending storage is explicitly unavailable
+instead of being loaded by a read. Writes validate their payload before any
+potentially migrating store initialization, under write admission. Only a token
+proven to belong to the effective renderer app may identify its user; HA-MCP never
+substitutes the caller or creates a token. Container covers real theme defaults
+and absent-renderer refusal; a real Supervisor/Puppet engine account remains
+outside this qualification.
+
+Native restart and self-reload responses report a scheduled request, with
+`restarted=false` or `reloaded=false`. Before handoff, the pending request
+rechecks its actor, credential, unchanged policy and target. Core then owns the
+job with a fresh actor Context and no inherited MCP admission context. Shutdown
+cancels pending handoffs before draining tools, avoiding a self-reload cycle.
+Ordinary reloads wait for Core's result and preserve partial or unknown outcomes;
+there is no transport polling. The Container bench exercises actual script,
+config-entry and self reloads, but does not establish a full process restart.
+
+Native Energy uses Core's published manager, registered validator and original
+source normalizer. An absent or still-loading manager returns a temporary
+unavailable result; HA-MCP never initiates Core storage loading or migration
+from a read or preview. Public arguments, coercion, hashes and safety hints
+remain unchanged. Convenience mutations share their pure duplicate rules with
+the remote adapter, but the native owner dispatches once and never rebases or
+replays a write after an uncertain result.
+
+Core callback failures or changed data during a dispatched save are unknown
+outcomes. If the save is already confirmed but authority, owner or preferences
+change during subsequent semantic validation, the response withholds config,
+hash and validation data. It explicitly retains `write_completed=true`,
+`operation_outcome=confirmed` and `requires_reread=true`; this is a refused or
+stale response to a completed write, not permission to repeat it.
+
 Native bulk control retains the public parameters and safety annotations.
 Its `device-*` operation IDs belong to the invoking user, client and manager;
 they are distinct from Engine invocation IDs. Repeated targets run sequentially,

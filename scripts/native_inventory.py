@@ -51,6 +51,9 @@ NATIVE_CATALOG_SOURCES = (
     ROOT / "custom_components" / "ha_mcp_tools" / "native_bulk_tools.py",
     ROOT / "custom_components" / "ha_mcp_tools" / "native_blueprint_tools.py",
     ROOT / "custom_components" / "ha_mcp_tools" / "native_search_tools.py",
+    ROOT / "custom_components" / "ha_mcp_tools" / "native_energy_tools.py",
+    ROOT / "custom_components" / "ha_mcp_tools" / "native_system_tools.py",
+    ROOT / "custom_components" / "ha_mcp_tools" / "native_theme_tools.py",
 )
 TRANSPORT_METHODS = frozenset(
     {

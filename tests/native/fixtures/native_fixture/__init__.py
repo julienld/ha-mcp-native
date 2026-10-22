@@ -143,6 +143,19 @@ class FixtureView(HomeAssistantView):
     async def _observation(
         self, request: web.Request, operation: str
     ) -> web.Response | None:
+        if operation == "system_actions":
+            from .system_actions import system_actions_probe
+
+            return web.json_response(system_actions_probe(self.hass))
+        if operation == "themes":
+            from .themes import theme_probe
+
+            return web.json_response(theme_probe(self.hass))
+        if operation == "energy_probe":
+            from homeassistant.components.energy.data import async_get_manager
+
+            owner = await async_get_manager(self.hass)
+            return web.json_response({"data": owner.data})
         if operation == "group_probe":
             from .groups import describe_group
 
@@ -188,7 +201,19 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
-        elif operation in {"seed_history", "seed_logs", "seed_entity_history", "seed_health", "seed_default_dashboard", "seed_bulk"}:
+        elif operation == "stage_system_script":
+            from .system_actions import stage_system_script
+
+            return web.json_response(await stage_system_script(self.hass, body["name"]))
+        elif operation in {
+            "seed_history",
+            "seed_logs",
+            "seed_entity_history",
+            "seed_health",
+            "seed_default_dashboard",
+            "seed_bulk",
+            "seed_system_actions",
+        }:
             return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
             from homeassistant.components.lovelace.const import LOVELACE_DATA
@@ -244,6 +269,10 @@ class FixtureView(HomeAssistantView):
         return web.json_response({"ok": True})
 
     async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "seed_system_actions":
+            from .system_actions import seed_system_actions
+
+            return await seed_system_actions(self.hass)
         if operation == "seed_bulk":
             from .bulk import seed_bulk
 
