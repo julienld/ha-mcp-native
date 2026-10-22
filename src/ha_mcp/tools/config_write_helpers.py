@@ -21,6 +21,7 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
+from ..runtime.config_reload_status import note_reload_outcome as note_reload_outcome
 from ..runtime.config_write_context import (
     _WRITE_TOOL_BP_HINT_SUGGESTION as _WRITE_TOOL_BP_HINT_SUGGESTION,
 )
@@ -465,24 +466,3 @@ async def config_reload_waiter(
     finally:
         if ws_client is not None:
             await _ws_cleanup(ws_client, attached_handlers, sub_ids, handler)
-
-
-def note_reload_outcome(
-    result: dict[str, Any], reloaded: bool | None, *, domain: str, requested: bool
-) -> None:
-    """Warn when a runtime change could not be ordered after a config reload.
-
-    ``reloaded`` is the ``config_reload_waiter`` verdict: False when the
-    reload was never confirmed, None when nothing could watch for it.
-    """
-    if not requested or reloaded:
-        return
-    reason = (
-        f"did not confirm the {domain} reload"
-        if reloaded is False
-        else f"could not be watched for the {domain} reload (no WebSocket)"
-    )
-    result.setdefault("warnings", []).append(
-        f"Home Assistant {reason}; the requested runtime change may be "
-        "reverted or lost when the reload completes."
-    )

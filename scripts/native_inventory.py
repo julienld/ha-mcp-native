@@ -375,6 +375,51 @@ def _core_seams() -> list[dict[str, Any]]:
     return found
 
 
+def _catalog_call_name(node: ast.AST) -> ast.AST | None:
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "define_tool"
+        and len(node.args) >= 3
+    ):
+        return node.args[2]
+    return None
+
+
+def _literal_batch_names(generator: ast.comprehension, name: str) -> set[str]:
+    names = set()
+    if not isinstance(generator.target, (ast.Tuple, ast.List)) or not isinstance(
+        generator.iter, (ast.Tuple, ast.List)
+    ):
+        return names
+    for index, target in enumerate(generator.target.elts):
+        if not isinstance(target, ast.Name) or target.id != name:
+            continue
+        for row in generator.iter.elts:
+            if not isinstance(row, (ast.Tuple, ast.List)) or len(row.elts) <= index:
+                continue
+            value = row.elts[index]
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                names.add(value.value)
+    return names
+
+
+def _native_declarations(tree: ast.AST) -> set[str]:
+    """Read direct names and literal catalog batches without executing the module."""
+    declarations = set()
+    for node in ast.walk(tree):
+        name = _catalog_call_name(node)
+        if isinstance(name, ast.Constant) and isinstance(name.value, str):
+            declarations.add(name.value)
+        if not isinstance(node, (ast.GeneratorExp, ast.ListComp)):
+            continue
+        name = _catalog_call_name(node.elt)
+        if isinstance(name, ast.Name):
+            for generator in node.generators:
+                declarations.update(_literal_batch_names(generator, name.id))
+    return declarations
+
+
 def build_inventory() -> dict[str, Any]:
     """Conservative module-level dependency candidates, never proof of porting."""
     extractor = _load_script("extract_tools")
@@ -387,15 +432,7 @@ def build_inventory() -> dict[str, Any]:
     native_catalog = ast.parse(
         (SOURCE / "runtime" / "catalog.py").read_text(encoding="utf-8")
     )
-    declarations = {
-        call.args[2].value
-        for call in ast.walk(native_catalog)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Name)
-        and call.func.id == "define_tool"
-        and len(call.args) >= 3
-        and isinstance(call.args[2], ast.Constant)
-    }
+    declarations = _native_declarations(native_catalog)
     tools = []
     module_cache: dict[str, dict[str, Any]] = {}
     for tool in sorted(catalog, key=lambda entry: entry["name"]):

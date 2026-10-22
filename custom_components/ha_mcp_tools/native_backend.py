@@ -17,8 +17,27 @@ from ha_mcp.runtime.skill_files import read_skill_files
 from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
+from .native_operations.area_floor_mutations import (
+    DIRECT_OPERATIONS as AREA_FLOOR_OPERATIONS,
+)
+from .native_operations.config_finalize import (
+    DIRECT_OPERATIONS as CONFIG_FINALIZE_OPERATIONS,
+)
 from .native_operations.flow_records import DIRECT_OPERATIONS as FLOW_DIRECT_OPERATIONS
+from .native_operations.helper_listing import (
+    DIRECT_OPERATIONS as LISTING_DIRECT_OPERATIONS,
+)
 from .native_operations.helpers import DIRECT_OPERATIONS as HELPER_DIRECT_OPERATIONS
+from .native_operations.integration_inspection import (
+    DIRECT_OPERATIONS as INTEGRATION_INSPECTION_OPERATIONS,
+)
+from .native_operations.integration_reads import (
+    DIRECT_OPERATIONS as INTEGRATION_READ_OPERATIONS,
+)
+from .native_operations.registry_mutations import (
+    DIRECT_OPERATIONS as REGISTRY_MUTATION_OPERATIONS,
+)
+from .native_operations.removals import DIRECT_OPERATIONS as REMOVAL_DIRECT_OPERATIONS
 from .native_operations.zones import DIRECT_OPERATIONS as ZONE_DIRECT_OPERATIONS
 from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
 from .native_registry_ops import DIRECT_OPERATIONS as REGISTRY_DIRECT_OPERATIONS
@@ -35,11 +54,19 @@ COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
     "helpers.storage.write": ("ha_mcp_tools/helper_write", True),
     "helpers.registry.snapshot": ("ha_mcp_tools/registries", False),
     "helpers.entities.for_entry": ("ha_mcp_tools/registry_lookup", False),
+    "integrations.entries": ("ha_mcp_tools/config_entries", False),
 }
 DOMAIN_DIRECT_OPERATIONS = {
     **HELPER_DIRECT_OPERATIONS,
     **ZONE_DIRECT_OPERATIONS,
     **FLOW_DIRECT_OPERATIONS,
+    **LISTING_DIRECT_OPERATIONS,
+    **CONFIG_FINALIZE_OPERATIONS,
+    **REGISTRY_MUTATION_OPERATIONS,
+    **AREA_FLOOR_OPERATIONS,
+    **REMOVAL_DIRECT_OPERATIONS,
+    **INTEGRATION_READ_OPERATIONS,
+    **INTEGRATION_INSPECTION_OPERATIONS,
 }
 
 
@@ -60,7 +87,15 @@ class NativeBackend:
             [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
         ]
         | None = None,
+        todo_backup: Callable[
+            [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
+        ]
+        | None = None,
         config_backup: Callable[
+            [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
+        ]
+        | None = None,
+        registry_backup: Callable[
             [dict[str, Any], CallContext], Awaitable[dict[str, Any] | None]
         ]
         | None = None,
@@ -74,10 +109,14 @@ class NativeBackend:
         self.redaction_enabled = redaction_enabled or (lambda: False)
         self.code_handler = code_handler
         self.helper_backup = helper_backup
+        self.todo_backup = todo_backup
         self.config_backup = config_backup
+        self.registry_backup = registry_backup
         self.loop = asyncio.get_running_loop()
         self._commands: dict[str, tuple[Any, Any, Any]] = {}
         self._flows: Any = None
+        self._reload_watches: Any = None
+        self._entry_watches: Any = None
         selected = {command for command, _ in COMMAND_OPERATIONS.values()}
         for schema, do, prep in _command_specs():
             command = next(value for key, value in schema.items() if str(key) == "type")
@@ -107,13 +146,24 @@ class NativeBackend:
     async def execute(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
-        await self.authorize(context)
-        if {"type", "id", "ha_mcp_context"}.intersection(arguments):
-            raise ToolFailure(
-                "INVALID_ARGUMENTS",
-                "Protected operation envelope field.",
-                status="not_started",
+        if operation in {
+            "config.flow.abort",
+            "config.reload.close",
+            "config.entries.close",
+        }:
+            # These can only release a nonce already owned by this actor/client.
+            # Revoking credentials must not strand its pending flow or listener.
+            self._check_envelope(arguments)
+            return await self._cleanup_owned(operation, arguments, context)
+        await self._authorize_operation(operation, context)
+        self._check_envelope(arguments)
+        from .native_operations.todo import TODO_OPERATIONS, NativeTodoOperations
+
+        if operation in TODO_OPERATIONS:
+            result = await NativeTodoOperations(self).execute(
+                operation, arguments, context
             )
+            return json.loads(json_bytes(result))
         if operation == "config.flow.settings":
             return {"redact_secrets": self.redaction_enabled()}
         if operation in REGISTRY_DIRECT_OPERATIONS:
@@ -135,23 +185,89 @@ class NativeBackend:
             return await self._execute_command(operation, arguments, context)
         return await self._execute_owned_operation(operation, arguments, context)
 
+    async def _authorize_operation(self, operation: str, context: CallContext) -> None:
+        try:
+            await self.authorize(context)
+        except PermissionError as error:
+            if operation in {"config.flow.start", "config.flow.configure"}:
+                raise ToolFailure(
+                    "AUTH_REQUIRED", "Flow admission was revoked.", status="not_started"
+                ) from error
+            raise
+
+    @staticmethod
+    def _check_envelope(arguments: dict[str, Any]) -> None:
+        if {"type", "id", "ha_mcp_context"}.intersection(arguments):
+            raise ToolFailure(
+                "INVALID_ARGUMENTS",
+                "Protected operation envelope field.",
+                status="not_started",
+            )
+
+    async def _cleanup_owned(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        if asyncio.get_running_loop() is not self.loop:
+            raise RuntimeError("Native cleanup must run on the HA event loop")
+        if operation == "config.flow.abort" and self._flows is not None:
+            return await self._flows.abort_owned(arguments["flow_id"], context)
+        if operation == "config.reload.close" and self._reload_watches is not None:
+            return await self._reload_watches.execute(operation, arguments, context)
+        if operation == "config.entries.close" and self._entry_watches is not None:
+            return await self._entry_watches.execute(operation, arguments, context)
+        raise UnsupportedOperation(operation)
+
     async def _execute_owned_operation(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
-        if operation == "code.run" and self.code_handler is not None:
-            return await self.code_handler(arguments, context)
-        if operation in {
-            f"config.{domain}.{action}"
-            for domain in ("automation", "script", "scene")
-            for action in ("write", "delete")
-        }:
-            from .native_operations.config_mutations import NativeConfigMutations
+        if operation in {"config.entries.watch", "config.entries.observe"}:
+            from .native_operations.entry_watches import NativeEntryWatches
 
-            result = await NativeConfigMutations(self.hass, self.authorize).execute(
+            if self._entry_watches is None:
+                self._entry_watches = NativeEntryWatches(self.hass, self.authorize)
+            return await self._entry_watches.execute(operation, arguments, context)
+        from .native_operations.integration_state import (
+            INTEGRATION_STATE_OPERATIONS,
+            NativeIntegrationState,
+        )
+        from .native_operations.removals import REMOVAL_OPERATIONS, NativeRemovals
+
+        if operation in INTEGRATION_STATE_OPERATIONS:
+            result = await NativeIntegrationState(self.hass, self.authorize).execute(
                 operation, arguments, context
             )
             return json.loads(json_bytes(result))
-        if operation in {"helpers.backup.capture", "config.backup.capture"}:
+        if operation in REMOVAL_OPERATIONS:
+            result = await NativeRemovals(self.hass, self.authorize).execute(
+                operation, arguments, context
+            )
+            return json.loads(json_bytes(result))
+        if operation == "code.run" and self.code_handler is not None:
+            return await self.code_handler(arguments, context)
+        if operation in {
+            *(
+                f"config.{domain}.{action}"
+                for domain in ("automation", "script", "scene")
+                for action in ("write", "delete")
+            ),
+            "config.flow.start",
+            "config.flow.configure",
+            "config.flow.abort",
+            "config.reload.watch",
+            "config.reload.wait",
+            "config.reload.close",
+        }:
+            return await self._execute_config_operation(operation, arguments, context)
+        return await self._runtime_operation(operation, arguments, context)
+
+    async def _runtime_operation(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        if operation in {
+            "helpers.backup.capture",
+            "config.backup.capture",
+            "registry.backup.capture",
+        }:
             return await self._capture_backup(operation, arguments, context)
         if operation == "skills.guide":
             return await self.hass.async_add_executor_job(
@@ -162,24 +278,47 @@ class NativeBackend:
             return await self.hass.async_add_executor_job(
                 lambda: read_skill_files(arguments["references"], enabled=enabled)
             )
-        if operation in {
-            "config.flow.start",
-            "config.flow.configure",
-            "config.flow.abort",
-        }:
-            check_mutation_admission(context)
-            from .native_operations.flows import NativeFlows
-
-            if self._flows is None:
-                self._flows = NativeFlows(self.hass, self.authorize)
-            result = await self._flows.execute(operation, arguments, context)
-            return json.loads(json_bytes(result))
         if operation == "instance.timezone":
             return {"timezone": self.hass.config.time_zone, "fetch_failed": False}
         if operation == "services.policy":
             self._check_service_policy(arguments["domain"], arguments["service"])
             return None
         raise UnsupportedOperation(operation)
+
+    async def _execute_config_operation(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
+        if operation in {
+            f"config.{domain}.{action}"
+            for domain in ("automation", "script", "scene")
+            for action in ("write", "delete")
+        }:
+            from .native_operations.config_mutations import NativeConfigMutations
+
+            owner = NativeConfigMutations(self.hass, self.authorize)
+            if self._reload_watches is not None:
+                owner.hook_runner = self._reload_watches.run_hook
+            result = await owner.execute(operation, arguments, context)
+            return json.loads(json_bytes(result))
+        if operation in {
+            "config.flow.start",
+            "config.flow.configure",
+            "config.flow.abort",
+        }:
+            from .native_operations.flows import NativeFlows, _unknown_flow_outcome
+
+            if self._flows is None:
+                self._flows = NativeFlows(self.hass, self.authorize)
+            result = await self._flows.execute(operation, arguments, context)
+            try:
+                return json.loads(json_bytes(result))
+            except (TypeError, ValueError) as error:
+                _unknown_flow_outcome(error)
+        from .native_operations.reload_watches import NativeReloadWatches
+
+        if self._reload_watches is None:
+            self._reload_watches = NativeReloadWatches(self.hass, self.authorize)
+        return await self._reload_watches.execute(operation, arguments, context)
 
     async def _execute_command(
         self, operation: str, arguments: dict[str, Any], context: CallContext
@@ -197,6 +336,7 @@ class NativeBackend:
             from .native_operations.helpers import check_expected_item
 
             expected = payload.pop("expected_item", None)
+            expected_registry = payload.pop("expected_registry", None)
             payload.pop("wait_for_entity", None)
             check_expected_item(self.hass, payload, expected)
         include_changed_states = (
@@ -210,7 +350,12 @@ class NativeBackend:
             from .native_operations.helper_mutations import NativeHelperMutations
 
             result = await NativeHelperMutations(self.hass, self.authorize).execute(
-                {**message, "expected_item": expected}, context
+                {
+                    **message,
+                    "expected_item": expected,
+                    "expected_registry": expected_registry,
+                },
+                context,
             )
             return json.loads(json_bytes(result))
         if operation == "services.call_observe":
@@ -239,8 +384,15 @@ class NativeBackend:
 
     async def stop(self) -> None:
         """Called after engine drain; release only resources this backend owns."""
-        if self._flows is not None:
-            await self._flows.stop()
+        errors = []
+        for owner in (self._flows, self._reload_watches, self._entry_watches):
+            if owner is not None:
+                try:
+                    await owner.stop()
+                except Exception as error:  # noqa: BLE001 - every owner gets cleanup, then failure is raised
+                    errors.append(error)
+        if errors:
+            raise RuntimeError("native_resources_not_closed") from errors[0]
 
     async def _capture_backup(
         self, operation: str, arguments: dict[str, Any], context: CallContext
@@ -252,11 +404,12 @@ class NativeBackend:
                 "Writes are disabled for this caller.",
                 status="not_started",
             )
-        capture = (
-            self.helper_backup
-            if operation == "helpers.backup.capture"
-            else self.config_backup
-        )
+        capture = {
+            "helpers.backup.capture": self.helper_backup,
+            "config.backup.capture": self.config_backup,
+            "registry.backup.capture": self.registry_backup,
+            "todo.backup.capture": self.todo_backup,
+        }[operation]
         if capture is not None:
             return await capture(arguments, context) or {}
         return {

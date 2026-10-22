@@ -5,10 +5,32 @@ import inspect
 from collections.abc import Callable
 from typing import Any, cast, get_type_hints
 
-from ha_mcp.tool_api import ToolFailure
+from ha_mcp.tool_api import BackendTools, CallContext, ToolFailure
 
 
-def legacy_errors(function: Callable[..., Any]) -> Callable[..., Any]:
+class LegacyBackendTools(BackendTools):
+    """Bind existing client registrations to the same semantic tool bodies."""
+
+    def __init__(self, client: Any) -> None:
+        from .remote import RemoteBackend
+
+        self._client = client
+        super().__init__(RemoteBackend(client), CallContext(None))
+
+
+def entry_write_guard(client: Any, entry_id: str) -> Any:
+    """Keep existing remote edits inside the backup manager's restore admission."""
+    from ha_mcp.backup_manager import get_backup_manager
+    from ha_mcp.config import get_global_settings
+
+    return get_backup_manager(client, get_global_settings()).config_entry_write_guard(
+        entry_id
+    )
+
+
+def legacy_errors(
+    function: Callable[..., Any], *, classify: bool = True
+) -> Callable[..., Any]:
     """Keep the historical FastMCP error envelope on a shared implementation."""
 
     @functools.wraps(function)
@@ -23,6 +45,10 @@ def legacy_errors(function: Callable[..., Any]) -> Callable[..., Any]:
         except ToolError:
             raise
         except Exception as exc:
+            if not classify:
+                # Private seams can carry an original exception that their
+                # public tool classifies more precisely (e.g. vendor scenes).
+                raise
             # The old classifier raises ToolError; do not log secrets from args.
             bound = inspect.signature(function).bind_partial(*args, **kwargs)
             entity_id = bound.arguments.get("entity_id")

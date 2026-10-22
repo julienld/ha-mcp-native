@@ -9,6 +9,8 @@ or credentials.
   authentication, Assist and deliberately bounded native transport behavior.
 - [Machine-readable compatibility contract](compatibility.json): identifiers,
   persisted-state requirements and explicit exceptions.
+- [Porting guide](porting.md): the implemented shared-body, semantic-operation,
+  policy, snapshot, concurrency and lifecycle interfaces for subsequent tools.
 - [Runtime catalog baseline](catalog-baseline.json): actual FastMCP input/output
   JSON Schemas, annotations and names for every decorated tool, with all boolean
   feature flags and developer mode enabled. The 87 entries include 8 beta-tagged

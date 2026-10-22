@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 from homeassistant.core import HomeAssistant
 
@@ -15,11 +15,20 @@ from ha_mcp.errors import HomeAssistantAPIError
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 from ha_mcp.utils.owned_executor import await_owned_io
+from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 _LOGGER = logging.getLogger(__name__)
 FLOW_OPERATIONS = frozenset(
     {"config.flow.start", "config.flow.configure", "config.flow.abort"}
 )
+
+
+def _unknown_flow_outcome(error: Exception) -> NoReturn:
+    raise ToolFailure(
+        "OUTCOME_UNKNOWN",
+        "Core flow processing failed after dispatch; its effects are unknown. Inspect the integration before another write.",
+        status="outcome_unknown",
+    ) from error
 
 
 @dataclass(slots=True)
@@ -29,6 +38,7 @@ class OwnedFlow:
     client_id: str
     touched: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    entry_lock: asyncio.Lock | None = None
 
 
 def _prepare_flow_result(
@@ -91,6 +101,8 @@ class NativeFlows:
     async def execute(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
+        if operation == "config.flow.abort":
+            return await self.abort_owned(arguments["flow_id"], context)
         if context.read_only:
             raise ToolFailure(
                 "READ_ONLY",
@@ -112,8 +124,7 @@ class NativeFlows:
                 status="not_started",
             )
         async with owned.lock:
-            await self.authorize(context)
-            check_mutation_admission(context)
+            await self._admit_flow(context)
             if self.owned.get(flow_id) is not owned:
                 raise ToolFailure(
                     "FLOW_NOT_OWNED",
@@ -121,9 +132,6 @@ class NativeFlows:
                     status="not_started",
                 )
             owned.touched = time.monotonic()
-            if operation == "config.flow.abort":
-                self._abort(flow_id, owned)
-                return {"message": "Flow aborted"}
             if operation != "config.flow.configure":
                 raise UnsupportedOperation(operation)
             return await await_owned_io(
@@ -132,11 +140,27 @@ class NativeFlows:
                 )
             )
 
+    async def abort_owned(self, flow_id: str, context: CallContext) -> dict[str, str]:
+        """Release only this caller's pending flow, even after admission revocation."""
+        owned = self.owned.get(flow_id)
+        if owned is None or (owned.user_id, owned.client_id) != (
+            context.user_id,
+            context.client_id,
+        ):
+            raise ToolFailure(
+                "FLOW_NOT_OWNED",
+                "This caller does not own this flow.",
+                status="not_started",
+            )
+        async with owned.lock:
+            if self.owned.get(flow_id) is owned:
+                self._abort(flow_id, owned)
+        return {"message": "Flow aborted"}
+
     async def _configure_owned(
         self, owned: OwnedFlow, flow_id: str, user_input: Any, context: CallContext
     ) -> dict[str, Any]:
-        await self.authorize(context)
-        check_mutation_admission(context)
+        await self._admit_flow(context)
         result = await self._configure(owned.kind, flow_id, user_input)
         return self._result(result, owned)
 
@@ -156,6 +180,8 @@ class NativeFlows:
             raise HomeAssistantAPIError(
                 "Invalid flow specified", status_code=404
             ) from error
+        except Exception as error:  # noqa: BLE001 - dispatch has already occurred
+            _unknown_flow_outcome(error)
 
     async def _start(
         self, arguments: dict[str, Any], context: CallContext
@@ -179,8 +205,22 @@ class NativeFlows:
                 )
         if kind == "subentry":
             handler = tuple(handler)
+        owned = OwnedFlow(kind, context.user_id, context.client_id)
+        entry_id = (
+            handler
+            if kind == "options"
+            else handler[0]
+            if kind == "subentry"
+            else arguments.get("entry_id")
+        )
         self.starting += 1
         try:
+            if entry_id is not None:
+                entry_lock = registry_update_lock("config_entry", entry_id)
+                # Nothing has been dispatched: keep this acquisition cancellable
+                # so stop can drain a task waiting on somebody else's flow.
+                await entry_lock.acquire()
+                owned.entry_lock = entry_lock
             return await await_owned_io(
                 self._initialize_owned(
                     manager,
@@ -189,8 +229,13 @@ class NativeFlows:
                     kind,
                     context,
                     arguments.get("expected_modified_at"),
+                    owned,
                 )
             )
+        except BaseException:
+            if not any(row is owned for row in self.owned.values()):
+                self._release_entry(owned)
+            raise
         finally:
             self.starting -= 1
 
@@ -202,11 +247,21 @@ class NativeFlows:
         kind: str,
         context: CallContext,
         expected: Any,
+        owned: OwnedFlow,
     ) -> dict[str, Any]:
-        await self.authorize(context)
-        check_mutation_admission(context)
-        if expected is not None and kind in {"options", "subentry"}:
-            entry_id = handler if kind == "options" else handler[0]
+        await self._admit_flow(context)
+        if expected is not None:
+            entry_id = (
+                handler
+                if kind == "options"
+                else handler[0]
+                if kind == "subentry"
+                else flow_context.get("entry_id")
+            )
+            if entry_id is None:
+                raise UnsupportedOperation(
+                    "config.flow.expected_revision_requires_entry"
+                )
             entry = self.hass.config_entries.async_get_entry(entry_id)
             if entry is None or entry.modified_at.timestamp() != expected:
                 raise ToolFailure(
@@ -215,7 +270,20 @@ class NativeFlows:
                     status="not_started",
                 )
         result = await self._init(manager, handler, flow_context)
-        return self._result(result, OwnedFlow(kind, context.user_id, context.client_id))
+        return self._result(result, owned)
+
+    async def _admit_flow(self, context: CallContext) -> None:
+        try:
+            await self.authorize(context)
+            check_mutation_admission(context)
+        except PermissionError as error:
+            raise ToolFailure(
+                "AUTH_REQUIRED", "Flow admission was revoked.", status="not_started"
+            ) from error
+        except ToolFailure as error:
+            raise ToolFailure(
+                error.code, str(error), data=error.data, status="not_started"
+            ) from error
 
     async def _init(self, manager: Any, handler: Any, context: dict[str, Any]) -> Any:
         from homeassistant.data_entry_flow import UnknownHandler, UnknownStep
@@ -228,15 +296,28 @@ class NativeFlows:
             ) from error
         except UnknownStep as error:
             raise HomeAssistantAPIError(str(error), status_code=400) from error
+        except Exception as error:  # noqa: BLE001 - dispatch has already occurred
+            _unknown_flow_outcome(error)
 
     def _result(self, result: dict[str, Any], owned: OwnedFlow) -> dict[str, Any]:
         flow_id = result.get("flow_id")
-        if flow_id:
-            if result.get("type") in {"create_entry", "abort"}:
+        if result.get("type") in {"create_entry", "abort"}:
+            if flow_id:
                 self.owned.pop(flow_id, None)
-            else:
-                self.owned[flow_id] = owned
-        return _prepare_flow_result(self.hass, owned.kind, result)
+            self._release_entry(owned)
+        elif flow_id:
+            self.owned[flow_id] = owned
+        else:
+            self._release_entry(owned)
+            raise ToolFailure(
+                "INVALID_FLOW_RESULT",
+                "Core returned a pending flow without an identity.",
+                status="outcome_unknown",
+            )
+        try:
+            return _prepare_flow_result(self.hass, owned.kind, result)
+        except Exception as error:  # noqa: BLE001 - dispatch has already occurred
+            _unknown_flow_outcome(error)
 
     def _abort(self, flow_id: str, owned: OwnedFlow) -> None:
         from homeassistant.data_entry_flow import UnknownFlow
@@ -246,6 +327,13 @@ class NativeFlows:
         except UnknownFlow:
             _LOGGER.debug("Owned flow already completed: %s", flow_id)
         self.owned.pop(flow_id, None)
+        self._release_entry(owned)
+
+    @staticmethod
+    def _release_entry(owned: OwnedFlow) -> None:
+        if owned.entry_lock is not None:
+            owned.entry_lock.release()
+            owned.entry_lock = None
 
     def _expire(self) -> None:
         now = time.monotonic()

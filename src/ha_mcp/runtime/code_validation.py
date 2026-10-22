@@ -7,6 +7,17 @@ from ha_mcp.errors import ErrorCode, create_error_response
 
 from .errors import raise_failure
 
+BLOCKED_TOOLS = frozenset(
+    {
+        "ha_manage_custom_tool",
+        "ha_search_tools",
+        "ha_call_read_tool",
+        "ha_call_write_tool",
+        "ha_call_delete_tool",
+    }
+)
+
+
 SAVE_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 
 

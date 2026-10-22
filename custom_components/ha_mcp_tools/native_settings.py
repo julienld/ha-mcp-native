@@ -24,6 +24,7 @@ _SUPPORTED_FLAGS = (
     "enable_mandatory_bps",
     "enable_strict_mandatory_bps",
     "enable_tool_search",
+    "tool_search_max_results",
     "redact_secrets",
     "enable_beta_features",
     "enable_code_mode",
@@ -41,7 +42,6 @@ _BACKUP_SETTINGS = frozenset(
 _ADVANCED = {
     "enabled_tool_modules": "ENABLED_TOOL_MODULES",
     "custom_instructions": "HAMCP_CUSTOM_INSTRUCTIONS",
-    "tool_search_max_results": "TOOL_SEARCH_MAX_RESULTS",
     "code_mode_max_duration": "CODE_MODE_MAX_DURATION",
     "code_mode_max_memory": "CODE_MODE_MAX_MEMORY",
     "code_mode_max_recursion": "CODE_MODE_MAX_RECURSION",
@@ -251,6 +251,9 @@ class NativeSettings:
         }
 
     async def _features(self, request: web.Request) -> web.Response:
+        from ha_mcp.config_registry import FEATURE_FLAG_FIELDS, SETTING_BOUNDS
+        from ha_mcp.config_settings import Settings
+
         if request.method == "POST":
             body = await request.json()
             result = await self._io(self._save_features, body)
@@ -258,28 +261,56 @@ class NativeSettings:
             return web.json_response(result)
         await self.manager.refresh_policy()
         policy = self.manager.policy
-        flags = {
-            name: {
-                "value": policy.flag(name),
-                "origin": "env" if name.upper() in os.environ else "file",
-                "editable": name.upper() not in os.environ,
-                "type": "bool",
-                "env_var": name.upper(),
+        flags: dict[str, dict[str, Any]] = {}
+        for name, env, kind in FEATURE_FLAG_FIELDS:
+            if name not in _SUPPORTED_FLAGS:
+                continue
+            flags[name] = {
+                "value": policy.flag(name)
+                if kind is bool
+                else kind(
+                    os.environ.get(
+                        env, policy.flags.get(name, Settings.model_fields[name].default)
+                    )
+                ),
+                "origin": "env" if env in os.environ else "file",
+                "editable": env not in os.environ,
+                "type": kind.__name__,
+                "env_var": env,
             }
-            for name in _SUPPORTED_FLAGS
-        }
+            if name in SETTING_BOUNDS:
+                flags[name]["min"], flags[name]["max"] = SETTING_BOUNDS[name]
+        flags["enable_code_mode"]["help_override"] = (
+            "Native custom scripts can call existing tools and manage saved scripts. "
+            "Direct REST and WebSocket functions are unavailable. Saved scripts "
+            "are shared within this integration and run with the current caller's "
+            "permissions. Set a saved-tools path to keep them across reloads. "
+            "Enable beta features first, then reload this integration to activate."
+        )
         return web.json_response(
             {"flags": flags, "beta_sub_flags": ["enable_code_mode"], "is_addon": False}
         )
 
     def _save_features(self, body: Any) -> dict[str, Any]:
+        from ha_mcp.config_registry import FEATURE_FLAG_FIELDS, SETTING_BOUNDS
+
         raw = body.get("flags") if isinstance(body, dict) else None
         if not isinstance(raw, dict) or not raw:
             raise ValueError("flags must be a nonempty JSON object")
+        fields = {name: (env, kind) for name, env, kind in FEATURE_FLAG_FIELDS}
         for name, value in raw.items():
-            if name not in _SUPPORTED_FLAGS or not isinstance(value, bool):
+            if name not in _SUPPORTED_FLAGS:
                 raise ValueError(f"Unsupported native feature setting: {name}")
-            if name.upper() in os.environ:
+            env, kind = fields[name]
+            if type(value) is not kind or (
+                name in SETTING_BOUNDS
+                and (
+                    not isinstance(value, (int, float))
+                    or not SETTING_BOUNDS[name][0] <= value <= SETTING_BOUNDS[name][1]
+                )
+            ):
+                raise ValueError(f"Invalid native feature setting: {name}")
+            if env in os.environ:
                 raise ValueError(f"Environment-controlled setting: {name}")
         self._validate_bps_flags(raw)
         self._merge("feature_flags.json", raw)
@@ -290,6 +321,7 @@ class NativeSettings:
             "restart_required": bool(
                 {
                     "enable_tool_search",
+                    "tool_search_max_results",
                     "enable_beta_features",
                     "enable_code_mode",
                 }.intersection(raw)

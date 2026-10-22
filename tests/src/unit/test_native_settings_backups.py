@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
+import pytest
 
 from ._embedded_stubs import install
 
@@ -11,25 +14,38 @@ install()
 
 from custom_components.ha_mcp_tools.native_server_policy import NativePolicy  # noqa: E402
 from custom_components.ha_mcp_tools.native_settings import NativeSettings  # noqa: E402
-from ha_mcp.runtime.snapshot_store import SnapshotStore  # noqa: E402
+from custom_components.ha_mcp_tools.native_snapshots import NativeSnapshots  # noqa: E402
+from ha_mcp.runtime import Engine  # noqa: E402
+from ha_mcp.tool_api import CallContext, ToolResult  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def panel_actor(monkeypatch):
+    monkeypatch.setattr(
+        "custom_components.ha_mcp_tools.native_settings_backups.settings_context",
+        AsyncMock(return_value=CallContext("owner", client_id="settings:fixture")),
+    )
 
 
 def runtime(tmp_path):
-    async def executor(function, *args):
-        return function(*args)
-
-    store = SnapshotStore(tmp_path / "backups")
     manager = SimpleNamespace(
         hass=SimpleNamespace(
             config=SimpleNamespace(path=lambda _subdir: str(tmp_path)),
-            async_add_executor_job=executor,
+            async_add_executor_job=lambda fn, *args: asyncio.ensure_future(
+                asyncio.to_thread(fn, *args)
+            ),
         ),
-        snapshots=SimpleNamespace(_store=lambda: store),
-        policy=NativePolicy(),
+        backend=SimpleNamespace(authorize=AsyncMock()),
+        policy=NativePolicy(flags={"backup_read_only": False}),
         is_running=True,
         refresh_policy=AsyncMock(),
     )
-    return NativeSettings(manager), store
+    ui = NativeSettings(manager)
+    manager.settings_ui = ui
+    manager.snapshots = NativeSnapshots(manager)
+    manager.engine = Engine(manager.backend)
+    manager.engine.enabled_tools = set()
+    return ui, manager.snapshots._store()
 
 
 def request(method="GET", **query):
@@ -81,14 +97,88 @@ async def test_bulk_delete_requires_and_honors_an_explicit_filter(tmp_path) -> N
     assert not first.exists() and second.exists()
 
 
-async def test_unported_restore_reports_failure_without_modifying_snapshot(
-    tmp_path,
-) -> None:
+async def test_panel_restore_uses_owned_engine_when_tool_is_hidden(tmp_path) -> None:
     ui, store = runtime(tmp_path)
     snapshot = store.capture("helper_input_boolean", "lamp", {"id": "lamp"}, "test")
-    original = snapshot.read_bytes()
+    restored = {"apply_status": "applied", "safety_backup": "recovery.yaml"}
+    ui.manager.snapshots.restore_snapshot = AsyncMock(return_value=restored)
     response = await ui.handle(
         request("POST"), f"api/settings/backups/{snapshot.name}/restore"
     )
-    assert response.status == 501
-    assert snapshot.read_bytes() == original
+    assert response.json_body == {"success": True, "data": restored}
+    operation = next(iter(ui.manager.engine.operations.values()))
+    assert operation["status"] == "confirmed"
+    assert operation["user_id"] == "owner"
+    assert operation["enforce_catalogue"] is False
+
+
+async def test_panel_delete_respects_backup_read_only(tmp_path) -> None:
+    ui, store = runtime(tmp_path)
+    snapshot = store.capture("helper_input_boolean", "lamp", {"id": "lamp"}, "test")
+    ui.manager.policy.flags["backup_read_only"] = True
+    response = await ui.handle(
+        request("DELETE"), f"api/settings/backups/{snapshot.name}"
+    )
+    assert response.status == 403 and snapshot.exists()
+
+
+async def test_panel_approval_pending_does_not_start_restore(tmp_path) -> None:
+    ui, _store = runtime(tmp_path)
+    ui.manager.snapshots.restore_snapshot = AsyncMock()
+    guard = AsyncMock(
+        return_value=ToolResult(
+            {"success": False, "approval_token": "pending"},
+            is_error=True,
+            status="not_started",
+        )
+    )
+    ui.manager.engine.policy_guard = guard
+    response = await ui.handle(
+        request("POST"), "api/settings/backups/example.yaml/restore"
+    )
+    assert response.status == 409
+    assert response.json_body["approval_token"] == "pending"
+    ui.manager.snapshots.restore_snapshot.assert_not_awaited()
+    assert guard.call_args.args[1] == {
+        "scope": "edits",
+        "action": "restore",
+        "name": "example.yaml",
+    }
+
+
+async def test_panel_restore_preserves_applied_state_when_verification_fails(
+    tmp_path,
+) -> None:
+    from ha_mcp.runtime.snapshot_payloads import BackupRestoreError
+
+    ui, _store = runtime(tmp_path)
+    ui.manager.snapshots.restore_snapshot = AsyncMock(
+        side_effect=BackupRestoreError(
+            "Verification failed",
+            apply_status="applied",
+            verification_status="unavailable",
+            safety_backup="recovery.yaml",
+        )
+    )
+    response = await ui.handle(
+        request("POST"), "api/settings/backups/example.yaml/restore"
+    )
+    assert response.status == 409
+    assert response.json_body["data"]["apply_status"] == "applied"
+    assert response.json_body["data"]["safety_backup"] == "recovery.yaml"
+    assert next(iter(ui.manager.engine.operations.values()))["status"] == "confirmed"
+
+
+async def test_panel_diff_keeps_existing_yaml_response(tmp_path) -> None:
+    ui, _store = runtime(tmp_path)
+    ui.manager.snapshots.snapshot_comparison = AsyncMock(
+        return_value=(
+            {"entity_id": "lamp", "config": {"name": "Before"}},
+            {"name": "After"},
+        )
+    )
+    response = await ui.handle(request(), "api/settings/backups/example.yaml/diff")
+    assert response.status == 200
+    assert response.json_body["backup_present"] is True
+    assert "-name: Before" in response.json_body["diff"]
+    assert "+name: After" in response.json_body["diff"]

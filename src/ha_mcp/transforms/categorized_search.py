@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -37,6 +37,8 @@ from ..errors import TOOL_ERROR_LOG_LEVEL, ErrorCode, create_error_response
 from ..renamed_tools import adapt_retired_arguments, current_tool_name
 from ..server_tool_text import SKILL_TOOL_NAME
 from .compact_params import compact_params, summary
+from .proxy_arguments import _coerce_proxy_arguments as _coerce_proxy_arguments
+from .proxy_arguments import _raise_non_object_arguments as _raise_non_object_arguments
 from .write_tool_note import DESKTOP_APPROVAL_NOTE
 
 if TYPE_CHECKING:
@@ -279,7 +281,7 @@ def _is_read_call_on_write_tool(name: str, arguments: dict[str, Any] | None) -> 
     The verdict fails closed: a tool without an exemption entry, or a missing
     or unknown action, is never a read.
     """
-    from ..read_only import READ_ONLY_EXEMPT_TOOLS
+    from ..runtime.tool_effects import READ_ONLY_EXEMPT_TOOLS
 
     exemption = READ_ONLY_EXEMPT_TOOLS.get(name)
     return exemption is not None and exemption.blocked_write(arguments or {}) is None
@@ -287,7 +289,7 @@ def _is_read_call_on_write_tool(name: str, arguments: dict[str, Any] | None) -> 
 
 def _has_read_actions(name: str) -> bool:
     """Whether a write-category tool has read actions the read proxy can approve."""
-    from ..read_only import READ_ONLY_EXEMPT_TOOLS
+    from ..runtime.tool_effects import READ_ONLY_EXEMPT_TOOLS
 
     return name in READ_ONLY_EXEMPT_TOOLS
 
@@ -309,6 +311,17 @@ def _admits(
     take a free-form ``action``), so neither proxy pretends to carve them out.
     """
     if category == "read":
+        if transform._effect_resolver is not None and name in (
+            transform._read_tools | transform._write_tools | transform._delete_tools
+        ):
+            try:
+                writes = transform._effect_resolver(name, arguments or {})
+            except Exception as error:
+                raise ToolError(
+                    "Tool arguments could not be validated for a read-only call"
+                ) from error
+            if writes is not None:
+                return writes is False
         return name in transform._read_tools or (
             name in transform._write_tools
             and _is_read_call_on_write_tool(name, arguments)
@@ -361,65 +374,6 @@ def _categorize_tool(tool: Tool) -> Capability:
         read_only=bool(annotations and annotations.read_only_hint),
         destructive=bool(annotations and annotations.destructive_hint),
     )
-
-
-def _raise_non_object_arguments(value: Any, proxy_name: str, name: str) -> NoReturn:
-    """Refuse a proxy ``arguments`` payload that is not an object."""
-    raise ToolError(
-        json.dumps(
-            create_error_response(
-                code=ErrorCode.VALIDATION_INVALID_PARAMETER,
-                message=(
-                    f"'arguments' must be a JSON object (got {type(value).__name__})."
-                ),
-                suggestions=[
-                    "Pass 'arguments' as an object (dict), not a list or scalar.",
-                ],
-                context={"proxy_used": proxy_name, "tool_name": name},
-            )
-        ),
-        log_level=TOOL_ERROR_LOG_LEVEL,
-    )
-
-
-def _coerce_proxy_arguments(
-    arguments: dict[str, Any] | str | None,
-    proxy_name: str,
-    name: str,
-) -> dict[str, Any] | None:
-    """Coerce a proxy call's ``arguments`` to a dict, tolerating a JSON string.
-
-    Small models sometimes serialize ``arguments`` before sending. Parse once up
-    front so downstream logic can assume a dict (or None).
-    """
-    if not isinstance(arguments, str):
-        return arguments
-    try:
-        parsed = json.loads(arguments)
-    except (json.JSONDecodeError, RecursionError) as e:
-        # RecursionError: a string nested past the interpreter's limit is
-        # still "not valid JSON" to the caller, not an internal error.
-        raise ToolError(
-            json.dumps(
-                create_error_response(
-                    code=ErrorCode.VALIDATION_INVALID_JSON,
-                    message=f"'arguments' is a string but not valid JSON: {e}",
-                    suggestions=[
-                        "Pass 'arguments' as an object, not a JSON string.",
-                    ],
-                    context={"proxy_used": proxy_name, "tool_name": name},
-                )
-            ),
-            log_level=TOOL_ERROR_LOG_LEVEL,
-        ) from e
-    if not isinstance(parsed, dict):
-        _raise_non_object_arguments(parsed, proxy_name, name)
-    logger.warning(
-        "Proxy %s received 'arguments' as a JSON string for tool %s — parsed as fallback",
-        proxy_name,
-        name,
-    )
-    return parsed
 
 
 def _raise_wrong_category_error(
@@ -499,6 +453,9 @@ class CategorizedSearchTransform(BM25SearchTransform):
         call_write_name: str = "ha_call_write_tool",
         call_delete_name: str = "ha_call_delete_tool",
         enable_code_mode: bool = False,
+        effect_resolver: Callable[[str, dict[str, Any]], bool | None] | None = None,
+        read_action_resolver: Callable[[str], bool] | None = None,
+        read_only_resolver: Callable[[], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -525,6 +482,9 @@ class CategorizedSearchTransform(BM25SearchTransform):
         # running code mode; server.py flips this on when
         # ``settings.enable_code_mode`` is True.
         self._enable_code_mode = enable_code_mode
+        self._effect_resolver = effect_resolver
+        self._read_action_resolver = read_action_resolver
+        self._read_only_resolver = read_only_resolver
 
         # Category caches rebuilt when the catalog hash changes,
         # matching BM25SearchTransform's staleness detection pattern.
@@ -533,6 +493,32 @@ class CategorizedSearchTransform(BM25SearchTransform):
         self._delete_tools: set[str] = set()
         self._last_catalog_hash: str = ""
         self._cache_lock = asyncio.Lock()
+
+    def _read_only(self) -> bool:
+        return (
+            self._read_only_resolver()
+            if self._read_only_resolver is not None
+            else _read_only_mode()
+        )
+
+    def _has_reads(self, name: str) -> bool:
+        return (
+            self._read_action_resolver(name)
+            if self._read_action_resolver is not None
+            else _has_read_actions(name)
+        )
+
+    def _filter_context_catalogue(self, tools: Sequence[Tool]) -> Sequence[Tool]:
+        if self._read_only_resolver is None or not self._read_only():
+            return tools
+        return [
+            tool
+            for tool in tools
+            if _categorize_tool(tool) == "read" or self._has_reads(tool.name)
+        ]
+
+    async def get_tool_catalog(self, ctx: Context) -> Sequence[Tool]:
+        return self._filter_context_catalogue(await super().get_tool_catalog(ctx))
 
     @staticmethod
     def _catalog_hash(tools: Sequence[Tool]) -> str:
@@ -586,7 +572,7 @@ class CategorizedSearchTransform(BM25SearchTransform):
         async def search_tools(
             query: Annotated[str, SEARCH_QUERY_DESCRIPTION] = "",
             tools: Annotated[list[str] | None, SEARCH_TOOLS_DESCRIPTION] = None,
-            ctx: Context = None,  # type: ignore[assignment]
+            ctx: Context = None,
         ) -> list[dict[str, Any]]:
             """Search for tools using English keywords.
 
@@ -651,7 +637,23 @@ class CategorizedSearchTransform(BM25SearchTransform):
             "write": self._call_write_name,
             "delete": self._call_delete_name,
         }
-        routes = _advertised_routes(tool.name, _categorize_tool(tool))
+        category = _categorize_tool(tool)
+        if (
+            self._read_action_resolver is not None
+            and category != "read"
+            and self._has_reads(tool.name)
+        ):
+            routes: list[Capability] = (
+                ["read"] if self._read_only() else ["read", category]
+            )
+            if (
+                not self._read_only()
+                and category == "write"
+                and _is_manage_tool(tool.name)
+            ):
+                routes.append("delete")
+        else:
+            routes = _advertised_routes(tool.name, category)
         if len(routes) == 1:
             return _execute_via(proxy_map[routes[0]], tool.name)
         hint = "; ".join(
@@ -746,18 +748,30 @@ class CategorizedSearchTransform(BM25SearchTransform):
             raise ToolError(json.dumps(error), log_level=TOOL_ERROR_LOG_LEVEL)
         return results
 
-    @staticmethod
     async def _read_only_hidden(
-        names: list[str], visible: dict[str, Tool], ctx: Context
+        self, names: list[str], visible: dict[str, Tool], ctx: Context
     ) -> dict[str, dict[str, Any]]:
         """READ_ONLY_MODE errors for the *names* Read Only Mode hides."""
-        if not _read_only_mode() or all(name in visible for name in names):
+        if not self._read_only() or all(name in visible for name in names):
             return {}
-        from ..read_only import read_only_error_response, read_only_visible
-
         registered = {
             tool.name: tool for tool in await ctx.fastmcp.local_provider._list_tools()
         }
+        if self._read_only_resolver is not None:
+            return {
+                name: create_error_response(
+                    ErrorCode.READ_ONLY_MODE,
+                    "This connection is read-only.",
+                    context={"tool_name": name},
+                )
+                for name in names
+                if name not in visible
+                and name in registered
+                and _categorize_tool(registered[name]) != "read"
+                and not self._has_reads(name)
+            }
+        from ..read_only import read_only_error_response, read_only_visible
+
         return {
             name: read_only_error_response(name)
             for name in names
@@ -780,7 +794,7 @@ class CategorizedSearchTransform(BM25SearchTransform):
             arguments: Annotated[
                 dict[str, Any] | str | None, "Arguments to pass to the tool"
             ] = None,
-            ctx: Context = None,  # type: ignore[assignment]
+            ctx: Context = None,
         ) -> Any:
             # Rebuild category cache if catalog has changed
             await transform._rebuild_category_cache(ctx)
@@ -860,6 +874,7 @@ class CategorizedSearchTransform(BM25SearchTransform):
 
     async def transform_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
         """Replace tool listing with search + categorized call proxies."""
+        tools = self._filter_context_catalogue(tools)
         pinned = [t for t in tools if t.name in (self._always_visible or [])]
 
         search_tool = self._make_search_tool()
@@ -889,7 +904,7 @@ class CategorizedSearchTransform(BM25SearchTransform):
             description=self._proxy_descs["delete"],
         )
 
-        if _read_only_mode():
+        if self._read_only():
             # ReadOnlyToolsTransform runs before this one and never sees the
             # proxies synthesised here; with every write blocked at call time
             # the destructive proxies would only advertise dead ends. They

@@ -176,7 +176,7 @@ class TestBug11RenameOnUpdateIsAllowed:
             side_effect=_make_simple_handler(helper_type="input_boolean")
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -197,7 +197,7 @@ class TestBug11RenameOnUpdateIsAllowed:
             )
         )
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -220,7 +220,7 @@ class TestBug11RenameOnUpdateIsAllowed:
             )
         )
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -294,7 +294,7 @@ class TestBug12NameCollisionSimpleHelpers:
             )
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):

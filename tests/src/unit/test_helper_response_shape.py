@@ -21,7 +21,7 @@ from ha_mcp.client.rest_client import (
     SceneResolution,
 )
 
-from ._created_helper_registry import with_registry
+from ._created_helper_registry import with_registry, with_resolved_registry
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -130,9 +130,9 @@ class TestUniformResponseShape:
                 }
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -209,7 +209,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             side_effect=HomeAssistantConnectionError("network down"),
         ):
@@ -245,9 +245,9 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             side_effect=HomeAssistantConnectionError("net glitch"),
         ):
@@ -292,7 +292,7 @@ class TestUniformResponseShape:
 
         mock_client.send_websocket_message = with_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -344,7 +344,7 @@ class TestUniformResponseShape:
 
         mock_client.send_websocket_message = with_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -403,9 +403,9 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -461,7 +461,7 @@ class TestUniformResponseShape:
 
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -520,7 +520,7 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
 
         async def fake_apply(
             client, entity_id, category, scope, result_dict, entity_type
@@ -531,7 +531,7 @@ class TestUniformResponseShape:
 
         with (
             patch(
-                "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -569,7 +569,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=False,  # not registered → triggers warning code path
         ):

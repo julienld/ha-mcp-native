@@ -28,8 +28,12 @@ from ..errors import HomeAssistantAuthError as HomeAssistantAuthError
 from ..errors import (
     HomeAssistantCommandError as HomeAssistantCommandError,
 )
+from ..errors import (
+    HomeAssistantCommandTimeout as HomeAssistantCommandTimeout,
+)
 from ..errors import HomeAssistantConnectionError as HomeAssistantConnectionError
 from ..errors import HomeAssistantError as HomeAssistantError
+from ..runtime.automation_identity import automation_write_body
 from .admin_routes import is_admin_only_route
 from .models import ErrorLogPage
 from .supervisor_client import make_supervisor_httpx_client
@@ -155,20 +159,6 @@ class SceneStorageConfigNotFoundError(HomeAssistantAPIError):
         if storage_key and storage_key != scene_id:
             msg += f" (resolved storage key: {storage_key})"
         super().__init__(msg, status_code=404)
-
-
-class HomeAssistantCommandTimeout(HomeAssistantError):
-    """WebSocket ``send_command`` timed out waiting for HA's response.
-
-    Sibling of ``HomeAssistantCommandError`` (not a subclass) so existing
-    ``except HomeAssistantCommandError`` sites — including the match
-    dispatch in ``helpers._classify_exception`` — keep their original
-    semantics. Callers that specifically want to handle our 30s WS
-    round-trip timeout (e.g. short-lived waiter cleanup that should
-    swallow a timeout instead of masking the real wait result) catch
-    this type directly. Replaces a bare ``Exception("Command timeout")``
-    string-match pattern (#1382 Patch76 review).
-    """
 
 
 # Exception classes that are evidence no answer came back from Home Assistant,
@@ -1475,6 +1465,7 @@ class HomeAssistantClient:
         identifier: str | None = None,
         *,
         _resolved: bool = False,
+        _new_unique_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Create new automation or update existing one.
@@ -1497,7 +1488,11 @@ class HomeAssistantClient:
         """
         # Generate unique_id for new automation if not provided
         if identifier is None:
-            unique_id = str(int(time.time() * 1000))
+            unique_id = (
+                _new_unique_id
+                if _new_unique_id is not None
+                else str(int(time.time() * 1000))
+            )
             operation = "created"
             logger.debug(f"Creating new automation with unique_id: {unique_id}")
         else:
@@ -1509,33 +1504,7 @@ class HomeAssistantClient:
             operation = "updated"
             logger.debug(f"Updating automation with unique_id: {unique_id}")
 
-        # Reject mismatch between resolved storage key and inner ``config["id"]``.
-        # HA stores by the inner id field even though the URL carries one too —
-        # a divergence silently overwrites the automation whose unique_id matches
-        # the inner id, while reporting success for the URL target (#1404).
-        config_id = config.get("id")
-        if config_id is not None and str(config_id) != str(unique_id):
-            if identifier is None:
-                raise HomeAssistantAPIError(
-                    "Cannot create automation with explicit config['id']="
-                    f"{config_id!r}: Home Assistant stores by the inner id, "
-                    "which would silently overwrite an existing automation. "
-                    "Omit 'id' from config to auto-generate, or pass identifier "
-                    "to update an existing automation.",
-                    status_code=400,
-                )
-            raise HomeAssistantAPIError(
-                f"Mismatched automation id: identifier={identifier!r} resolves "
-                f"to unique_id={unique_id!r}, but config['id']={config_id!r}. "
-                "Refusing to write to prevent overwriting the wrong automation. "
-                f"Remove 'id' from config or set it to the resolved unique_id "
-                f"({unique_id!r}).",
-                status_code=400,
-            )
-
-        # Add unique_id to config for updates
-        if unique_id and "id" not in config:
-            config = {**config, "id": unique_id}
+        config = automation_write_body(config, identifier, unique_id)
 
         try:
             response = await self._request(

@@ -15,8 +15,7 @@ from pydantic import Field
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
-from ..backends.remote import RemoteBackend
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..errors import ErrorCode, create_error_response
 from ..runtime.device_records import _add_integration_hints as _add_integration_hints
 from ..runtime.device_records import _build_entity_maps as _build_entity_maps
@@ -32,7 +31,6 @@ from ..runtime.device_records import _list_devices_result as _list_devices_resul
 from ..runtime.device_records import _matches_integration as _matches_integration
 from ..runtime.device_records import _process_device_domain as _process_device_domain
 from ..runtime.devices import DeviceDiscoveryTools
-from ..tool_api import CallContext
 from ..utils.device_registry_semantics import (
     EFFECTIVE_AREA_MARKER,
     annotate_device_rows_with_effective_area,
@@ -316,12 +314,8 @@ async def _remove_device_config_entries(
     return results
 
 
-class RegistryTools(DeviceDiscoveryTools):
+class RegistryTools(LegacyBackendTools, DeviceDiscoveryTools):
     """Device registry tools: get, update, and remove devices."""
-
-    def __init__(self, client: Any) -> None:
-        self._client = client
-        super().__init__(RemoteBackend(client), CallContext(None))
 
     async def _update_device_internal(
         self,

@@ -1,11 +1,12 @@
 """Invocation-local formatting options, never credentials or actor authority."""
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
 from ha_mcp.errors import HomeAssistantConnectionError
+from ha_mcp.tool_api import Backend, CallContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,3 +36,14 @@ def bind_flow_settings(settings: FlowSettings) -> Iterator[None]:
         yield
     finally:
         _settings.reset(token)
+
+
+@asynccontextmanager
+async def backend_flow_settings(
+    backend: Backend, context: CallContext
+) -> AsyncIterator[None]:
+    flags = await backend.execute("config.flow.settings", {}, context)
+    with bind_flow_settings(
+        FlowSettings(lambda: flags["redact_secrets"], no_answer_errors())
+    ):
+        yield

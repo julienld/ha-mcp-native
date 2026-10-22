@@ -49,6 +49,82 @@ class Backend:
 ACTOR = CallContext("user")
 
 
+async def test_admin_owned_action_can_ignore_catalogue_visibility_but_not_policy() -> (
+    None
+):
+    from ha_mcp.runtime.mutation_guard import check_mutation_admission
+
+    backend = Backend()
+    engine = Engine(backend)
+    engine.enabled_tools = set()
+    called = []
+
+    async def invoke() -> dict:
+        check_mutation_admission(ACTOR)
+        called.append(True)
+        return {"success": True}
+
+    with pytest.raises(ToolFailure, match="not enabled"):
+        await engine.call_owned("ha_manage_backup", invoke, ACTOR, writes=True)
+    result = await engine.call_owned(
+        "ha_manage_backup", invoke, ACTOR, writes=True, enforce_catalogue=False
+    )
+    assert not result.is_error and called == [True]
+    with pytest.raises(ToolFailure, match="not enabled"):
+        await engine.call_owned(
+            "ha_manage_backup",
+            invoke,
+            CallContext("user", allowed_tools=frozenset()),
+            writes=True,
+            enforce_catalogue=False,
+        )
+
+    async def deny(
+        name: str, arguments: dict, context: CallContext, writes: bool
+    ) -> ToolResult:
+        assert (name, arguments, writes) == (
+            "ha_manage_backup",
+            {"action": "restore"},
+            True,
+        )
+        return ToolResult({"approval": "required"}, status="pending")
+
+    engine.policy_guard = deny
+    result = await engine.call_owned(
+        "ha_manage_backup",
+        invoke,
+        ACTOR,
+        writes=True,
+        enforce_catalogue=False,
+        arguments={"action": "restore"},
+    )
+    assert result.status == "pending" and called == [True]
+    engine.policy_guard = None
+    engine.read_only = True
+    with pytest.raises(ToolFailure, match="Writes are disabled"):
+        await engine.call_owned(
+            "ha_manage_backup", invoke, ACTOR, writes=True, enforce_catalogue=False
+        )
+
+
+async def test_admin_owned_action_rechecks_revocation_after_admission() -> None:
+    from ha_mcp.runtime.mutation_guard import check_mutation_admission
+
+    engine = Engine(Backend())
+    engine.enabled_tools = set()
+
+    async def invoke() -> dict:
+        await asyncio.sleep(0)
+        engine.read_only = True
+        check_mutation_admission(ACTOR)
+        pytest.fail("A hidden admin operation cannot bypass a live read-only change")
+
+    result = await engine.call_owned(
+        "ha_manage_backup", invoke, ACTOR, writes=True, enforce_catalogue=False
+    )
+    assert result.is_error and result.data["error"]["code"] == "READ_ONLY"
+
+
 async def test_polymorphic_effect_uses_validated_arguments_and_fences_writes() -> None:
     from ha_mcp.runtime.mutation_guard import check_mutation_admission
 

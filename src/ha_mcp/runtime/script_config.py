@@ -9,7 +9,6 @@ from ha_mcp.utils.config_hash import compute_config_hash
 from ha_mcp.utils.python_sandbox import (
     PythonSandboxError,
     format_sandbox_error,
-    safe_execute,
 )
 
 from .blueprint_substitute import TakenControl, take_control_config
@@ -206,7 +205,9 @@ class ScriptConfigTools(ScriptRemovalTools, ConfigWriteContext):
 
         # Apply Python transformation on the actual script config
         try:
-            transformed_config = safe_execute(python_transform, actual_config)
+            transformed_config = await self._transform_config(
+                python_transform, actual_config
+            )
         except PythonSandboxError as e:
             message, suggestions = format_sandbox_error(e, python_transform)
             raise_failure(

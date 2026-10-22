@@ -23,6 +23,20 @@ _RANGE_KEYS: dict[str, tuple[str, str]] = {"counter": ("minimum", "maximum")}
 _DEFAULT_RANGE_KEYS = ("min", "max")
 
 
+def collection_icon_from_schema(
+    helper_type: str, action: str, icon: str | None, schemas: dict[str, Any] | None
+) -> str | None:
+    """Keep item icons only where Core declares them; clearing stays explicit."""
+    if icon is None or icon == "" or helper_type == "zone":
+        return icon
+    fields = schemas.get(helper_type, {}).get(action) if schemas else None
+    if isinstance(fields, list) and any(
+        isinstance(field, dict) and field.get("name") == "icon" for field in fields
+    ):
+        return icon
+    return None
+
+
 def core_fields(
     helper_type: str, type_kw: dict[str, Any], passthrough: dict[str, Any]
 ) -> dict[str, Any]:

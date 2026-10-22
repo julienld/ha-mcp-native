@@ -16,6 +16,10 @@ from .zones import ZoneReadTools
 
 
 class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
+    # Unlike ha_config_set_helper, ha_set_zone allows Core to suffix a second
+    # stored zone with the same display name.
+    _check_create_name = False
+
     def _backup_identity(self, helper_type: str) -> dict[str, str]:
         return {"backup_domain": "zone", "source_tool": "ha_set_zone"}
 

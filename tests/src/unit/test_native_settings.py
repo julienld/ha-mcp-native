@@ -111,6 +111,16 @@ def test_read_only_and_approval_master_take_effect_without_reload(
     assert not policy.enabled("write", writes=True)
 
 
+def test_search_limit_uses_numeric_feature_contract_and_reloads(tmp_path, monkeypatch):
+    monkeypatch.delenv("TOOL_SEARCH_MAX_RESULTS", raising=False)
+    ui = settings(tmp_path)
+    result = ui._save_features({"flags": {"tool_search_max_results": 7}})
+    assert result["restart_required"]
+    assert load_policy(tmp_path).flags["tool_search_max_results"] == 7
+    with pytest.raises(ValueError, match="Invalid native"):
+        ui._save_features({"flags": {"tool_search_max_results": True}})
+
+
 def test_backup_controls_share_canonical_backup_settings_file(tmp_path: Path) -> None:
     ui = settings(tmp_path)
     ui._save_backup_config({"enable_snapshot_actions": True, "backup_read_only": False})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, get_type_hints
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError, create_model
@@ -19,6 +20,9 @@ from ha_mcp.tool_api.parameters import hidden_param_names
 from ha_mcp.tools.tool_hints import read_only_hints, write_hints
 
 from .actions import ServiceCallTools
+from .area_writes import AreaWriteTools
+from .automation_writes import AutomationWriteTools
+from .category_writes import CategoryWriteTools
 from .config_reads import AutomationReadTools, SceneReadTools, ScriptReadTools
 from .config_removals import (
     AutomationRemovalTools,
@@ -28,10 +32,16 @@ from .config_removals import (
 from .devices import DeviceDiscoveryTools
 from .entities import EntityDiscoveryTools
 from .exposure import ExposureTools
+from .helper_listing import HelperListingTools, description_starts_flow
 from .helper_schema import SIMPLE_HELPER_TYPES
 from .helper_tools import HelperConfigTools
+from .integration_reads import IntegrationReadTools, inspection_starts_flow
+from .integration_removals import IntegrationRemovalTools
+from .integration_writes import IntegrationWriteTools, integration_changes_state
 from .labels import CategoryDiscoveryTools, LabelDiscoveryTools
 from .registries import AreaDiscoveryTools
+from .scene_writes import SceneWriteTools
+from .script_writes import ScriptWriteTools
 from .services import ServiceDiscoveryTools
 from .skills import SkillGuideTools
 from .states import StateTools
@@ -128,9 +138,175 @@ def _without_schema_titles(schema: Any) -> Any:
     return result
 
 
+def _integration_reader(backend: Backend) -> ToolDefinition:
+    definition = define_tool(
+        backend,
+        IntegrationReadTools,
+        "ha_get_integration",
+        source_module="tools_integrations",
+        annotations=write_hints(
+            "Get Integration", destructive=True, idempotent=False, open_world=False
+        ),
+        tags=frozenset({"Integrations"}),
+        writes=lambda arguments: inspection_starts_flow(
+            arguments, redact=getattr(backend, "redaction_enabled", None)
+        ),
+    )
+    properties = definition.input_schema["properties"]
+    properties["include_options"]["description"] = (
+        "Include persisted options for each entry; automatically enabled when domain is set. "
+        "With secret redaction enabled, reading options can start an integration's options flow to inspect password fields."
+    )
+    properties["include_schema"]["description"] += (
+        " Opens the actual Core options flow, which may change configuration immediately."
+    )
+    properties["include_subentry_schema"]["description"] = (
+        "When entry_id is set, open the actual config subentry flow and return its first step. "
+        "A flow may create or change a subentry immediately. Pair with subentry_type and optionally "
+        "subentry_id for reconfiguration. Pending forms are closed after inspection."
+    )
+    return replace(
+        definition,
+        description=definition.description
+        + (
+            "\n\nNATIVE FLOW EFFECTS: options/subentry schema inspection and password-field redaction "
+            "can initialize Core flows with immediate effects. These branches require write admission; "
+            "ordinary persisted-value reads do not open flows when secret redaction is disabled."
+        ),
+    )
+
+
 def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
     """Only complete migrated tools are advertised by the native entry."""
     return [
+        _integration_reader(backend),
+        define_tool(
+            backend,
+            IntegrationWriteTools,
+            "ha_set_integration",
+            source_module="tools_integrations",
+            annotations=write_hints(
+                "Set Integration", destructive=True, idempotent=False, open_world=False
+            ),
+            tags=frozenset({"Integrations"}),
+            writes=integration_changes_state,
+        ),
+        define_tool(
+            backend,
+            IntegrationRemovalTools,
+            "ha_remove_helpers_integrations",
+            source_module="tools_integrations",
+            annotations=write_hints(
+                "Remove Helper or Integration",
+                destructive=True,
+                idempotent=True,
+                open_world=False,
+            ),
+            tags=frozenset({"Helper Entities", "Integrations"}),
+        ),
+        *(
+            define_tool(
+                backend,
+                owner,
+                name,
+                source_module=module,
+                annotations=write_hints(
+                    title, destructive=True, idempotent=deletes, open_world=False
+                ),
+                tags=frozenset({tag}),
+            )
+            for owner, name, module, title, tag, deletes in (
+                (
+                    CategoryWriteTools,
+                    "ha_config_set_category",
+                    "tools_categories",
+                    "Create or Update Category",
+                    "Labels & Categories",
+                    False,
+                ),
+                (
+                    CategoryWriteTools,
+                    "ha_config_remove_category",
+                    "tools_categories",
+                    "Remove Category",
+                    "Labels & Categories",
+                    True,
+                ),
+                (
+                    AreaWriteTools,
+                    "ha_set_area_or_floor",
+                    "tools_areas",
+                    "Create or Update Area or Floor",
+                    "Areas & Floors",
+                    False,
+                ),
+                (
+                    AreaWriteTools,
+                    "ha_remove_area_or_floor",
+                    "tools_areas",
+                    "Remove Area or Floor",
+                    "Areas & Floors",
+                    True,
+                ),
+            )
+        ),
+        define_tool(
+            backend,
+            AutomationWriteTools,
+            "ha_config_set_automation",
+            source_module="tools_config_automations",
+            annotations=write_hints(
+                "Create or Update Automation",
+                destructive=True,
+                idempotent=False,
+                open_world=False,
+            ),
+            tags=frozenset({"Automations"}),
+        ),
+        define_tool(
+            backend,
+            SceneWriteTools,
+            "ha_config_set_scene",
+            source_module="tools_config_scenes",
+            annotations=write_hints(
+                "Create or Update Scene",
+                destructive=True,
+                idempotent=False,
+                open_world=False,
+            ),
+            tags=frozenset({"Scenes"}),
+        ),
+        define_tool(
+            backend,
+            ScriptWriteTools,
+            "ha_config_set_script",
+            source_module="tools_config_scripts",
+            annotations=write_hints(
+                "Create or Update Script",
+                destructive=True,
+                idempotent=False,
+                open_world=False,
+            ),
+            tags=frozenset({"Scripts"}),
+        ),
+        define_tool(
+            backend,
+            HelperListingTools,
+            "ha_config_list_helpers",
+            source_module="tools_config_helpers",
+            annotations=write_hints(
+                "List Helpers", destructive=True, idempotent=False, open_world=False
+            ),
+            tags=frozenset({"Helper Entities"}),
+            writes=description_starts_flow,
+            meta={
+                "ha_mcp": {
+                    "native_support": {
+                        "note": "Listing and storage descriptions are read-only. Describing a config/options flow starts Core code and requires write admission."
+                    }
+                }
+            },
+        ),
         *(
             define_tool(
                 backend,

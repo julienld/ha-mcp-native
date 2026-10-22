@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from ha_mcp.errors import ErrorCode, create_error_response
-from ha_mcp.tool_api import BackendTools
+from ha_mcp.tool_api import BackendTools, ToolFailure
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .errors import raise_failure
 from .helper_params import _prepare_typed_params
-from .helper_payload import check_core_gaps, merged_update, with_create_defaults
+from .helper_payload import (
+    check_core_gaps,
+    collection_icon_from_schema,
+    merged_update,
+    with_create_defaults,
+)
 from .helper_schema import (
     _CORE_HELPER_SCHEMAS,
     SIMPLE_HELPER_TYPES,
@@ -24,6 +30,7 @@ from .validation import validate_identifier_not_empty
 
 class HelperStorageTools(BackendTools):
     _prepare_typed_params = staticmethod(_prepare_typed_params)
+    _check_create_name = True
 
     async def _require_helper_type(self, helper_type: str) -> None:
         if helper_type in SIMPLE_HELPER_TYPES:
@@ -151,6 +158,10 @@ class HelperStorageTools(BackendTools):
                 create_error_response(
                     ErrorCode.VALIDATION_INVALID_PARAMETER,
                     f'name is required for create action. Include "name" as a top-level argument, e.g. {{"helper_type": "{helper_type}", "name": "My Helper"}}.',
+                    suggestions=[
+                        'Add "name": "My Helper" at the top level of the JSON arguments',
+                        'Or pass "helper_id": "my_helper" if you intended to update an existing helper',
+                    ],
                     context=_simple_helper_error_context(helper_type),
                 )
             )
@@ -169,7 +180,8 @@ class HelperStorageTools(BackendTools):
         async with registry_update_lock(
             f"helper_{helper_type}", f"name:{_name_slug(name)}"
         ):
-            await self._check_name_collision(helper_type, name)
+            if self._check_create_name:
+                await self._check_name_collision(helper_type, name)
             result = await self.backend.execute(
                 "helpers.storage.write",
                 {
@@ -201,8 +213,14 @@ class HelperStorageTools(BackendTools):
         MandatoryBPS: bool,
         fields: dict[str, Any],
     ) -> dict[str, Any]:
+        validate_identifier_not_empty(
+            helper_id,
+            "helper_id",
+            message="helper_id is required for update action",
+            context=_simple_helper_error_context(helper_type),
+        )
         async with registry_update_lock(f"helper_{helper_type}", helper_id):
-            item = await self._stored_item(helper_type, helper_id)
+            item = await self._stored_item(helper_type, helper_id, name=name)
             entity_id = item.get("entity_id") or helper_id
             body = merged_update(
                 helper_type,
@@ -235,6 +253,11 @@ class HelperStorageTools(BackendTools):
                     "data": body,
                     "registry": _registry_fields(icon, area_id, labels, category),
                     "expected_item": item["item"],
+                    **(
+                        {"expected_registry": backup["expected_registry"]}
+                        if backup and "expected_registry" in backup
+                        else {}
+                    ),
                     "wait_for_entity": wait,
                 },
                 self.context,
@@ -254,21 +277,47 @@ class HelperStorageTools(BackendTools):
         """Domain wrappers may supply a separately validated backup identity."""
         return {}
 
-    async def _stored_item(self, helper_type: str, helper_id: str) -> dict[str, Any]:
-        result = await self.backend.execute(
-            "helpers.storage.read",
-            {"helper_type": helper_type, "item_id": helper_id},
-            self.context,
-        )
+    async def _stored_item(
+        self, helper_type: str, helper_id: str, *, name: str | None = None
+    ) -> dict[str, Any]:
+        from .storage_targets import raise_not_stored
+
+        try:
+            result = await self.backend.execute(
+                "helpers.storage.read",
+                {"helper_type": helper_type, "item_id": helper_id},
+                self.context,
+            )
+        except ToolFailure as error:
+            if error.code == "ENTITY_NOT_FOUND" and not helper_id.startswith(
+                f"{helper_type}."
+            ):
+                raise_not_stored(helper_type, helper_id, name)
+            raise
         if result.get("success") is not True and helper_id.startswith(
             f"{helper_type}."
         ):
-            result = await self.backend.execute(
-                "helpers.storage.read",
-                {"helper_type": helper_type, "entity_id": helper_id},
-                self.context,
-            )
+            try:
+                result = await self.backend.execute(
+                    "helpers.storage.read",
+                    {"helper_type": helper_type, "entity_id": helper_id},
+                    self.context,
+                )
+            except ToolFailure as error:
+                if error.code == "ENTITY_NOT_FOUND" and name:
+                    data = cast(dict[str, Any], copy.deepcopy(error.data))
+                    data["name"] = name
+                    data["error"].setdefault("suggestions", []).append(
+                        f"If you meant to create a new helper named {name!r}, "
+                        "omit helper_id (or pass action='create')"
+                    )
+                    raise ToolFailure(
+                        error.code, str(error), data=data, status=error.status
+                    ) from error
+                raise
         if result.get("success") is not True:
+            if not helper_id.startswith(f"{helper_type}."):
+                raise_not_stored(helper_type, helper_id, name)
             raise_failure(
                 create_error_response(
                     ErrorCode.CONFIG_NOT_FOUND,
@@ -353,11 +402,10 @@ def _name_slug(name: str) -> str:
 
 
 def _collection_icon(helper_type: str, action: str, icon: str | None) -> str | None:
-    if icon is None or icon == "" or helper_type == "zone":
-        return icon
     current = _CORE_HELPER_SCHEMAS.get()
-    fields = (current[0].get(helper_type, {}).get(action) or []) if current else []
-    return icon if any(field.get("name") == "icon" for field in fields) else None
+    return collection_icon_from_schema(
+        helper_type, action, icon, current[0] if current else None
+    )
 
 
 def _registry_fields(

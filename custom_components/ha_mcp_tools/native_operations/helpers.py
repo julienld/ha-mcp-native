@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import json_bytes
 
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import json_values_equal
 
 from ..helper_collections import SIMPLE_HELPER_TYPES, _apply_registry, collection_owner
 
@@ -19,6 +20,17 @@ def list_storage_items(hass: HomeAssistant, helper_type: str) -> dict[str, Any]:
         raise UnsupportedOperation(f"helpers.storage.{helper_type}")
     collection = owner.storage_collection
     items = [dict(item) for item in collection.data.values()]
+    if helper_type == "tag":
+        # Core TagDictStorageCollectionWebsocket.ws_list_item projects names
+        # from the registry; storage intentionally omits them after restart.
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(hass)
+        for item in items:
+            item.pop("migrated", None)
+            entity_id = registry.async_get_entity_id("tag", "tag", item["id"])
+            if entity_id and (row := registry.async_get(entity_id)) is not None:
+                item["name"] = row.name or row.original_name
     # Core's person/list includes YAML persons. The actual collection exposes
     # its YAML sibling, so collision checks keep the same complete input.
     if helper_type == "person":
@@ -35,7 +47,7 @@ def check_expected_item(
     current = (
         owner.storage_collection.data.get(arguments.get("item_id")) if owner else None
     )
-    if json.loads(json_bytes(current)) != expected:
+    if not json_values_equal(json.loads(json_bytes(current)), expected):
         raise ToolFailure(
             "CONFIG_CONFLICT",
             "The helper changed after its snapshot was read; no update was sent.",

@@ -51,12 +51,18 @@ class RemoteFlows:
                 )
             kind = arguments.get("kind", "config")
             expected = arguments.get("expected_modified_at")
-            if expected is not None and kind in {"options", "subentry"}:
+            if expected is not None:
                 entry_id = (
                     arguments["handler"]
                     if kind == "options"
                     else arguments["handler"][0]
+                    if kind == "subentry"
+                    else arguments.get("entry_id")
                 )
+                if entry_id is None:
+                    raise UnsupportedOperation(
+                        "config.flow.expected_revision_requires_entry"
+                    )
                 current = await self.client.get_config_entry(entry_id)
                 if current.get("modified_at") != expected:
                     raise ToolFailure(

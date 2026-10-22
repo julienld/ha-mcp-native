@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -40,3 +41,21 @@ def test_shared_method_reexports_keep_their_original_catalog_metadata() -> None:
         assert current[name] == previous[name], (
             f"Shared method metadata changed: {name}"
         )
+
+
+def test_inventory_recognizes_literal_batches_in_native_catalog() -> None:
+    from ha_mcp.runtime.catalog import build_initial_catalog
+
+    script = runpy.run_path(str(_ROOT / "scripts" / "native_inventory.py"))
+    inventory = script["build_inventory"]()
+    public = {tool["name"] for tool in inventory["tools"]}
+    actual = {
+        definition.name for definition in build_initial_catalog(object())
+    } & public
+    scanned = {
+        tool["name"]
+        for tool in inventory["tools"]
+        if tool["native_catalog_declaration"]
+    }
+    assert scanned == actual
+    assert inventory["counts"]["native_catalog_declarations"] == len(actual)

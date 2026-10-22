@@ -148,7 +148,7 @@ class CodeSession:
     async def run_saved(self, run_saved: str) -> dict[str, Any]:
         """Re-run a previously saved custom tool by name.
 
-        Raises ToolError (RESOURCE_NOT_FOUND) if ``run_saved`` isn't in the
+        Raises ToolFailure (RESOURCE_NOT_FOUND) if ``run_saved`` isn't in the
         saved-tools cache, or a classified sandbox error if execution fails.
         """
         saved = await self._get_saved(run_saved)

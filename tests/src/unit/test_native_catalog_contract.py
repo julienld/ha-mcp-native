@@ -132,7 +132,31 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         (_CONTRACTS / "catalog-extras-baseline.json").read_text(encoding="utf-8")
     )["tools"]
     baseline.update({tool["name"]: tool for tool in extras})
+    overrides = json.loads(
+        (_CONTRACTS / "compatibility.json").read_text(encoding="utf-8")
+    )["native_annotation_overrides"]
+    assert set(overrides) == {"ha_config_list_helpers", "ha_get_integration"}
+    assert overrides["ha_get_integration"]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+    }
+    assert overrides["ha_get_integration"]["reason"]
+    assert overrides["ha_config_list_helpers"]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+    }
+    assert overrides["ha_config_list_helpers"]["reason"]
     definitions = build_initial_catalog(MagicMock())
+    integration_reader = next(
+        tool for tool in definitions if tool.name == "ha_get_integration"
+    )
+    subentry_help = integration_reader.input_schema["properties"][
+        "include_subentry_schema"
+    ]["description"]
+    assert "may create or change a subentry" in subentry_help
+    assert "no subentry is created" not in subentry_help
     declared = {definition.name for definition in definitions}
     assert {tool["name"] for tool in extras} <= declared, (
         "Native entry lost an always-present server tool"
@@ -143,8 +167,12 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         if old is None:
             continue
         differences = _changed_inputs(old["inputSchema"], definition.input_schema)
+        expected_annotations = {
+            **old["annotations"],
+            **overrides.get(definition.name, {}).get("annotations", {}),
+        }
         for hint in _ANNOTATIONS:
-            if old["annotations"].get(hint) != definition.annotations.get(hint):
+            if expected_annotations.get(hint) != definition.annotations.get(hint):
                 differences.append(f"changed safety annotation {hint}")
         if set(old.get("_meta", {}).get("fastmcp", {}).get("tags", [])) != set(
             definition.tags

@@ -99,6 +99,70 @@ async def test_remote_helper_storage_roundtrip_uses_existing_client(
     )
 
 
+async def test_legacy_public_helper_uses_shared_storage_and_captures_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ha_mcp.config import get_global_settings
+    from ha_mcp.tools import component_helper_collections
+    from ha_mcp.tools.tools_config_helpers import HelperConfigTools as LegacyHelperTools
+
+    monkeypatch.setattr(
+        component_helper_collections, "_component_ws", AsyncMock(return_value=None)
+    )
+    settings = get_global_settings().model_copy(update={"enable_auto_backup": True})
+    monkeypatch.setattr("ha_mcp.config.get_global_settings", lambda: settings)
+    capture = AsyncMock()
+    monkeypatch.setattr(
+        "ha_mcp.tools.auto_backup.get_backup_manager",
+        lambda *_args, **_kwargs: SimpleNamespace(maybe_snapshot=capture),
+    )
+    current = {"id": "one", "name": "Before", "initial": False}
+    entry = {
+        "entity_id": "input_boolean.renamed",
+        "platform": "input_boolean",
+        "unique_id": "one",
+    }
+
+    async def send(message: dict) -> dict:
+        if message["type"] == "input_boolean/list":
+            value = [dict(current)]
+        elif message["type"] == "config/entity_registry/list":
+            value = [entry]
+        elif message["type"] == "input_boolean/update":
+            current.update(
+                {
+                    key: value
+                    for key, value in message.items()
+                    if key not in {"type", "input_boolean_id"}
+                }
+            )
+            value = dict(current)
+        else:
+            raise AssertionError(message)
+        return {"success": True, "result": value}
+
+    client = Mock(send_websocket_message=AsyncMock(side_effect=send))
+    result = await LegacyHelperTools(client).ha_config_set_helper(
+        helper_type="input_boolean",
+        helper_id="one",
+        name="After",
+        wait=False,
+        MandatoryBPS=False,
+    )
+    assert result["success"] and result["data"]["name"] == "After"
+    assert result["entity_id"] == "input_boolean.renamed"
+    assert current["initial"] is False
+    assert capture.await_count == 1
+    assert capture.await_args.args[:2] == ("helper_input_boolean", "one")
+    assert (
+        sum(
+            call.args[0]["type"] == "input_boolean/update"
+            for call in client.send_websocket_message.await_args_list
+        )
+        == 1
+    )
+
+
 async def test_helper_write_unknown_outcome_does_not_fallback_or_repeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -208,6 +272,34 @@ async def test_snapshot_await_cannot_overwrite_a_newer_native_item(
     )
     assert result.is_error and result.data["error"]["code"] == "CONFIG_CONFLICT"
     assert collection.data["example"]["name"] == "Example"
+
+
+async def test_remote_snapshot_conflict_distinguishes_boolean_and_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ha_mcp.tool_api import ToolFailure
+    from ha_mcp.tools import component_helper_collections
+
+    monkeypatch.setattr(
+        component_helper_collections,
+        "read_stored_helper_item",
+        AsyncMock(return_value={"success": True, "item": {"id": "one", "initial": 0}}),
+    )
+    write = AsyncMock()
+    monkeypatch.setattr(component_helper_collections, "write_helper_item", write)
+    with pytest.raises(ToolFailure, match="changed after its snapshot"):
+        await RemoteBackend(SimpleNamespace()).execute(
+            "helpers.storage.write",
+            {
+                "helper_type": "input_boolean",
+                "action": "update",
+                "item_id": "one",
+                "data": {"name": "AI"},
+                "expected_item": {"id": "one", "initial": False},
+            },
+            CallContext("actor"),
+        )
+    write.assert_not_awaited()
 
 
 async def test_shared_helper_runs_one_native_utility_meter_flow(

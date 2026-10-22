@@ -13,6 +13,7 @@ from typing import Any, Literal, NoReturn, overload
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.backends.legacy import legacy_errors_sync as _legacy_errors_sync
+from ha_mcp.runtime.errors import ws_failure_code as ws_failure_code
 from ha_mcp.runtime.validation import (
     reject_malformed_list_fields as _reject_malformed_list_fields,
 )
@@ -40,6 +41,7 @@ from ..runtime.error_classification import (
 from ..runtime.error_classification import (
     _with_classified_suggestions as _with_classified_suggestions,
 )
+from ..runtime.error_classification import classified_error
 from ..runtime.validation import _QUOTE_ONLY as _QUOTE_ONLY
 from ..runtime.validation import WHITESPACE_CLEARS_NOTE as WHITESPACE_CLEARS_NOTE
 from ..runtime.validation import clear_hint as clear_hint
@@ -228,10 +230,8 @@ def exception_to_structured_error(
     Raises:
         ToolError: If raise_error=True (default), raises with JSON-serialized error
     """
-    error_str = str(error).lower()
     error_msg = str(error)
-
-    error_response = _classify_exception(error, error_str, error_msg, context)
+    error_response = classified_error(error, context, suggestions=suggestions)
 
     # Tracebacks are operationally valuable only for genuinely unclassified
     # exceptions (programmer errors, library bugs) — every other branch in
@@ -251,25 +251,6 @@ def exception_to_structured_error(
         and error_response["error"].get("code") == ErrorCode.INTERNAL_ERROR
     ):
         logger.error("Unclassified exception: %s", error_msg, exc_info=error)
-
-    if (
-        suggestions
-        and "error" in error_response
-        and isinstance(error_response["error"], dict)
-    ):
-        # Set both `suggestion` (singular, first item) and `suggestions`
-        # (plural, full list). create_error_response (errors.py) sets the
-        # singular key; existing tests for exception_to_structured_error
-        # rely on the plural key being present even for single-item caller
-        # suggestions. Setting both keeps response consumers on both code
-        # paths working.
-        suggestions = _with_classified_suggestions(error_response["error"], suggestions)
-        error_response["error"]["suggestion"] = suggestions[0]
-        error_response["error"]["suggestions"] = suggestions
-
-    # Append macOS-specific hints for connection failures (after all other processing
-    # so hints survive regardless of whether caller provided explicit suggestions)
-    _append_macos_hints(error_response)
 
     if raise_error:
         raise_tool_error(error_response)
@@ -348,17 +329,6 @@ async def safe_progress(
         )
     except Exception as e:  # noqa: BLE001
         logger.debug("ctx.report_progress failed (%s): %s", type(e).__name__, e)
-
-
-def ws_failure_code(result: dict[str, Any]) -> ErrorCode:
-    """Map Core's WS error code: ``invalid_format`` is the caller's input,
-    ``not_found`` an item Core does not hold (e.g. a YAML-configured helper)."""
-    code = result.get("error_code")
-    if code == "invalid_format":
-        return ErrorCode.VALIDATION_INVALID_PARAMETER
-    if code == "not_found":
-        return ErrorCode.RESOURCE_NOT_FOUND
-    return ErrorCode.SERVICE_CALL_FAILED
 
 
 def clear_or_keep(value: str | None, param_name: str) -> str | None:

@@ -7,7 +7,7 @@
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 16,
+    "native_catalog_declarations": 30,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -384,27 +384,27 @@
       ],
       "client_call_candidates": [
         {
-          "line": 292,
+          "line": 171,
           "call": "client.call_service",
           "wire_literals": []
         },
         {
-          "line": 376,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 361,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 1030,
+          "line": 244,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1383,
+          "line": 325,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 310,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 454,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -494,26 +494,20 @@
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
-        "config/category_registry/delete",
         "config/category_registry/list"
       ],
       "client_call_candidates": [
         {
-          "line": 56,
+          "line": 43,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/category_registry/list"
           ]
-        },
-        {
-          "line": 165,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 284,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -697,12 +691,12 @@
       ],
       "client_call_candidates": [
         {
-          "line": 740,
+          "line": 400,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 217,
+          "line": 189,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -742,14 +736,14 @@
       ],
       "client_call_candidates": [
         {
-          "line": 156,
+          "line": 124,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 736,
+          "line": 300,
           "call": "self._client.call_service",
           "wire_literals": []
         }
@@ -906,9 +900,13 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_helpers.py",
-      "semantic_operation_candidates": [],
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/helper_listing.py",
+      "semantic_operation_candidates": [
+        "config.flow.settings",
+        "helpers.catalog",
+        "helpers.flow.types"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
@@ -920,22 +918,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 381,
+          "line": 282,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 401,
+          "line": 302,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 494,
+          "line": 399,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 231,
+          "line": 132,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         }
@@ -957,7 +955,7 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/config_removals.py",
       "semantic_operation_candidates": [
         "config.backup.capture",
@@ -972,27 +970,27 @@
       ],
       "client_call_candidates": [
         {
-          "line": 292,
+          "line": 171,
           "call": "client.call_service",
           "wire_literals": []
         },
         {
-          "line": 376,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 361,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 1030,
+          "line": 244,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1383,
+          "line": 325,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 310,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 454,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -1074,32 +1072,26 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_categories.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/category_writes.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
-        "config/category_registry/delete",
         "config/category_registry/list"
       ],
       "client_call_candidates": [
         {
-          "line": 56,
+          "line": 43,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/category_registry/list"
           ]
-        },
-        {
-          "line": 165,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 284,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -1218,7 +1210,7 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/config_removals.py",
       "semantic_operation_candidates": [
         "config.backup.capture",
@@ -1233,12 +1225,12 @@
       ],
       "client_call_candidates": [
         {
-          "line": 740,
+          "line": 400,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 217,
+          "line": 189,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -1262,7 +1254,7 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
+      "native_catalog_declaration": true,
       "shared_source": "src/ha_mcp/runtime/config_removals.py",
       "semantic_operation_candidates": [
         "config.backup.capture",
@@ -1277,14 +1269,14 @@
       ],
       "client_call_candidates": [
         {
-          "line": 156,
+          "line": 124,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 736,
+          "line": 300,
           "call": "self._client.call_service",
           "wire_literals": []
         }
@@ -1306,9 +1298,12 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_automations.py",
-      "semantic_operation_candidates": [],
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/automation_writes.py",
+      "semantic_operation_candidates": [
+        "config.automation.allocate_id",
+        "config.automation.write"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
@@ -1316,27 +1311,27 @@
       ],
       "client_call_candidates": [
         {
-          "line": 292,
+          "line": 171,
           "call": "client.call_service",
           "wire_literals": []
         },
         {
-          "line": 376,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 361,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 1030,
+          "line": 244,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1383,
+          "line": 325,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 310,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 454,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -1418,32 +1413,26 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_categories.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/category_writes.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
-        "config/category_registry/delete",
         "config/category_registry/list"
       ],
       "client_call_candidates": [
         {
-          "line": 56,
+          "line": 43,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/category_registry/list"
           ]
-        },
-        {
-          "line": 165,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 284,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -1673,22 +1662,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 381,
+          "line": 282,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 401,
+          "line": 302,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 494,
+          "line": 399,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 231,
+          "line": 132,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         }
@@ -1770,9 +1759,11 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_scenes.py",
-      "semantic_operation_candidates": [],
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/scene_writes.py",
+      "semantic_operation_candidates": [
+        "states.read"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
@@ -1780,12 +1771,12 @@
       ],
       "client_call_candidates": [
         {
-          "line": 740,
+          "line": 400,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 217,
+          "line": 189,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
@@ -1809,9 +1800,12 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_config_scripts.py",
-      "semantic_operation_candidates": [],
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/script_writes.py",
+      "semantic_operation_candidates": [
+        "config.script.read",
+        "states.read"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
@@ -1819,14 +1813,14 @@
       ],
       "client_call_candidates": [
         {
-          "line": 156,
+          "line": 124,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 736,
+          "line": 300,
           "call": "self._client.call_service",
           "wire_literals": []
         }
@@ -2246,40 +2240,40 @@
       ],
       "client_call_candidates": [
         {
-          "line": 70,
+          "line": 68,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 86,
+          "line": 84,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 105,
+          "line": 103,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/list"
           ]
         },
         {
-          "line": 178,
+          "line": 176,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 391,
+          "line": 385,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 291,
+          "line": 289,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/remove_config_entry"
@@ -2563,48 +2557,30 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_integrations.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/integration_reads.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
         "config/entity_registry/get",
-        "ha_mcp_tools/config_entries",
-        "knx/get_knx_project"
+        "ha_mcp_tools/config_entries"
       ],
       "client_call_candidates": [
         {
-          "line": 342,
+          "line": 136,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1126,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "knx/get_knx_project"
-          ]
-        },
-        {
-          "line": 1419,
-          "call": "self._client._request",
-          "wire_literals": []
-        },
-        {
-          "line": 2913,
+          "line": 516,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 2941,
-          "call": "client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 2735,
+          "line": 456,
           "call": "client.send_websocket_message",
           "wire_literals": []
         }
@@ -2863,40 +2839,17 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_todo.py",
-      "semantic_operation_candidates": [],
+      "shared_source": "src/ha_mcp/runtime/todo.py",
+      "semantic_operation_candidates": [
+        "todo.backup.capture",
+        "todo.item.prepare",
+        "todo.items",
+        "todo.states"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "todo/item/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 128,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 355,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 409,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 562,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 81,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_get_zone",
@@ -2925,45 +2878,37 @@
         "ha_mcp_tools/helpers_list",
         "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
         "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
-        "zone/delete",
         "zone/list"
       ],
       "client_call_candidates": [
         {
-          "line": 152,
+          "line": 143,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 180,
+          "line": 171,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 235,
+          "line": 226,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 269,
+          "line": 260,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 298,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "zone/delete"
-          ]
-        },
-        {
-          "line": 209,
+          "line": 200,
           "call": "self._client.get_states",
           "wire_literals": []
         }
@@ -3043,35 +2988,30 @@
       ],
       "client_call_candidates": [
         {
-          "line": 108,
+          "line": 59,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/area_registry/list"
           ]
         },
         {
-          "line": 109,
+          "line": 113,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 114,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/floor_registry/list"
           ]
-        },
-        {
-          "line": 285,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 705,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 600,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -3321,14 +3261,14 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_code.py",
+      "shared_source": "src/ha_mcp/runtime/code_session.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 867,
+          "line": 540,
           "call": "self.client.send_websocket_message",
           "wire_literals": []
         }
@@ -3834,8 +3774,8 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_areas.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/area_writes.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3845,35 +3785,30 @@
       ],
       "client_call_candidates": [
         {
-          "line": 108,
+          "line": 59,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/area_registry/list"
           ]
         },
         {
-          "line": 109,
+          "line": 113,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 114,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/floor_registry/list"
           ]
-        },
-        {
-          "line": 285,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 705,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 600,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -3906,40 +3841,40 @@
       ],
       "client_call_candidates": [
         {
-          "line": 70,
+          "line": 68,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 86,
+          "line": 84,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 105,
+          "line": 103,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/list"
           ]
         },
         {
-          "line": 178,
+          "line": 176,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 391,
+          "line": 385,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 291,
+          "line": 289,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/remove_config_entry"
@@ -4074,48 +4009,32 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_integrations.py",
-      "semantic_operation_candidates": [],
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/integration_removals.py",
+      "semantic_operation_candidates": [
+        "helpers.flow.types"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
         "config/entity_registry/get",
-        "ha_mcp_tools/config_entries",
-        "knx/get_knx_project"
+        "ha_mcp_tools/config_entries"
       ],
       "client_call_candidates": [
         {
-          "line": 342,
+          "line": 136,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1126,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "knx/get_knx_project"
-          ]
-        },
-        {
-          "line": 1419,
-          "call": "self._client._request",
-          "wire_literals": []
-        },
-        {
-          "line": 2913,
+          "line": 516,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 2941,
-          "call": "client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 2735,
+          "line": 456,
           "call": "client.send_websocket_message",
           "wire_literals": []
         }
@@ -4137,40 +4056,17 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_todo.py",
-      "semantic_operation_candidates": [],
+      "shared_source": "src/ha_mcp/runtime/todo.py",
+      "semantic_operation_candidates": [
+        "todo.backup.capture",
+        "todo.item.prepare",
+        "todo.items",
+        "todo.states"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "todo/item/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 128,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 355,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 409,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 562,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 81,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_remove_zone",
@@ -4203,45 +4099,37 @@
         "ha_mcp_tools/helpers_list",
         "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
         "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
-        "zone/delete",
         "zone/list"
       ],
       "client_call_candidates": [
         {
-          "line": 152,
+          "line": 143,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 180,
+          "line": 171,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 235,
+          "line": 226,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 269,
+          "line": 260,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 298,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "zone/delete"
-          ]
-        },
-        {
-          "line": 209,
+          "line": 200,
           "call": "self._client.get_states",
           "wire_literals": []
         }
@@ -4449,8 +4337,8 @@
         "write permissions and attribution"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_areas.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/area_writes.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -4460,35 +4348,30 @@
       ],
       "client_call_candidates": [
         {
-          "line": 108,
+          "line": 59,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 65,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/area_registry/list"
           ]
         },
         {
-          "line": 109,
+          "line": 113,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 114,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/floor_registry/list"
           ]
-        },
-        {
-          "line": 285,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "config/area_registry/list"
-          ]
-        },
-        {
-          "line": 705,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 600,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
         }
       ]
     },
@@ -4521,40 +4404,40 @@
       ],
       "client_call_candidates": [
         {
-          "line": 70,
+          "line": 68,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 86,
+          "line": 84,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 105,
+          "line": 103,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/list"
           ]
         },
         {
-          "line": 178,
+          "line": 176,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 391,
+          "line": 385,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 291,
+          "line": 289,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "config/device_registry/remove_config_entry"
@@ -4688,48 +4571,30 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_integrations.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/integration_writes.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [
         "config/entity_registry/get",
-        "ha_mcp_tools/config_entries",
-        "knx/get_knx_project"
+        "ha_mcp_tools/config_entries"
       ],
       "client_call_candidates": [
         {
-          "line": 342,
+          "line": 136,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1126,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "knx/get_knx_project"
-          ]
-        },
-        {
-          "line": 1419,
-          "call": "self._client._request",
-          "wire_literals": []
-        },
-        {
-          "line": 2913,
+          "line": 516,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/get"
           ]
         },
         {
-          "line": 2941,
-          "call": "client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 2735,
+          "line": 456,
           "call": "client.send_websocket_message",
           "wire_literals": []
         }
@@ -4751,40 +4616,17 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_todo.py",
-      "semantic_operation_candidates": [],
+      "shared_source": "src/ha_mcp/runtime/todo.py",
+      "semantic_operation_candidates": [
+        "todo.backup.capture",
+        "todo.item.prepare",
+        "todo.items",
+        "todo.states"
+      ],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
-      "operation_candidates": [
-        "todo/item/list"
-      ],
-      "client_call_candidates": [
-        {
-          "line": 128,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": []
-        },
-        {
-          "line": 355,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 409,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 562,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 81,
-          "call": "self._client.get_states",
-          "wire_literals": []
-        }
-      ]
+      "operation_candidates": [],
+      "client_call_candidates": []
     },
     {
       "name": "ha_set_zone",
@@ -4817,45 +4659,37 @@
         "ha_mcp_tools/helpers_list",
         "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
         "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
-        "zone/delete",
         "zone/list"
       ],
       "client_call_candidates": [
         {
-          "line": 152,
+          "line": 143,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 180,
+          "line": 171,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 235,
+          "line": 226,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 269,
+          "line": 260,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "zone/list"
           ]
         },
         {
-          "line": 298,
-          "call": "self._client.send_websocket_message",
-          "wire_literals": [
-            "zone/delete"
-          ]
-        },
-        {
-          "line": 209,
+          "line": 200,
           "call": "self._client.get_states",
           "wire_literals": []
         }
@@ -5200,12 +5034,12 @@
       "functions": [
         {
           "name": "command_specs",
-          "line": 310,
+          "line": 326,
           "async": false
         },
         {
           "name": "write_prep",
-          "line": 330,
+          "line": 346,
           "async": true
         }
       ],

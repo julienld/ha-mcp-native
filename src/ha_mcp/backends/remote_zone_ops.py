@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from ha_mcp.tool_api import UnsupportedOperation
+from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 
 ZONE_OPERATIONS = frozenset(
     {"zones.target.snapshot", "zones.storage.delete", "entities.removal.wait"}
@@ -21,7 +21,15 @@ async def execute_zone_operation(
         from .remote_helper_ops import _check_expected
 
         await _check_expected(client, {**arguments, "helper_type": "zone"})
-        return await tools._remove_stored_zone(arguments["item_id"], None)
+        return await client.send_websocket_message(
+            {"type": "zone/delete", "zone_id": arguments["item_id"]}
+        )
     if operation == "entities.removal.wait":
-        return await tools._wait_zone_removed(arguments["entity_id"])
+        from ha_mcp.errors import HomeAssistantAuthError, HomeAssistantConnectionError
+        from ha_mcp.tools.ws_waiters import wait_for_entity_removed
+
+        try:
+            return await wait_for_entity_removed(client, arguments["entity_id"])
+        except (HomeAssistantConnectionError, HomeAssistantAuthError) as error:
+            raise ToolFailure("VERIFICATION_FAILED", str(error)) from error
     raise UnsupportedOperation(operation)

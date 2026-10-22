@@ -12,6 +12,10 @@ CONFIG_FINALIZE_OPERATIONS = frozenset(
         "config.entity_id.after_write",
         "entities.registration.wait",
         "entities.category.write",
+        "config.transform",
+        "entities.state.wait",
+        "config.automation.allocate_id",
+        "config.automation.runtime_target",
     }
 )
 
@@ -19,6 +23,18 @@ CONFIG_FINALIZE_OPERATIONS = frozenset(
 async def execute_config_finalize(
     client: Any, operation: str, arguments: dict[str, Any]
 ) -> Any:
+    if operation in {
+        "config.automation.allocate_id",
+        "config.automation.runtime_target",
+        "entities.state.wait",
+    }:
+        return await _automation_operation(client, operation, arguments)
+    if operation == "config.transform":
+        from ha_mcp.utils.python_sandbox import safe_execute
+
+        return await asyncio.to_thread(
+            safe_execute, arguments["expression"], arguments["config"]
+        )
     if operation == "blueprints.render":
         return await client.send_websocket_message(
             {"type": "blueprint/substitute", **arguments}
@@ -43,6 +59,12 @@ async def execute_config_finalize(
             ],
         }
     if operation == "config.entity_id.after_write":
+        if arguments["domain"] == "automation":
+            from ha_mcp.tools.ws_waiters import wait_for_automation_entity_by_unique_id
+
+            return await wait_for_automation_entity_by_unique_id(
+                client, arguments["storage_key"]
+            )
         from ha_mcp.tools.entity_registration import resolve_entity_id_after_write
 
         return await resolve_entity_id_after_write(client, **arguments)
@@ -63,4 +85,26 @@ async def execute_config_finalize(
             arguments["entity_type"],
         )
         return result
+    raise UnsupportedOperation(operation)
+
+
+async def _automation_operation(
+    client: Any, operation: str, arguments: dict[str, Any]
+) -> Any:
+    if operation == "config.automation.allocate_id":
+        import time
+
+        return str(int(time.time() * 1000))
+    if operation == "config.automation.runtime_target":
+        from ha_mcp.tools.tools_config_automations import AutomationConfigTools
+
+        return await AutomationConfigTools(client)._resolve_automation_entity_id_strict(
+            arguments["identifier"]
+        )
+    if operation == "entities.state.wait":
+        from ha_mcp.tools.ws_waiters import wait_for_state_change
+
+        return await wait_for_state_change(
+            client, arguments["entity_id"], expected_state=arguments["expected_state"]
+        )
     raise UnsupportedOperation(operation)

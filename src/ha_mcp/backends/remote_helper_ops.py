@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ha_mcp.runtime.helper_schema import SIMPLE_HELPER_TYPES
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import json_values_equal
+
+from .remote_helper_storage import _legacy_read, _legacy_write
+from .remote_removals import REMOVAL_OPERATIONS, execute_removal_operation
 
 HELPER_OPERATIONS = frozenset(
     {
+        *REMOVAL_OPERATIONS,
         "helpers.storage.schemas",
         "helpers.storage.read",
         "helpers.storage.write",
@@ -19,6 +25,9 @@ HELPER_OPERATIONS = frozenset(
         "helpers.flow.entries",
         "helpers.entities.for_entry",
         "helpers.entities.update",
+        "helpers.catalog",
+        "helpers.storage.describe_item",
+        "helpers.translations",
     }
 )
 
@@ -29,6 +38,17 @@ async def execute_helper_operation(
     from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
     try:
+        if operation in REMOVAL_OPERATIONS:
+            return await execute_removal_operation(client, operation, arguments)
+        if operation in {
+            "helpers.catalog",
+            "helpers.storage.describe_item",
+            "helpers.translations",
+        }:
+            from .remote_helper_listing import describe_operation
+
+            return await describe_operation(client, operation, arguments)
+
         return await _execute(client, operation, arguments)
     except ToolError as exc:
         payload = json.loads(str(exc))
@@ -37,12 +57,11 @@ async def execute_helper_operation(
         ) from exc
 
 
-async def _execute(
-    client: Any, operation: str, arguments: dict[str, Any]
-) -> dict[str, Any]:
+async def _execute(client: Any, operation: str, arguments: dict[str, Any]) -> Any:
     from ha_mcp.tools.component_helper_collections import (
         fetch_helper_schemas,
         read_helper_item,
+        read_stored_helper_item,
     )
 
     if operation == "helpers.storage.schemas":
@@ -71,113 +90,16 @@ async def _execute(
             )
         return {"items": listed_items(raw.get("result"))}
     if operation == "helpers.storage.read":
-        result = await read_helper_item(client, **arguments)
+        item_id = arguments.get("item_id")
+        result = (
+            await read_stored_helper_item(client, helper_type, item_id, item_id)
+            if item_id is not None
+            else await read_helper_item(client, **arguments)
+        )
         return result if result is not None else await _legacy_read(client, arguments)
     if operation == "helpers.storage.write":
         return await _write_storage(client, arguments)
     raise UnsupportedOperation(operation)
-
-
-async def _legacy_read(client: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    from ha_mcp.tools.component_helper_collections import registry_entity_id
-    from ha_mcp.tools.config_helpers.listing import listed_items
-
-    helper_type = arguments["helper_type"]
-    item_id, entity_id = arguments.get("item_id"), arguments.get("entity_id")
-    if item_id is None and entity_id is not None:
-        entry = await client.send_websocket_message(
-            {"type": "config/entity_registry/get", "entity_id": entity_id}
-        )
-        row = entry.get("result") or {}
-        if row.get("platform") == helper_type:
-            item_id = row.get("unique_id")
-    listed = await client.send_websocket_message({"type": f"{helper_type}/list"})
-    if not listed.get("success"):
-        raise ToolFailure(
-            "SERVICE_CALL_FAILED", f"Could not read {helper_type} storage collection."
-        )
-    item = next(
-        (
-            item
-            for item in listed_items(listed.get("result"))
-            if item.get("id") == item_id
-        ),
-        None,
-    )
-    if item is None:
-        return {
-            "success": False,
-            "error": {
-                "code": "not_found",
-                "message": f"No {helper_type} item {item_id!r}",
-            },
-        }
-    return {
-        "success": True,
-        "item_id": item_id,
-        "item": item,
-        "entity_id": entity_id
-        or await registry_entity_id(client, helper_type, item_id),
-    }
-
-
-async def _legacy_write(
-    client: Any, arguments: dict[str, Any], *, wait: bool = False
-) -> dict[str, Any]:
-    from ha_mcp.tools.component_helper_collections import registry_entity_id
-    from ha_mcp.tools.config_helpers.update import _apply_update_registry_and_category
-
-    helper_type, action = arguments["helper_type"], arguments["action"]
-    if action not in {"create", "update"}:
-        raise UnsupportedOperation(f"helpers.storage.{action}")
-    payload = dict(arguments["data"])
-    reserved = {"type", "id"} | ({f"{helper_type}_id"} if action == "update" else set())
-    if reserved.intersection(payload):
-        raise ToolFailure(
-            "INVALID_ARGUMENTS",
-            "Protected helper request envelope field.",
-            status="not_started",
-        )
-    if action == "update":
-        payload[f"{helper_type}_id"] = arguments["item_id"]
-    raw = await client.send_websocket_message(
-        {"type": f"{helper_type}/{action}", **payload}
-    )
-    if raw.get("success") is not True:
-        # The primitive returned an error after being sent; never replay it.
-        raise ToolFailure(
-            "SERVICE_CALL_FAILED", str(raw.get("error", "Helper write failed"))
-        )
-    item = dict(raw.get("result") or {})
-    entity_id = await registry_entity_id(
-        client, helper_type, item.get("id", arguments.get("item_id"))
-    )
-    warnings: list[str] = []
-    registry = arguments.get("registry") or {}
-    applied: dict[str, Any] = {}
-    if entity_id and registry:
-        await _apply_update_registry_and_category(
-            client,
-            entity_id,
-            registry.get("icon"),
-            registry.get("area_id"),
-            registry.get("labels"),
-            registry.get("category"),
-            applied,
-            warnings,
-        )
-    if entity_id and wait and helper_type != "tag":
-        from ha_mcp.tools.ws_waiters import wait_for_entity_registered
-
-        if not await wait_for_entity_registered(client, entity_id):
-            warnings.append(f"Helper was saved but {entity_id} is not yet queryable.")
-    return {
-        "success": True,
-        "item": item,
-        "entity_id": entity_id,
-        "registry_applied": applied,
-        "warnings": warnings,
-    }
 
 
 async def _registry_snapshot(client: Any, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -213,9 +135,37 @@ async def _capture_backup(client: Any, arguments: dict[str, Any]) -> dict[str, A
         return {}
     domain = arguments.get("backup_domain", f"helper_{arguments['helper_type']}")
     source = arguments.get("source_tool", "ha_config_set_helper")
-    function = HelperConfigTools.ha_config_set_helper
+    function: Callable[..., Awaitable[Any]] = HelperConfigTools.ha_config_set_helper
     id_param = "helper_id"
-    if (domain, source) != (f"helper_{arguments['helper_type']}", function.__name__):
+    if source == "ha_remove_helpers_integrations" and domain in {
+        f"helper_{arguments['helper_type']}",
+        "integration",
+    }:
+        from ha_mcp.runtime.integration_removals import IntegrationRemovalTools
+
+        if domain == "integration" and arguments["helper_type"] != "integration":
+            raise ToolFailure(
+                "INVALID_ARGUMENTS",
+                "Unsupported backup identity.",
+                status="not_started",
+            )
+        function = IntegrationRemovalTools.ha_remove_helpers_integrations
+        id_param = "target"
+    elif source == "ha_set_integration" and domain in {
+        f"helper_{arguments['helper_type']}",
+        "integration",
+    }:
+        from ha_mcp.runtime.integration_writes import IntegrationWriteTools
+
+        if domain == "integration" and arguments["helper_type"] != "integration":
+            raise ToolFailure(
+                "INVALID_ARGUMENTS",
+                "Unsupported backup identity.",
+                status="not_started",
+            )
+        function = IntegrationWriteTools.ha_set_integration
+        id_param = "entry_id"
+    elif (domain, source) != (f"helper_{arguments['helper_type']}", function.__name__):
         if (domain, source, arguments["helper_type"]) not in {
             ("zone", "ha_set_zone", "zone"),
             ("zone", "ha_remove_zone", "zone"),
@@ -294,9 +244,20 @@ async def _write_storage(client: Any, arguments: dict[str, Any]) -> dict[str, An
 
     payload = dict(arguments)
     payload.pop("expected_item", None)
+    payload.pop("expected_registry", None)
     wait = payload.pop("wait_for_entity", False)
     await _check_expected(client, arguments)
-    result = await write_helper_item(client, **payload)
+    result = await write_helper_item(
+        client,
+        payload["helper_type"],
+        payload["action"],
+        payload["data"],
+        **{
+            key: value
+            for key, value in payload.items()
+            if key not in {"helper_type", "action", "data"}
+        },
+    )
     return (
         result
         if result is not None
@@ -313,7 +274,7 @@ async def _check_expected(client: Any, arguments: dict[str, Any]) -> None:
             "helpers.storage.read",
             {"helper_type": arguments["helper_type"], "item_id": arguments["item_id"]},
         )
-        if current.get("item") != expected:
+        if not json_values_equal(current.get("item"), expected):
             raise ToolFailure(
                 "CONFIG_CONFLICT",
                 "The helper changed after its snapshot was read; no update was sent.",

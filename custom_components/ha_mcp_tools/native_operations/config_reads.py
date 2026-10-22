@@ -57,7 +57,7 @@ async def _automation_read(
     return {
         "found": value is not None,
         "config": value,
-        "storage_key": storage_key,
+        "storage_key": str(storage_key) if storage_key is not None else None,
         "available_ids": _available_ids(hass, "automation") if value is None else [],
     }
 

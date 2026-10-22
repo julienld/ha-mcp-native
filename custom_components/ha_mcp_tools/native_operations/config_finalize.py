@@ -1,20 +1,26 @@
 """Core registry confirmation and category updates after config persistence."""
 
 import asyncio
+import copy
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from ha_mcp.tool_api import UnsupportedOperation
+from ha_mcp.utils.python_sandbox import safe_execute
 
-from .entity_waiters import wait_registered
+from .entity_waiters import wait_automation_entity, wait_registered, wait_state
 
 
-async def resolve_after_write(hass: HomeAssistant, arguments: dict[str, Any]) -> str:
+async def resolve_after_write(
+    hass: HomeAssistant, arguments: dict[str, Any]
+) -> str | None:
     from homeassistant.helpers import entity_registry as er
 
     domain = arguments["domain"]
+    if domain == "automation":
+        return await wait_automation_entity(hass, arguments)
     if domain not in {"scene", "script"}:
         raise UnsupportedOperation("config.entity_id.after_write.domain")
     key = arguments["storage_key"].removeprefix(f"{domain}.")
@@ -76,3 +82,46 @@ DIRECT_OPERATIONS = {
     "entities.registration.wait": (wait_registered, False),
     "entities.category.write": (apply_category, True),
 }
+
+
+async def transform_config(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:
+    """Pure transforms run in Core's executor, keeping its loop responsive."""
+    return await hass.async_add_executor_job(
+        safe_execute, arguments["expression"], copy.deepcopy(arguments["config"])
+    )
+
+
+DIRECT_OPERATIONS["config.transform"] = (transform_config, False)
+
+
+async def automation_allocate_id(hass: HomeAssistant, arguments: dict[str, Any]) -> str:
+    from uuid import uuid4
+
+    return uuid4().hex
+
+
+async def automation_runtime_target(
+    hass: HomeAssistant, arguments: dict[str, Any]
+) -> str | None:
+    identifier = arguments["identifier"]
+    return next(
+        (
+            state.entity_id
+            for state in hass.states.async_all()
+            if state.entity_id.startswith("automation.")
+            and (
+                state.entity_id == identifier
+                or state.attributes.get("id") == identifier
+            )
+        ),
+        None,
+    )
+
+
+DIRECT_OPERATIONS.update(
+    {
+        "config.automation.allocate_id": (automation_allocate_id, False),
+        "config.automation.runtime_target": (automation_runtime_target, False),
+        "entities.state.wait": (wait_state, False),
+    }
+)

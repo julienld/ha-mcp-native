@@ -210,4 +210,3 @@ def check_refs(
                     }
                 )
     return warnings
-

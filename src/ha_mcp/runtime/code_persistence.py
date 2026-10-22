@@ -59,7 +59,7 @@ class SavedToolsPersistence:
         ``read_text()``.
 
         A genuine I/O error reading an existing file (OSError that isn't
-        FileNotFoundError) is logged at ERROR and ALSO sets the module-level
+        FileNotFoundError) is logged at ERROR and ALSO sets the instance
         ``self.load_failed`` flag so callers know not to overwrite
         whatever is on disk while the load condition persists. This prevents
         a PermissionError at startup from cascading into "next save wipes
@@ -95,7 +95,7 @@ class SavedToolsPersistence:
 
         Returns ``None`` (logging at WARNING/ERROR as appropriate) for any
         malformed shape: invalid JSON, non-dict top level, unexpected schema
-        version, or a non-dict ``saved_tools`` value. Sets the module-level
+        version, or a non-dict ``saved_tools`` value. Sets the instance
         ``self.load_failed`` flag on an unexpected schema version, for
         the same reason as ``_read_saved_tools_raw``'s OSError branch.
         """
@@ -156,7 +156,7 @@ class SavedToolsPersistence:
         the file will be overwritten on the next persist.
 
         A genuine I/O error reading an existing file (OSError that isn't
-        FileNotFoundError) is logged at ERROR and ALSO sets the module-level
+        FileNotFoundError) is logged at ERROR and ALSO sets the instance
         ``self.load_failed`` flag so callers know not to overwrite
         whatever is on disk while the load condition persists. This prevents
         a PermissionError at startup from cascading into "next save wipes
@@ -209,8 +209,6 @@ class SavedToolsPersistence:
         """
         if not path_str:
             return True
-        # Read-only access to the module-level flag; ``global`` declaration
-        # only needed at the set sites in ``_load_saved_tools``.
         if self.load_failed:
             logger.warning(
                 "Skipping persist to %s because the prior load failed; "

@@ -24,3 +24,19 @@ def with_registry(answer: Any) -> AsyncMock:
         return await answer(msg) if callable(answer) else answer
 
     return AsyncMock(side_effect=send)
+
+
+def with_resolved_registry(answer: Any) -> AsyncMock:
+    """Make a stable fake registry list contain its successful get responses."""
+    entries: dict[str, dict[str, Any]] = {}
+
+    async def send(message: dict[str, Any]) -> Any:
+        if message["type"] == "config/entity_registry/list":
+            return {"success": True, "result": list(entries.values())}
+        response = await answer(message)
+        if message["type"] == "config/entity_registry/get" and response.get("success"):
+            row = response["result"]
+            entries[row["entity_id"]] = dict(row)
+        return response
+
+    return AsyncMock(side_effect=send)

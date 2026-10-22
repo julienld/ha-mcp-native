@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
-from ha_mcp.tool_api import CallContext
+from ha_mcp.runtime import Engine
+from ha_mcp.runtime.flows.session import FlowSession
+from ha_mcp.tool_api import CallContext, ToolFailure
+from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .test_component_helper_collections import FakeCollection, _hass
 from .test_component_ws_search import FakeRegEntry, make_view
@@ -18,6 +21,58 @@ from .test_native_engine_backend import native as native
 from .test_native_engine_flows import InvalidData
 from .test_native_engine_flows import flows as flows
 from .test_native_engine_helpers import helper_engine
+
+
+async def test_revoked_actor_can_only_abort_its_own_flow_and_release_entry_lock(
+    native: Any, flows: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, user, _, manager, backend, _ = _setup(native, monkeypatch)
+    manager.async_init.return_value = {"flow_id": "owned", "type": "form"}
+    credential = AsyncMock()
+    actor = CallContext("actor", credential=credential)
+    await backend.execute(
+        "config.flow.start", {"kind": "options", "handler": "entry"}, actor
+    )
+    user.is_active = False
+    credential.side_effect = PermissionError("revoked")
+    with pytest.raises(ToolFailure, match="revoked") as rejected:
+        await backend.execute(
+            "config.flow.configure", {"flow_id": "owned", "user_input": {}}, actor
+        )
+    assert rejected.value.status == "not_started"
+    manager.async_configure.assert_not_awaited()
+    with pytest.raises(ToolFailure, match="does not own"):
+        await backend.execute(
+            "config.flow.abort", {"flow_id": "owned"}, CallContext("other")
+        )
+    await backend.execute("config.flow.abort", {"flow_id": "owned"}, actor)
+    assert (
+        not backend._flows.owned
+        and not registry_update_lock("config_entry", "entry").locked()
+    )
+
+
+@pytest.mark.parametrize("kind", ["options", "subentry-create", "subentry-update"])
+async def test_restore_session_preserves_expected_revision_without_recapturing(
+    native: Any, flows: Any, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    _, _, entry, manager, backend, _ = _setup(native, monkeypatch)
+    actor = CallContext("actor")
+    session = FlowSession(
+        backend, actor, expected_modified_at=entry.modified_at.timestamp()
+    )
+    entry.modified_at = datetime(2026, 10, 22, tzinfo=UTC)
+
+    async def start() -> dict:
+        if kind == "options":
+            return await session.start_options_flow("entry")
+        return await session.start_config_subentry_flow(
+            "entry", "sensor", subentry_id="sub" if kind.endswith("update") else None
+        )
+
+    result = await Engine(backend).call_owned("restore", start, actor, writes=True)
+    assert result.is_error and result.data["error"]["code"] == "CONFIG_CONFLICT"
+    manager.async_init.assert_not_awaited()
 
 
 async def test_native_core_rejection_uses_shared_field_error_and_redaction(

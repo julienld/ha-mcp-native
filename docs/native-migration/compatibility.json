@@ -43,11 +43,27 @@
     "legacy": "persisted static client credential and signing key; administrator-equivalent single tenant",
     "native_execution": "no internally generated access token required; revalidate principal/owner and authorize explicitly"
   },
+  "generated_ids": {
+    "automation_create_native": "opaque UUID-derived storage ID",
+    "automation_create_remote": "historical millisecond-derived storage ID",
+    "preserve_existing_ids": true,
+    "client_contract": "Reuse the returned unique_id/entity_id; generated formats are not interchangeable algorithms."
+  },
   "retired_tool_aliases": {
     "ha_get_addon": "ha_get_app",
     "ha_manage_addon": "ha_manage_app",
     "ha_get_blueprint": "ha_manage_blueprints",
     "ha_import_blueprint": "ha_manage_blueprints"
+  },
+  "native_annotation_overrides": {
+    "ha_get_integration": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Options/subentry schema inspection and password-field redaction initialize actual Core flows, which can mutate immediately. Native argument policy permits persisted metadata/options reads without flows when redaction is disabled. Native parameter descriptions disclose these effects instead of claiming subentry introspection cannot create anything; legacy signatures and metadata remain unchanged."
+    },
+    "ha_config_list_helpers": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Describing a flow-backed helper can call Core async_init, which may immediately create a config entry. Native discovery must disclose that effect; argument-specific policy still permits storage listing/description in read-only mode. The standalone catalog remains unchanged."
+    }
   },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},

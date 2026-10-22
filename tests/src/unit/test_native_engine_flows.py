@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from ha_mcp.tool_api import CallContext, ToolFailure
+from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from . import test_component_ws_search as _component_stubs  # noqa: F401
 
@@ -30,6 +31,118 @@ class UnknownHandler(Exception):
 
 class UnknownStep(Exception):
     pass
+
+
+async def test_reconfigure_start_compares_revision_before_core_init(flows: Any) -> None:
+    owner = manager()
+    entry = SimpleNamespace(modified_at=SimpleNamespace(timestamp=lambda: 2.0))
+    backend = flows.NativeFlows(
+        SimpleNamespace(
+            config_entries=SimpleNamespace(
+                flow=owner,
+                async_get_entry=lambda _key: entry,
+            )
+        ),
+        AsyncMock(),
+    )
+    try:
+        with pytest.raises(ToolFailure, match="changed after its snapshot"):
+            await backend.execute(
+                "config.flow.start",
+                {
+                    "kind": "config",
+                    "handler": "demo",
+                    "entry_id": "entry",
+                    "expected_modified_at": 1.0,
+                },
+                CallContext("actor"),
+            )
+        owner.async_init.assert_not_awaited()
+    finally:
+        await backend.stop()
+
+
+async def test_entry_lock_wait_is_cancellable_and_owned_abort_ignores_readonly(
+    flows: Any,
+) -> None:
+    owner = manager()
+    actor = CallContext("actor")
+    backend = flows.NativeFlows(
+        SimpleNamespace(config_entries=SimpleNamespace(options=owner)), AsyncMock()
+    )
+    await backend.execute(
+        "config.flow.start", {"kind": "options", "handler": "entry"}, actor
+    )
+    second = asyncio.create_task(
+        backend.execute(
+            "config.flow.start", {"kind": "options", "handler": "entry"}, actor
+        )
+    )
+    await asyncio.sleep(0)
+    assert owner.async_init.await_count == 1 and not second.done()
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    assert (
+        backend.starting == 0 and registry_update_lock("config_entry", "entry").locked()
+    )
+    await backend.execute(
+        "config.flow.abort", {"flow_id": "owned"}, CallContext("actor", read_only=True)
+    )
+    assert (
+        not backend.owned and not registry_update_lock("config_entry", "entry").locked()
+    )
+
+
+async def test_waiting_flow_rechecks_expected_revision_after_prior_flow_commits(
+    flows: Any,
+) -> None:
+    owner = manager()
+    entry = SimpleNamespace(modified_at=SimpleNamespace(timestamp=lambda: 1.0))
+    actor = CallContext("actor")
+    backend = flows.NativeFlows(
+        SimpleNamespace(
+            config_entries=SimpleNamespace(
+                options=owner, async_get_entry=lambda key: entry
+            )
+        ),
+        AsyncMock(),
+    )
+    arguments = {"kind": "options", "handler": "entry", "expected_modified_at": 1.0}
+    await backend.execute("config.flow.start", arguments, actor)
+    waiting = asyncio.create_task(
+        backend.execute("config.flow.start", arguments, actor)
+    )
+    await asyncio.sleep(0)
+    assert owner.async_init.await_count == 1
+
+    async def commit(*args: Any) -> dict:
+        entry.modified_at = SimpleNamespace(timestamp=lambda: 2.0)
+        return {"type": "create_entry", "flow_id": "owned"}
+
+    owner.async_configure.side_effect = commit
+    await backend.execute(
+        "config.flow.configure", {"flow_id": "owned", "user_input": {}}, actor
+    )
+    with pytest.raises(ToolFailure, match="changed after its snapshot"):
+        await waiting
+    assert owner.async_init.await_count == 1 and backend.starting == 0
+    assert (
+        not backend.owned and not registry_update_lock("config_entry", "entry").locked()
+    )
+
+
+@pytest.mark.parametrize("previous", ["not_applied", "unknown", "applied"])
+async def test_refused_flow_step_preserves_prior_apply_knowledge(previous: str) -> None:
+    from ha_mcp.runtime.flows.entry import _OptionsFlowProgress
+
+    progress = _OptionsFlowProgress("entry", apply_status=previous)
+    submit = AsyncMock(
+        side_effect=ToolFailure("READ_ONLY", "blocked", status="not_started")
+    )
+    with pytest.raises(ToolFailure):
+        await progress.submit(None, "flow", {}, submit_fn=submit)
+    assert progress.apply_status == previous
 
 
 @pytest.mark.parametrize("resume", [False, True])
@@ -175,7 +288,7 @@ async def test_revoked_actor_cannot_resume(flows: Any) -> None:
     actor = CallContext("user")
     await backend.execute("config.flow.start", {"handler": "template"}, actor)
     authorize.side_effect = PermissionError("revoked")
-    with pytest.raises(PermissionError, match="revoked"):
+    with pytest.raises(ToolFailure, match="revoked"):
         await backend.execute("config.flow.configure", {"flow_id": "owned"}, actor)
     owner.async_configure.assert_not_awaited()
 
@@ -214,6 +327,7 @@ async def test_subentry_reconfigure_preserves_core_handler_and_context(
     owner.async_init.assert_awaited_once_with(
         ("entry", "sensor"), context={"source": "reconfigure", "subentry_id": "sub"}
     )
+    await backend.stop()
 
 
 async def test_failed_flow_stop_keeps_ownership_for_retry(flows: Any) -> None:
@@ -231,3 +345,42 @@ async def test_failed_flow_stop_keeps_ownership_for_retry(flows: Any) -> None:
     owner.async_abort.side_effect = None
     await backend.stop()
     assert not backend.owned
+
+
+@pytest.mark.parametrize("step", ["init", "configure"])
+async def test_core_callback_failure_after_dispatch_is_unknown_without_replay(
+    flows: Any, step: str
+) -> None:
+    owner = manager()
+    backend = flows.NativeFlows(
+        SimpleNamespace(config_entries=SimpleNamespace(options=owner)), AsyncMock()
+    )
+    calls = []
+
+    async def write_then_raise(*args: Any, **kwargs: Any) -> Any:
+        calls.append("committed")
+        raise ValueError("listener failed after commit")
+
+    actor = CallContext("actor")
+    try:
+        if step == "configure":
+            await backend.execute(
+                "config.flow.start", {"kind": "options", "handler": "entry"}, actor
+            )
+            owner.async_configure.side_effect = write_then_raise
+            operation, arguments = (
+                "config.flow.configure",
+                {"flow_id": "owned", "user_input": {}},
+            )
+        else:
+            owner.async_init.side_effect = write_then_raise
+            operation, arguments = (
+                "config.flow.start",
+                {"kind": "options", "handler": "entry"},
+            )
+        with pytest.raises(ToolFailure) as error:
+            await backend.execute(operation, arguments, actor)
+        assert error.value.status == "outcome_unknown"
+        assert calls == ["committed"]
+    finally:
+        await backend.stop()

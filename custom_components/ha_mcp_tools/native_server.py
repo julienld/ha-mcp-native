@@ -56,6 +56,22 @@ def _prewarm() -> bool:
     importlib.import_module(f"{__package__}.native_visibility")
     importlib.import_module(f"{__package__}.native_resources")
     importlib.import_module(f"{__package__}.native_code")
+    for module in (
+        "native_settings",
+        "native_snapshots",
+        "native_snapshot_restore",
+        "native_snapshot_flows",
+        "native_snapshot_storage",
+    ):
+        importlib.import_module(f"{__package__}.{module}")
+    for module in (
+        "snapshot_projection",
+        "snapshot_todo",
+        "snapshot_registry_restore",
+        "snapshot_storage_restore",
+        "snapshot_flow_restore",
+    ):
+        importlib.import_module(f"ha_mcp.runtime.{module}")
     from io import StringIO
 
     from ha_mcp._vendor.fastmcp.server.dependencies import is_docket_available
@@ -211,6 +227,8 @@ class NativeServerManager:
             redaction_enabled=lambda: self.policy.flag("redact_secrets"),
             helper_backup=self.snapshots.helper_backup,
             config_backup=self.snapshots.config_backup,
+            todo_backup=self.snapshots.todo_backup,
+            registry_backup=self.snapshots.registry_backup,
             code_handler=self.code.run,
         )
         self.visibility = NativeVisibility(self)
@@ -309,8 +327,39 @@ class NativeServerManager:
                 max_results=maximum,
                 always_visible=sorted(self.policy.pinned),
                 enable_code_mode="ha_manage_custom_tool" in self.engine.tools,
+                effect_resolver=self._search_call_effect,
+                read_action_resolver=self._search_has_read_actions,
+                read_only_resolver=self._search_read_only,
             )
         )
+
+    def _search_call_effect(self, name: str, arguments: dict[str, Any]) -> bool | None:
+        from ha_mcp.renamed_tools import adapt_retired_arguments, current_tool_name
+
+        values = adapt_retired_arguments(name, arguments) or {}
+        definition = self.engine.tools.get(current_tool_name(name))
+        if definition is None:
+            return None
+        validated = definition.validate(values) if definition.validate else dict(values)
+        return (
+            definition.writes(validated)
+            if definition.writes is not None
+            else not definition.read_only
+        )
+
+    def _search_has_read_actions(self, name: str) -> bool:
+        definition = self.engine.tools.get(name)
+        return definition is not None and definition.writes is not None
+
+    def _search_read_only(self) -> bool:
+        if self.policy.read_only:
+            return True
+        try:
+            return current_context().read_only
+        except RuntimeError:
+            # Assist/initial catalogue introspection has no HTTP request;
+            # its own execution path still binds and validates CallContext.
+            return False
 
     async def refresh_policy(self) -> None:
         """Apply all-client restrictions independently from Assist exposure."""

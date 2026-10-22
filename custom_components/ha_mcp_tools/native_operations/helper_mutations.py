@@ -15,6 +15,7 @@ from ha_mcp.utils.config_hash import canonical_json
 
 from ..helper_collections import async_write_item
 from .owner import CoreOperationOwner
+from .registry_expectation import check_expected_registry
 
 
 def _fingerprint(value: Any) -> str:
@@ -27,12 +28,25 @@ class NativeHelperMutations(CoreOperationOwner):
     ) -> dict[str, Any]:
         from homeassistant.helpers import entity_registry as er
 
-        writer = partial(self._write, actor, arguments.get("expected_item"))
+        writer = partial(
+            self._write,
+            actor,
+            arguments.get("expected_item"),
+            arguments.get("expected_registry"),
+        )
         if arguments["helper_type"] == "tag":
             from .tag_mutations import write_tag
 
             writer = partial(
-                write_tag, actor, self._admit, arguments.get("expected_item")
+                write_tag,
+                actor,
+                self._admit,
+                arguments.get("expected_item"),
+                check_registry=partial(
+                    check_expected_registry,
+                    self.hass,
+                    arguments.get("expected_registry"),
+                ),
             )
         return await async_write_item(
             self.hass,
@@ -62,6 +76,7 @@ class NativeHelperMutations(CoreOperationOwner):
         self,
         actor: CallContext,
         expected: Any,
+        expected_registry: dict[str, Any] | None,
         collection: Any,
         action: str,
         item_id: str | None,
@@ -80,6 +95,7 @@ class NativeHelperMutations(CoreOperationOwner):
         ) is not getattr(StorageCollection, method_name):
             raise UnsupportedOperation("helpers.storage.overridden_commit")
         await self._admit(actor)
+        check_expected_registry(self.hass, expected_registry)
         # Some validators (person's user_id uniqueness) inspect other items.
         # A whole-collection check also protects those decisions across awaits.
         before = _fingerprint(collection.data)
@@ -105,6 +121,7 @@ class NativeHelperMutations(CoreOperationOwner):
                 copy.deepcopy(current), copy.deepcopy(fields)
             )
         await self._admit(actor)
+        check_expected_registry(self.hass, expected_registry)
         if _fingerprint(collection.data) != before:
             raise ToolFailure(
                 "CONFIG_CONFLICT",
@@ -141,6 +158,7 @@ class NativeHelperMutations(CoreOperationOwner):
             # The common facade applies registry changes after this returns.
             # Revocation while listeners ran leaves the committed item intact.
             await self._admit(actor)
+            check_expected_registry(self.hass, expected_registry)
             return item if action == "create" else collection.data[item_id]
         except Exception as error:
             raise ToolFailure(

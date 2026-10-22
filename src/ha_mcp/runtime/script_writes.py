@@ -18,7 +18,7 @@ from ha_mcp.utils.python_sandbox import get_security_documentation
 from .blueprint_substitute import validate_write_modes
 from .config_reads import _missing_config
 from .config_write_context import merge_validation_meta
-from .errors import raise_failure
+from .errors import raise_classified, raise_failure
 from .script_config import ScriptConfigTools
 from .validation import validate_identifier_not_empty
 
@@ -35,11 +35,10 @@ class ScriptWriteTools(ScriptConfigTools):
     async def _raise_script_write_error(
         self, error: Exception, script_id: str, bp_warnings: BestPracticeCheckResult
     ) -> NoReturn:
-        data = create_error_response(
-            ErrorCode.INTERNAL_ERROR, str(error), context={"script_id": script_id}
-        )
-        await self._augment_error_dict(data, bp_warnings)
-        raise_failure(data)
+        try:
+            raise_classified(error, {"script_id": script_id})
+        except ToolFailure as classified:
+            raise await self._augment_failure(classified, bp_warnings) from None
 
     async def _ensure_script_exists(self, entity_id: str, script_id: str) -> None:
         result = await self.backend.execute(
@@ -64,57 +63,13 @@ class ScriptWriteTools(ScriptConfigTools):
     async def _upsert_script(
         self, config: dict[str, Any], script_id: str, resolved_id: str | None
     ) -> dict[str, Any]:
-        current = await self.backend.execute(
-            "config.script.read", {"identifier": script_id}, self.context
+        return await self._upsert_config(
+            "script",
+            config,
+            script_id,
+            resolved_id,
+            getattr(self, "_last_verified_script", None),
         )
-        key = current["storage_key"]
-        previous = current["config"] if current["found"] else None
-        verified = getattr(self, "_last_verified_script", None)
-        if verified is not None and (
-            previous != verified[0] or (verified[1] is not None and key != verified[1])
-        ):
-            raise ToolFailure(
-                "CONFIG_CONFLICT",
-                "Script modified since last read (conflict)",
-                status="not_started",
-            )
-        if resolved_id is not None and key != resolved_id:
-            raise ToolFailure(
-                "CONFIG_CONFLICT",
-                "The script identifier now names another stored script.",
-                status="not_started",
-            )
-        backup = await self.backend.execute(
-            "config.backup.capture",
-            {
-                "domain": "script",
-                "source_tool": "ha_config_set_script",
-                "backup_id": key if previous is not None else None,
-                "current_config": previous,
-            },
-            self.context,
-        )
-        config.setdefault("alias", script_id)
-        result: dict[str, Any] = await self.backend.execute(
-            "config.script.write",
-            {
-                "storage_key": key,
-                "expected_config": previous,
-                "data": config,
-                "identifier": script_id,
-            },
-            self.context,
-        )
-        result.update(
-            {
-                "success": True,
-                "script_id": key,
-                "operation": "created" if result.get("result") == "ok" else "updated",
-            }
-        )
-        if backup.get("warnings"):
-            result.setdefault("warnings", []).extend(backup["warnings"])
-        return result
 
     async def ha_config_set_script(
         self,

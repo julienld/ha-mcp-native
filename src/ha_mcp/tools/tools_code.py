@@ -45,7 +45,7 @@ from ..runtime.code_persistence import (
 from ..runtime.code_registry import SavedToolsRegistry
 from ..runtime.code_runner import run_sandboxed_code
 from ..runtime.code_session import CodeSession
-from ..runtime.code_validation import SAVE_NAME_PATTERN
+from ..runtime.code_validation import BLOCKED_TOOLS, SAVE_NAME_PATTERN
 from ..runtime.code_validation import _classify_sandbox_error as _classify_sandbox_error
 from ..runtime.code_validation import _sandbox_error as _sandbox_error
 from ..runtime.code_validation import (
@@ -107,15 +107,7 @@ _saved_tools: dict[str, dict[str, str]] = {}
 # ``CategorizedSearchTransform`` (excludes pinned tools from category sets
 # when code mode is on); this set is the defense-in-depth that closes the
 # inner-call path even if the proxy is reachable some other way.
-_BLOCKED_TOOLS = frozenset(
-    {
-        "ha_manage_custom_tool",
-        "ha_search_tools",
-        "ha_call_read_tool",
-        "ha_call_write_tool",
-        "ha_call_delete_tool",
-    }
-)
+_BLOCKED_TOOLS = BLOCKED_TOOLS
 
 # Validation for save_as names
 

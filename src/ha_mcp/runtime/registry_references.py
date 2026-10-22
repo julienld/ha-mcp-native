@@ -111,11 +111,13 @@ async def validate_registry_ids(
     categories: dict[str, str | None],
     *,
     fail_closed: bool = True,
+    floor_id: str | None = None,
 ) -> None:
     requested = (
         (["area"] if area_id else [])
         + (["label"] if labels else [])
         + (["category"] if any(categories.values()) else [])
+        + (["floor"] if floor_id else [])
     )
     if not requested:
         return
@@ -131,3 +133,6 @@ async def validate_registry_ids(
     for scope, category in categories.items():
         if category:
             _raise_if_unknown_category(rows["categories"][scope], category, scope)
+
+    if floor_id:
+        _raise_if_unknown_floor(rows["floors"], floor_id)

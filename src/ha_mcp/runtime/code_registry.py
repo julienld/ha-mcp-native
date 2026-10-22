@@ -59,7 +59,7 @@ class SavedToolsRegistry:
 
         Mutates ``response["data"]`` in place: sets ``saved_as`` on success,
         or rolls back the in-memory write and sets ``saved_as=None`` plus a
-        ``save_warning`` on persistence failure. Raises ToolError if the
+        ``save_warning`` on persistence failure. Raises ToolFailure if the
         saved-tools cache is full.
         """
         if save_as not in self.tools and len(self.tools) >= MAX_SAVED_TOOLS:

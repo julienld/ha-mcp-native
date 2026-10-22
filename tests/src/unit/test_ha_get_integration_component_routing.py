@@ -131,6 +131,9 @@ class RoutingClient:
         self.rest_list_calls += 1
         return list(self._rest_entries)
 
+    async def list_config_entries(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/config/config_entries/entry")
+
     async def get_config_entry(self, entry_id: str) -> dict[str, Any]:
         # Legacy single-entry read (lists all + filters client-side in real life).
         self.get_config_entry_calls += 1

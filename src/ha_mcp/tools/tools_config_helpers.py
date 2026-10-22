@@ -7,20 +7,19 @@ input_number, input_text, input_datetime, counter, timer, schedule).
 """
 
 import logging
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any, cast
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
+from ..runtime.helper_listing import HelperListingTools
 from ..runtime.helper_tools import HelperConfigTools as SharedHelperConfigTools
 from ..tool_api import ToolFailure
 from .auto_backup import with_auto_backup
@@ -31,12 +30,10 @@ from .component_api import (
     is_unknown_command,
 )
 from .config_entry_backup import helper_backup_id
-from .config_helpers.create import _execute_create_simple_helper
 from .config_helpers.describe import describe_helper_response
 from .config_helpers.flow import _handle_flow_helper, _handle_set_config_subentry
 from .config_helpers.listing import (
     _component_covers,
-    _paginate_helpers_response,
     _raise_all_requires_component,
     _raise_flow_requires_component,
     _shape_component_helpers_response,
@@ -51,11 +48,9 @@ from .config_helpers.registry import (
 )
 from .config_helpers.schemas import (
     SIMPLE_HELPER_TYPES,
-    StorageHelperType,
     _attach_helper_skill,
 )
 from .config_helpers.typed_config import _core_schema_context, _prepare_typed_params
-from .config_helpers.update import _execute_update_simple_helper
 from .config_helpers.validation import _validate_set_helper_action
 from .config_write_helpers import (
     augment_error_dict_with_skill_content,
@@ -73,135 +68,41 @@ from .tool_hints import read_only_hints, write_hints
 logger = logging.getLogger(__name__)
 
 
-class HelperConfigTools(SharedHelperConfigTools):
+class HelperConfigTools(
+    LegacyBackendTools, SharedHelperConfigTools, HelperListingTools
+):
     """Encapsulates helper configuration tools for ha_config_list_helpers and ha_config_set_helper."""
 
-    def __init__(self, client: Any) -> None:
-        self._client = client
-
-    @tool(
+    ha_config_list_helpers = tool(
         name="ha_config_list_helpers",
         tags={"Helper Entities"},
         annotations=read_only_hints("List Helpers", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_list_helpers(
-        self,
-        helper_type: Annotated[
-            StorageHelperType | Literal["all"] | str,
-            Field(
-                description=(
-                    "Helper type to list: a storage type (input_boolean, "
-                    "counter, timer, ...), a helper flow Home Assistant lists "
-                    "(template, group, utility_meter, ...), or 'all' for every "
-                    "type in one call."
-                )
-            ),
-        ],
-        limit: Annotated[
-            int,
-            Field(
-                default=100,
-                ge=1,
-                le=500,
-                description="Max helpers to return per page",
-            ),
-        ] = 100,
-        offset: Annotated[
-            int,
-            Field(
-                default=0,
-                ge=0,
-                description="Number of helpers to skip for pagination",
-            ),
-        ] = 0,
-        describe: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Instead of listing, return the fields ha_config_set_helper "
-                    "accepts in config for helper_type, as Home Assistant "
-                    "reports them (the form the HA UI shows)."
-                )
-            ),
-        ] = False,
-        menu_choice: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "describe only: sub-type of a menu-based helper "
-                    "(template, group), e.g. 'sensor'."
-                )
-            ),
-        ] = None,
-        helper_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "describe only: an existing helper (config entry id for "
-                    "flow helpers, entity_id or id otherwise); each field then "
-                    "carries its current value."
-                )
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """List Home Assistant helpers of a specific type with their configurations.
+    )(log_tool_usage(legacy_errors(HelperListingTools.ha_config_list_helpers)))
 
-        Returns one page of helpers; `total_count` and `has_more` report the full
-        set. Each record carries the configuration for its helper:
-        id (immutable storage key), entity_id (current — address the helper by
-        this, where available), name (current display name), original_name
-        (creation-time name), icon, type-specific settings, and area and label
-        assignments. A flow helper record carries entry_id and options instead of
-        id; a custom helper integration's options are withheld, marked
-        `options_withheld`.
-
-        For a helper renamed in the UI, id/original_name keep the storage values while
-        entity_id/name reflect the current entity registry (entity_id is the identifier
-        ha_config_set_helper resolves against, so prefer it over id for a renamed helper).
-        entity_id/original_name are present only for storage-collection helpers matched in
-        the entity registry — types with no backing entity (e.g. tag), and every record when
-        the registry read degrades, carry only id/name (a warning flags the degraded case).
-
-        Storage types list what HA's ``{type}/list`` command returns: the
-        storage-backed helpers (created via UI/API), not the YAML-defined ones.
-        ``person`` is the exception — HA lists its YAML-configured persons
-        alongside the storage ones, so both appear here.
-
-        Listing flow types requires the ha_mcp_tools custom component (>= 1.1.0);
-        without it, such a listing returns a COMPONENT_NOT_INSTALLED error.
-
-        With helper_type="all", each record carries its own ``helper_type``.
-        This mode is component-only (there is no single built-in command that
-        lists all types): without the ha_mcp_tools component it returns a
-        COMPONENT_NOT_INSTALLED error rather than a partial or empty list.
-
-        describe=True returns each field's name, type, required flag, options,
-        default and (with helper_id) current value, or the menu_options a
-        menu-based helper needs a menu_choice from. Call it before
-        ha_config_set_helper to learn the config keys for a type.
-
-        EXAMPLES:
-        - List all counters: ha_config_list_helpers("counter")
-        - List every helper type at once: ha_config_list_helpers("all")
-        - Next page: ha_config_list_helpers("input_boolean", offset=100)
-        - Fields for a template sensor:
-          ha_config_list_helpers("template", describe=True, menu_choice="sensor")
-
-        For detailed helper documentation, use ha_get_skill_guide.
-        """
+    async def _require_list_helper_type(self, helper_type: str) -> None:
         await require_helper_type(self._client, helper_type, "all")
-        if describe or menu_choice is not None or helper_id is not None:
-            return await describe_helper_response(
+
+    async def _describe_helper(
+        self,
+        helper_type: str,
+        menu_choice: str | None,
+        helper_id: str | None,
+        *,
+        describe: bool,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            await describe_helper_response(
                 self._client, helper_type, menu_choice, helper_id, describe=describe
-            )
+            ),
+        )
+
+    async def _list_helper_records(self, helper_type: str) -> dict[str, Any]:
         # All-types mode: one merged component listing across every helper type.
         # No legacy equivalent exists (no single WS command enumerates all
         # types), so it is component-only — see ``_list_all_helpers``.
         if helper_type == "all":
-            return _paginate_helpers_response(
-                await self._list_all_helpers(), offset, limit
-            )
+            return await self._list_all_helpers()
 
         # Flow-based helper types have no ``{type}/list`` command, so only the
         # component's ``helpers_list`` can enumerate them: they are served
@@ -222,7 +123,7 @@ class HelperConfigTools(SharedHelperConfigTools):
                 helper_type, is_flow=is_flow
             )
             if component_response is not None:
-                return _paginate_helpers_response(component_response, offset, limit)
+                return component_response
         if is_flow:
             # No usable component path and the legacy body cannot serve flow
             # helpers: hard error rather than an empty or misleading list.
@@ -250,7 +151,7 @@ class HelperConfigTools(SharedHelperConfigTools):
                 }
                 if warnings:
                     response["warnings"] = warnings
-                return _paginate_helpers_response(response, offset, limit)
+                return response
             raise_tool_error(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
@@ -460,6 +361,7 @@ class HelperConfigTools(SharedHelperConfigTools):
             )
         if response is None:
             _raise_all_requires_component()
+            raise AssertionError("Component-required projection must raise")
         return response
 
     async def _all_helpers_via_component(self) -> dict[str, Any] | None:
@@ -478,10 +380,13 @@ class HelperConfigTools(SharedHelperConfigTools):
                 invalidate_caps(self._client)
             logger.warning("ha_mcp_tools/helpers_list (all) failed: %r", exc)
             return None
-        return await shape_all_helpers_response(
-            raw.get("result") or {},
-            self._legacy_helper_list,
-            flow_types=await helper_flow_types(self._client, refresh=True),
+        return cast(
+            dict[str, Any],
+            await shape_all_helpers_response(
+                raw.get("result") or {},
+                self._legacy_helper_list,
+                flow_types=await helper_flow_types(self._client, refresh=True),
+            ),
         )
 
     async def _send_component_all_helpers(self) -> dict[str, Any]:
@@ -514,6 +419,7 @@ class HelperConfigTools(SharedHelperConfigTools):
         with_auto_backup(
             domain_fn=lambda kw: f"helper_{kw.get('helper_type', 'unknown')}",
             id_fn=helper_backup_id,
+            skip_fn=lambda kw: kw.get("helper_type") in SIMPLE_HELPER_TYPES,
         )(log_tool_usage(legacy_errors(SharedHelperConfigTools.ha_config_set_helper)))
     )
 
@@ -527,8 +433,8 @@ class HelperConfigTools(SharedHelperConfigTools):
             self._client, action, helper_id, helper_type
         )
 
-    def _schema_context(self, helper_type: str, action: str) -> Any:
-        return _core_schema_context(self._client, helper_type, action)
+    def _schema_context(self, helper_type: str, action: str | None) -> Any:
+        return _core_schema_context(self._client, helper_type, action or "create")
 
     _prepare_typed_params = staticmethod(_prepare_typed_params)
 
@@ -538,17 +444,16 @@ class HelperConfigTools(SharedHelperConfigTools):
     async def _validate_registry_ids(self, *args: Any, **kwargs: Any) -> None:
         await validate_registry_ids(self._client, *args, **kwargs)
 
-    async def _create_simple(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await _execute_create_simple_helper(self._client, *args, **kwargs)
-
-    async def _update_simple(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await _execute_update_simple_helper(self._client, *args, **kwargs)
-
     async def _flow_helper(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await _handle_flow_helper(self._client, *args, **kwargs)
+        return cast(
+            dict[str, Any], await _handle_flow_helper(self._client, *args, **kwargs)
+        )
 
     async def _set_config_subentry(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await _handle_set_config_subentry(self._client, *args, **kwargs)
+        return cast(
+            dict[str, Any],
+            await _handle_set_config_subentry(self._client, *args, **kwargs),
+        )
 
     async def _attach_helper_skill(
         self, response: dict[str, Any], mandatory: bool

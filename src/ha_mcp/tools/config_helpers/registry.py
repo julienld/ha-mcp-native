@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+from ha_mcp.runtime.helper_listing_shape import enrich_helper_records
+
 from ...backends.legacy import legacy_errors_sync
 from ...client.rest_client import HomeAssistantAPIError, HomeAssistantAuthError
 from ...errors import ErrorCode, create_auth_error, create_error_response
@@ -412,24 +414,7 @@ async def _enrich_helpers_with_current_registry(
             )
             return [_REGISTRY_JOIN_STALE_WARNING]
         registry = reg_result["result"]
-        reg_by_uid = {
-            entry["unique_id"]: entry
-            for entry in registry
-            if isinstance(entry, dict)
-            and entry.get("platform") == helper_type
-            and entry.get("unique_id")
-        }
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            entry = reg_by_uid.get(item.get("id"))
-            if entry is None:
-                continue
-            item["entity_id"] = entry.get("entity_id")
-            item["original_name"] = item.get("name")
-            item["name"] = (
-                entry.get("name") or entry.get("original_name") or item.get("name")
-            )
+        enrich_helper_records(helper_type, items, registry)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"list_helpers registry enrichment failed: {e}")
         return [_REGISTRY_JOIN_STALE_WARNING]

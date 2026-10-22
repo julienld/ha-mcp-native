@@ -1,5 +1,7 @@
 """Finite flow ports used by the existing walkers, without a network client."""
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any, cast
 
 from ha_mcp.tool_api import Backend, BackendTools, CallContext
@@ -15,15 +17,43 @@ class FlowSession(BackendTools):
         *,
         helper_type: str | None = None,
         capture_backup: bool = False,
+        expected_modified_at: float | None = None,
+        source_tool: str = "ha_config_set_helper",
+        entry_guard: Callable[[str], AbstractAsyncContextManager[Any]] | None = None,
     ) -> None:
         super().__init__(backend, context)
         self.helper_type = helper_type
         self.capture_backup = capture_backup
+        self.expected_modified_at = expected_modified_at
+        self.source_tool = source_tool
+        self.entry_guard = entry_guard
         self.warnings: list[str] = []
+
+    def write_scope(self, entry_id: str) -> AbstractAsyncContextManager[Any]:
+        """An outer backup-store guard; Core flow ownership stays with the backend."""
+        return self.entry_guard(entry_id) if self.entry_guard else nullcontext()
 
     async def start_config_flow(self, handler: str) -> dict[str, Any]:
         return await self._mapping(
             "config.flow.start", {"kind": "config", "handler": handler}, self.context
+        )
+
+    async def start_reconfigure_flow(
+        self, domain: str, entry_id: str, *, expected_modified_at: float | None = None
+    ) -> dict[str, Any]:
+        return await self._mapping(
+            "config.flow.start",
+            {
+                "kind": "config",
+                "handler": domain,
+                "entry_id": entry_id,
+                **(
+                    {"expected_modified_at": expected_modified_at}
+                    if expected_modified_at is not None
+                    else self._expected_revision()
+                ),
+            },
+            self.context,
         )
 
     async def start_options_flow(self, entry_id: str) -> dict[str, Any]:
@@ -45,7 +75,7 @@ class FlowSession(BackendTools):
         expected = (
             await self._backup(entry_id, subentry_id, subentry_type)
             if subentry_id
-            else {}
+            else self._expected_revision()
         )
         return await self._mapping(
             "config.flow.start",
@@ -97,13 +127,38 @@ class FlowSession(BackendTools):
         subentry_type: str | None = None,
     ) -> dict[str, Any]:
         if not self.capture_backup:
-            return {}
+            return self._expected_revision()
         current = await self.get_config_entry(entry_id)
+        helper_type = self.helper_type
+        if helper_type is None:
+            kinds = await self.backend.execute(
+                "helpers.flow.types",
+                {"helper_type": current.get("domain", "")},
+                self.context,
+            )
+            helper_type = (
+                current.get("domain")
+                if current.get("domain") in kinds["types"]
+                else "integration"
+            )
+        kind = (
+            "subentry"
+            if subentry_id
+            else "integration"
+            if helper_type == "integration"
+            else "flow"
+        )
         result = await self.backend.execute(
             "helpers.backup.capture",
             {
-                "kind": "subentry" if subentry_id else "flow",
-                "helper_type": self.helper_type,
+                "kind": kind,
+                "helper_type": helper_type,
+                "source_tool": self.source_tool,
+                **(
+                    {"backup_domain": "integration", "current_entry": current}
+                    if kind == "integration"
+                    else {}
+                ),
                 "action": "update",
                 "backup_id": f"{entry_id}/{subentry_id}" if subentry_id else entry_id,
                 "entry_id": entry_id,
@@ -116,9 +171,18 @@ class FlowSession(BackendTools):
             self.context,
         )
         self.warnings.extend(result.get("warnings", []))
+        if self.expected_modified_at is not None:
+            return self._expected_revision()
         return (
             {"expected_modified_at": current["modified_at"]}
             if "modified_at" in current
+            else {}
+        )
+
+    def _expected_revision(self) -> dict[str, Any]:
+        return (
+            {"expected_modified_at": self.expected_modified_at}
+            if self.expected_modified_at is not None
             else {}
         )
 

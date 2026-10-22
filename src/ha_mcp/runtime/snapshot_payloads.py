@@ -42,7 +42,7 @@ class _FlowHelperBackupSkip(_FlowHelperReadError):
 
 def _flow_options(config: Any, helper_type: str) -> dict[str, Any]:
     """Require persisted flow-helper options that can safely be restored."""
-    from ha_mcp.redaction import sentinel_option_keys
+    from .redaction import sentinel_option_keys
 
     label = _flow_label(helper_type)
     if not isinstance(config, dict):
@@ -84,7 +84,7 @@ def _subentry_target(entity_id: str) -> tuple[str, str]:
 
 
 def _subentry_data(data: Any) -> dict[str, Any]:
-    from ha_mcp.redaction import sentinel_option_keys
+    from .redaction import sentinel_option_keys
 
     if not isinstance(data, dict):
         raise _FlowHelperReadError(

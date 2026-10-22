@@ -250,3 +250,21 @@ async def test_remote_zone_delete_uses_existing_client_and_compares_snapshot(
     else:
         assert not result.is_error, result.data
         assert result.data["zone_id"] == "office" and deletes == 1 and stored == {}
+
+
+async def test_native_zone_create_allows_core_to_suffix_duplicate_names(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, collection, _ = _setup(native, monkeypatch, AsyncMock())
+    before = copy.deepcopy(collection.data["office"])
+    collection.id_manager.generate_id = lambda _name: "office_2"
+    result = await engine.call(
+        "ha_set_zone",
+        {"name": "Office", "latitude": 10, "longitude": 20, "wait": False},
+        CallContext("actor"),
+    )
+    assert not result.is_error, result.data
+    assert result.data["zone_id"] == "office_2"
+    assert collection.data["office"] == before
+    assert collection.data["office_2"]["latitude"] == 10

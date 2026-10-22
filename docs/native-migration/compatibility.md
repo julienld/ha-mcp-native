@@ -113,7 +113,36 @@ snapshot restrictions and structured error behavior still apply. Optional
 browser screenshot, HACS and Supervisor features must declare their real
 platform prerequisites instead of returning fabricated success.
 
+## Generated automation IDs
+
+Existing automation IDs and their stored bodies retain their identity. A native
+creation uses an opaque UUID-derived storage ID; the remote client retains its
+historical millisecond-derived ID. Both return the authoritative `unique_id`
+and resolve the actual Home Assistant `entity_id` after Core reloads the file.
+Clients must treat generated IDs as opaque and reuse returned identifiers.
+Neither backend retries an allocation or a write after dispatch. An allocated
+ID that already exists is rejected before snapshot capture and mutation.
+
 ## Readiness evidence
+
+The native catalog deliberately corrects three safety hints for
+`ha_config_list_helpers`: `readOnlyHint=false`, `destructiveHint=true` and
+`idempotentHint=false`. Describing a flow-backed helper may initialize a Core
+flow that immediately creates an entry. Its argument-specific effect policy
+still permits storage listing and storage schema descriptions in read-only mode.
+Native clients must treat flow discovery as a possible write. The standalone
+catalog and the immutable baseline retain their original annotations; the exact
+native exception is recorded in `compatibility.json` and checked separately.
+
+`ha_get_integration` has the same conservative native safety hints. Its explicit
+options/subentry schema requests initialize real Core flows; password-field
+redaction also probes an options flow when options are returned. Such flows can
+commit immediately, so these branches require write admission. Native parameter
+descriptions state this instead of the historical subentry non-creation promise.
+Metadata lists, and persisted options with redaction disabled, remain available
+in read-only mode. Mutation admission is rechecked before every actual flow.
+An unexpected failure after a Core flow callback is an unknown outcome, never a
+retry instruction. Parallel probes drain before the invocation returns.
 
 For each promised tool behavior, compare native and remote execution on a real,
 isolated Home Assistant. Exercise normal results, missing resources, future

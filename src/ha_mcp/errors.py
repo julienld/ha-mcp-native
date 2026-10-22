@@ -646,3 +646,17 @@ class HomeAssistantCommandError(HomeAssistantError):
     def __init__(self, message: str, code: str | None = None):
         super().__init__(message)
         self.code = code
+
+
+class HomeAssistantCommandTimeout(HomeAssistantError):
+    """WebSocket ``send_command`` timed out waiting for HA's response.
+
+    Sibling of ``HomeAssistantCommandError`` (not a subclass) so existing
+    ``except HomeAssistantCommandError`` sites — including the match
+    dispatch in ``helpers._classify_exception`` — keep their original
+    semantics. Callers that specifically want to handle our 30s WS
+    round-trip timeout (e.g. short-lived waiter cleanup that should
+    swallow a timeout instead of masking the real wait result) catch
+    this type directly. Replaces a bare ``Exception("Command timeout")``
+    string-match pattern (#1382 Patch76 review).
+    """

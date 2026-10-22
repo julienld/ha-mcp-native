@@ -12,7 +12,7 @@ from ha_mcp.runtime.code_persistence import SavedToolsPersistence
 from ha_mcp.runtime.code_registry import SavedToolsRegistry
 from ha_mcp.runtime.code_runner import run_sandboxed_code
 from ha_mcp.runtime.code_session import CodeSession
-from ha_mcp.runtime.code_validation import _sandbox_error
+from ha_mcp.runtime.code_validation import BLOCKED_TOOLS, _sandbox_error
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import (
     CallContext,
@@ -35,15 +35,6 @@ _LIMITS = {
     "code_mode_max_invocations": int,
     "code_mode_saved_tools_path": str,
 }
-_BLOCKED = frozenset(
-    {
-        _NAME,
-        "ha_search_tools",
-        "ha_call_read_tool",
-        "ha_call_write_tool",
-        "ha_call_delete_tool",
-    }
-)
 
 
 class NativeCode:
@@ -224,7 +215,7 @@ class _NativeBridge:
 
         if error := self._limit():
             return error
-        if current_tool_name(name) in _BLOCKED:
+        if current_tool_name(name) in BLOCKED_TOOLS:
             return _sandbox_error(
                 ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
                 f"Tool '{name}' cannot be called from sandbox code",

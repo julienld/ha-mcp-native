@@ -13,6 +13,8 @@ from ha_mcp.client.rest_client import (
 )
 from ha_mcp.tools.tools_integrations import IntegrationTools
 
+from ._helper_removal_reads import stored_removal_images  # noqa: F401 - shared fixture
+
 
 class TestRemovalCheckAfterSuccessfulDelete:
     @pytest.fixture(autouse=True)
@@ -25,6 +27,7 @@ class TestRemovalCheckAfterSuccessfulDelete:
     def mock_client(self) -> MagicMock:
         return MagicMock(
             get_entity_state=AsyncMock(return_value={"state": "on"}),
+            get_config_entry=AsyncMock(return_value={"domain": "utility_meter"}),
             send_websocket_message=AsyncMock(),
             delete_config_entry=AsyncMock(return_value={"require_restart": False}),
         )

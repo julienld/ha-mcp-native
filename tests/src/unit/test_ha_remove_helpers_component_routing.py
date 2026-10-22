@@ -50,6 +50,7 @@ from ._component_routing_helpers import (
     patch_ws,
     patch_ws_establish_failure,
 )
+from ._helper_removal_reads import stored_removal_images  # noqa: F401 - shared fixture
 
 _CAPS_REGISTRY = {
     "schema_version": 1,
@@ -99,6 +100,9 @@ class RoutingClient:
 
     async def get_entity_state(self, entity_id: str) -> dict[str, Any]:
         return {"state": "on"}
+
+    async def get_config_entry(self, entry_id: str) -> dict[str, Any]:
+        return {"entry_id": entry_id, "domain": "utility_meter"}
 
     async def delete_config_entry(self, entry_id: str) -> dict[str, Any]:
         self.deleted_entries.append(entry_id)

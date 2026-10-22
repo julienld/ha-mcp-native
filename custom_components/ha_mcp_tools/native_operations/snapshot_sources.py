@@ -55,10 +55,10 @@ async def flow_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def subentry_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
+async def subentry_snapshots(hass: Any, entry_id: str) -> list[dict[str, Any]]:
+    """Read complete restorable subentry data; absence of the parent is an error."""
     from ..websocket_api.config_entries import _config_entries_prep, _do_config_entries
 
-    entry_id, subentry_id = payload["entry_id"], payload["subentry_id"]
     params = {"entry_id": entry_id, "include_subentry_data": True}
     result = _do_config_entries(
         hass, params, **await _config_entries_prep(hass, params)
@@ -70,11 +70,30 @@ async def subentry_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any
             "Resolved parent entry no longer exists", "parent_entry_missing"
         )
     subentries = entries[0].get("subentries", [])
-    matches = [row for row in subentries if row.get("subentry_id") == subentry_id]
-    if len(matches) != 1:
+    if not isinstance(subentries, list):
         raise _FlowHelperReadError(
-            "Subentry identity is missing or ambiguous", "subentry_identity"
+            "Subentry listing is incomplete", "subentry_identity"
         )
+    ids = [row.get("subentry_id") for row in subentries if isinstance(row, dict)]
+    if (
+        len(ids) != len(subentries)
+        or any(not isinstance(value, str) or not value for value in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise _FlowHelperReadError(
+            "Subentry identities are ambiguous", "subentry_identity"
+        )
+    return subentries
+
+
+async def optional_subentry_snapshot(
+    hass: Any, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    entry_id, subentry_id = payload["entry_id"], payload["subentry_id"]
+    subentries = await subentry_snapshots(hass, entry_id)
+    matches = [row for row in subentries if row.get("subentry_id") == subentry_id]
+    if not matches:
+        return None
     expected = payload.get("subentry_type")
     if expected is not None and matches[0].get("subentry_type") != expected:
         raise _FlowHelperReadError(
@@ -82,6 +101,16 @@ async def subentry_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any
         )
     snapshot = _subentry_row(matches, entry_id, subentry_id)
     assert snapshot is not None
+    return snapshot
+
+
+async def subentry_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """A pre-write capture requires the already resolved subentry to remain present."""
+    snapshot = await optional_subentry_snapshot(hass, payload)
+    if snapshot is None:
+        raise _FlowHelperReadError(
+            "Subentry identity is missing or ambiguous", "subentry_identity"
+        )
     return snapshot
 
 

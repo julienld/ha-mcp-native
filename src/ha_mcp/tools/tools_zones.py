@@ -11,10 +11,9 @@ from typing import Any, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
-    HomeAssistantAuthError,
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
@@ -33,16 +32,12 @@ from ..runtime.zone_records import _zone_write_response as _zone_write_response
 from ..runtime.zone_records import render_zone_snapshot
 from ..runtime.zone_writes import ZoneWriteTools
 from ..runtime.zones import ZoneReadTools
-from ..tool_api import ToolFailure
-from .auto_backup import with_auto_backup
 from .component_api import (
     component_supports,
     get_component_caps,
     invalidate_caps,
     is_unknown_command,
 )
-from .config_helpers.create import _execute_create_simple_helper
-from .config_helpers.update import _execute_update_simple_helper
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -50,16 +45,12 @@ from .helpers import (
     register_tool_methods,
 )
 from .tool_hints import read_only_hints, write_hints
-from .ws_waiters import wait_for_entity_removed
 
 logger = logging.getLogger(__name__)
 
 
-class ZoneTools(ZoneWriteTools):
+class ZoneTools(LegacyBackendTools, ZoneWriteTools):
     """Zone configuration management tools for Home Assistant."""
-
-    def __init__(self, client: Any) -> None:
-        self._client = client
 
     ha_get_zone = tool(
         name="ha_get_zone",
@@ -286,25 +277,6 @@ class ZoneTools(ZoneWriteTools):
             )
         return {"items": listed.get("result") or [], "entries": entries}
 
-    async def _create_zone(self, *args: Any) -> dict[str, Any]:
-        return await _execute_create_simple_helper(self._client, *args)
-
-    async def _update_zone(self, *args: Any) -> dict[str, Any]:
-        return await _execute_update_simple_helper(self._client, *args)
-
-    async def _remove_stored_zone(
-        self, storage_id: str, entity_id: str | None
-    ) -> dict[str, Any]:
-        return await self._client.send_websocket_message(
-            {"type": "zone/delete", "zone_id": storage_id}
-        )
-
-    async def _wait_zone_removed(self, entity_id: str) -> bool:
-        try:
-            return await wait_for_entity_removed(self._client, entity_id)
-        except (HomeAssistantConnectionError, HomeAssistantAuthError) as error:
-            raise ToolFailure("VERIFICATION_FAILED", str(error)) from error
-
     def _map_zone_write_error(
         self, error: Exception, zone_id: str | None, operation: str | None
     ) -> NoReturn:
@@ -330,11 +302,7 @@ class ZoneTools(ZoneWriteTools):
         annotations=write_hints(
             "Set Zone", destructive=True, idempotent=False, open_world=False
         ),
-    )(
-        with_auto_backup(domain="zone", id_param="zone_id")(
-            log_tool_usage(legacy_errors(ZoneWriteTools.ha_set_zone))
-        )
-    )
+    )(log_tool_usage(legacy_errors(ZoneWriteTools.ha_set_zone)))
 
     ha_remove_zone = tool(
         name="ha_remove_zone",
@@ -342,11 +310,7 @@ class ZoneTools(ZoneWriteTools):
         annotations=write_hints(
             "Remove Zone", destructive=True, idempotent=True, open_world=False
         ),
-    )(
-        with_auto_backup(domain="zone", id_param="zone_id")(
-            log_tool_usage(legacy_errors(ZoneWriteTools.ha_remove_zone))
-        )
-    )
+    )(log_tool_usage(legacy_errors(ZoneWriteTools.ha_remove_zone)))
 
 
 def register_zone_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

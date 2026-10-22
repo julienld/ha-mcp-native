@@ -14,6 +14,8 @@ class RemoteBackend:
     def __init__(self, client: Any) -> None:
         self.client = client
         self._flows: Any = None
+        self._reload_watches: Any = None
+        self._entry_watches: Any = None
 
     async def authorize(self, context: CallContext) -> None:
         # Remote authorization is enforced by HA on every wire request. The
@@ -27,9 +29,15 @@ class RemoteBackend:
         await self.authorize(context)
         if operation in {
             "config.entries.read",
+            "config.entries.watch",
+            "config.entries.observe",
+            "config.entries.close",
             "config.subentries.list",
             "config.flow.settings",
             "helpers.flow.types",
+            "config.reload.watch",
+            "config.reload.wait",
+            "config.reload.close",
             "config.flow.start",
             "config.flow.configure",
             "config.flow.abort",
@@ -58,6 +66,22 @@ class RemoteBackend:
             }
         if operation == "states.read":
             return await self._states(arguments["entity_ids"])
+        return await self._domain_operation(operation, arguments)
+
+    async def _domain_operation(self, operation: str, arguments: dict[str, Any]) -> Any:
+        from .remote_integration_ops import (
+            INTEGRATION_OPERATIONS,
+            execute_integration_operation,
+        )
+
+        if operation in INTEGRATION_OPERATIONS:
+            return await execute_integration_operation(
+                self.client, operation, arguments
+            )
+        from .remote_todo_ops import TODO_OPERATIONS, execute_todo_operation
+
+        if operation in TODO_OPERATIONS:
+            return await execute_todo_operation(self.client, operation, arguments)
         from .remote_registry_ops import REGISTRY_OPERATIONS, execute_registry_operation
 
         if operation in REGISTRY_OPERATIONS:
@@ -78,6 +102,26 @@ class RemoteBackend:
         from .remote_flow_ops import RemoteFlows, read_flow_operation
 
         if operation in {
+            "config.entries.watch",
+            "config.entries.observe",
+            "config.entries.close",
+        }:
+            from .remote_entry_watch import RemoteEntryWatches
+
+            if self._entry_watches is None:
+                self._entry_watches = RemoteEntryWatches(self.client)
+            return await self._entry_watches.execute(operation, arguments, context)
+        if operation in {
+            "config.reload.watch",
+            "config.reload.wait",
+            "config.reload.close",
+        }:
+            from .remote_reload import RemoteReloadWatches
+
+            if self._reload_watches is None:
+                self._reload_watches = RemoteReloadWatches(self.client)
+            return await self._reload_watches.execute(operation, arguments, context)
+        if operation in {
             "config.flow.start",
             "config.flow.configure",
             "config.flow.abort",
@@ -86,6 +130,12 @@ class RemoteBackend:
                 self._flows = RemoteFlows(self.client)
             return await self._flows.execute(operation, arguments, context)
         return await read_flow_operation(self.client, operation, arguments)
+
+    async def stop(self) -> None:
+        if self._reload_watches is not None:
+            await self._reload_watches.stop()
+        if self._entry_watches is not None:
+            await self._entry_watches.stop()
 
     async def _states(self, entity_ids: list[str]) -> dict[str, Any]:
         from ha_mcp.tools.search.state import StateMixin

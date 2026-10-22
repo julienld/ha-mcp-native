@@ -66,9 +66,23 @@ async def _read_item(
             available = await ConfigScriptTools(client)._list_script_entity_ids()
         else:
             available = []
-        return {"found": False, "available_ids": available, "not_in_storage": False}
+        return {
+            "found": False,
+            "available_ids": available,
+            "not_in_storage": False,
+            "storage_key": await client._resolve_script_id(identifier)
+            if domain == "script"
+            else identifier.removeprefix("scene.")
+            if domain == "scene"
+            else identifier,
+        }
     if domain == "automation":
-        return {"found": True, "config": value}
+        raw_id = value.get("id") if isinstance(value, dict) else None
+        return {
+            "found": True,
+            "config": value,
+            "storage_key": str(raw_id) if raw_id is not None else identifier,
+        }
     if not isinstance(value, dict):
         return {"found": True, "config": value, "storage_key": None}
     return {

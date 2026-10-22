@@ -350,7 +350,7 @@ class TestHelperWaitParameter:
     async def test_set_helper_wait_default_true(self, register_tools, mock_client):
         """wait defaults to True and polls for entity registration."""
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
         ) as mock_wait:
             mock_wait.return_value = True
@@ -366,7 +366,7 @@ class TestHelperWaitParameter:
     ):
         """wait=False skips polling."""
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
         ) as mock_wait:
             result = await register_tools["ha_config_set_helper"](
@@ -380,7 +380,7 @@ class TestHelperWaitParameter:
     async def test_update_helper_wait_default_true(self, register_tools, mock_client):
         """UPDATE path: wait defaults to True and polls for entity registration."""
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
         ) as mock_wait:
             mock_wait.return_value = True
@@ -398,7 +398,7 @@ class TestHelperWaitParameter:
     ):
         """UPDATE path: wait=False skips polling."""
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
         ) as mock_wait:
             result = await register_tools["ha_config_set_helper"](
@@ -416,7 +416,7 @@ class TestHelperWaitParameter:
     ):
         """Wait exception doesn't collapse the successful create operation."""
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
         ) as mock_wait:
             mock_wait.side_effect = HomeAssistantConnectionError("network down")

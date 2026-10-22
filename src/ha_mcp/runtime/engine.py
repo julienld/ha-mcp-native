@@ -68,10 +68,20 @@ class Engine:
             raise ValueError(f"Duplicate tool: {definition.name}")
         self.tools[definition.name] = definition
 
-    def _check_policy(self, name: str, context: CallContext, writes: bool) -> None:
+    def _check_policy(
+        self,
+        name: str,
+        context: CallContext,
+        writes: bool,
+        *,
+        enforce_catalogue: bool = True,
+    ) -> None:
         if not self.accepting:
             raise ToolFailure("INTEGRATION_STOPPING", "The integration is stopping.")
-        for allowed in (self.enabled_tools, context.allowed_tools):
+        for allowed in (
+            self.enabled_tools if enforce_catalogue else None,
+            context.allowed_tools,
+        ):
             if allowed is not None and name not in allowed:
                 raise ToolFailure("TOOL_DISABLED", f"Tool {name!r} is not enabled.")
         if writes and (self.read_only or context.read_only):
@@ -113,10 +123,11 @@ class Engine:
         *,
         writes: bool,
         arguments: dict[str, Any] | None = None,
+        enforce_catalogue: bool = True,
     ) -> ToolResult:
-        """Use for imported tools too; never automatically retry an invocation."""
+        """Own an invocation; admin UI may ignore catalogue visibility, never actor policy."""
         await self.backend.authorize(context)
-        self._check_policy(name, context, writes)
+        self._check_policy(name, context, writes, enforce_catalogue=enforce_catalogue)
         if len(self.tasks) >= self.max_operations:
             raise ToolFailure("OPERATION_LIMIT", "Too many in-flight operations.")
         operation_id = uuid4().hex
@@ -126,9 +137,18 @@ class Engine:
             "client_id": context.client_id,
             "status": "admitted",
             "writes": writes,
+            "enforce_catalogue": enforce_catalogue,
         }
         task = asyncio.create_task(
-            self._run(operation_id, name, invoke, context, writes, arguments or {}),
+            self._run(
+                operation_id,
+                name,
+                invoke,
+                context,
+                writes,
+                arguments or {},
+                enforce_catalogue,
+            ),
             name=f"ha-mcp-operation-{operation_id}",
         )
         self.tasks.add(task)
@@ -150,13 +170,14 @@ class Engine:
         context: CallContext,
         writes: bool,
         arguments: dict[str, Any],
+        enforce_catalogue: bool,
     ) -> ToolResult:
         record = self.operations[operation_id]
         deadline = asyncio.get_running_loop().time() + self.operation_timeout
         try:
             async with asyncio.timeout_at(deadline):
                 raw = await self._invoke_authorized(
-                    name, arguments, context, writes, record, invoke
+                    name, arguments, context, writes, record, invoke, enforce_catalogue
                 )
             result = raw if isinstance(raw, ToolResult) else ToolResult(raw)
             status = result.status or ("failed" if result.is_error else "confirmed")
@@ -228,19 +249,26 @@ class Engine:
         writes: bool,
         record: dict[str, Any],
         invoke: Callable[[], Awaitable[Any]],
+        enforce_catalogue: bool,
     ) -> Any:
         await self.backend.authorize(context)
-        self._check_policy(name, context, writes)
+        self._check_policy(name, context, writes, enforce_catalogue=enforce_catalogue)
         if self.policy_guard is not None:
             guarded = await self.policy_guard(name, arguments, context, writes)
             if guarded is not None:
                 return replace(guarded, status=guarded.status or "not_started")
             await self.backend.authorize(context)
-            self._check_policy(name, context, writes)
+            self._check_policy(
+                name, context, writes, enforce_catalogue=enforce_catalogue
+            )
         record["status"] = "executing"
         token = current_admission.set(
             MutationAdmission(
-                context, writes, lambda: self._check_policy(name, context, writes)
+                context,
+                writes,
+                lambda: self._check_policy(
+                    name, context, writes, enforce_catalogue=enforce_catalogue
+                ),
             )
         )
         try:

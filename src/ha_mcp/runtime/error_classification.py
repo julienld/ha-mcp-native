@@ -247,3 +247,32 @@ def _append_macos_hints(error_response: dict[str, Any]) -> None:
         if single:
             existing = [single]
     error_response["error"]["suggestions"] = existing + macos_hints
+
+
+def classified_error(
+    error: Exception,
+    context: dict[str, Any] | None = None,
+    *,
+    suggestions: list[str] | None = None,
+) -> dict[str, Any]:
+    error_response = _classify_exception(error, str(error).lower(), str(error), context)
+    if (
+        suggestions
+        and "error" in error_response
+        and isinstance(error_response["error"], dict)
+    ):
+        # Set both `suggestion` (singular, first item) and `suggestions`
+        # (plural, full list). create_error_response (errors.py) sets the
+        # singular key; existing tests for exception_to_structured_error
+        # rely on the plural key being present even for single-item caller
+        # suggestions. Setting both keeps response consumers on both code
+        # paths working.
+        suggestions = _with_classified_suggestions(error_response["error"], suggestions)
+        error_response["error"]["suggestion"] = suggestions[0]
+        error_response["error"]["suggestions"] = suggestions
+
+    # Append macOS-specific hints for connection failures (after all other processing
+    # so hints survive regardless of whether caller provided explicit suggestions)
+    _append_macos_hints(error_response)
+
+    return error_response

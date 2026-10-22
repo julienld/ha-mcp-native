@@ -4,6 +4,7 @@ import copy
 from typing import Any
 
 from ha_mcp.tool_api import BackendTools, ToolFailure
+from ha_mcp.utils.config_hash import json_values_equal
 
 from .actions import ServiceCallTools
 from .blueprint_substitute import rendered_blueprint
@@ -24,6 +25,117 @@ _WRITE_TOOL_BP_HINT_SUGGESTION = (
 
 
 class ConfigWriteContext(BackendTools):
+    async def _transform_config(self, expression: str, config: dict[str, Any]) -> Any:
+        return await self.backend.execute(
+            "config.transform",
+            {"expression": expression, "config": config},
+            self.context,
+        )
+
+    async def _upsert_config(
+        self,
+        domain: str,
+        config: dict[str, Any],
+        identifier: str,
+        resolved_id: str | None,
+        verified: tuple[dict[str, Any], str | None] | None,
+    ) -> dict[str, Any]:
+        """One fresh before-image and typed compare protect each config writer."""
+        key, previous = await self._config_before_image(
+            domain, identifier, resolved_id, verified
+        )
+        backup = await self._capture_config_backup(domain, key, previous)
+        # Defaults remain caller-facing after registry renames, matching the
+        # existing clients. Core's validators alone decide accepted fields.
+        if domain == "script":
+            config.setdefault("alias", identifier)
+        elif domain == "scene":
+            config.setdefault("name", identifier.removeprefix("scene."))
+        result: dict[str, Any] = await self.backend.execute(
+            f"config.{domain}.write",
+            {
+                "storage_key": key,
+                "expected_config": previous,
+                "data": config,
+                "identifier": identifier,
+            },
+            self.context,
+        )
+        result.update({"success": True, f"{domain}_id": key})
+        if domain == "script":
+            result["operation"] = (
+                "created" if result.get("result") == "ok" else "updated"
+            )
+        elif domain == "scene":
+            # Core returns the same acknowledgment on create and update; the
+            # scene client deliberately omits this misleading operation echo.
+            result.pop("operation", None)
+        if backup.get("warnings"):
+            result.setdefault("warnings", []).extend(backup["warnings"])
+        return result
+
+    async def _config_before_image(
+        self,
+        domain: str,
+        identifier: str,
+        resolved_id: str | None,
+        verified: tuple[dict[str, Any], str | None] | None,
+        *,
+        creating: bool = False,
+    ) -> tuple[str, Any]:
+        current = await self.backend.execute(
+            f"config.{domain}.read", {"identifier": identifier}, self.context
+        )
+        key = current["storage_key"]
+        if not isinstance(key, str) or not key.strip():
+            raise ToolFailure(
+                "VALIDATION_INVALID_PARAMETER",
+                "The resolved config storage key must not be empty.",
+                status="not_started",
+            )
+        previous = current["config"] if current["found"] else None
+        if domain == "scene" and not current["found"] and current.get("not_in_storage"):
+            from .config_read_errors import raise_scene_config_missing
+
+            raise_scene_config_missing(identifier, current)
+        if verified is not None and (
+            not json_values_equal(previous, verified[0])
+            or (verified[1] is not None and key != verified[1])
+        ):
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                f"{domain.capitalize()} modified since last read (conflict)",
+                status="not_started",
+            )
+        if resolved_id is not None and key != resolved_id:
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                f"The {domain} identifier now names another stored {domain}.",
+                status="not_started",
+            )
+        if creating and previous is not None:
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                "The allocated config ID already exists; nothing was written.",
+                status="not_started",
+            )
+        return key, previous
+
+    async def _capture_config_backup(
+        self, domain: str, key: str, previous: Any
+    ) -> dict[str, Any]:
+        backup: dict[str, Any] = await self.backend.execute(
+            "config.backup.capture",
+            {
+                "domain": domain,
+                "source_tool": f"ha_config_set_{domain}",
+                "backup_id": key if previous is not None else None,
+                "current_config": previous,
+            },
+            self.context,
+        )
+        return backup
+
     async def _validate_categories(self, categories: dict[str, str | None]) -> None:
         await validate_registry_ids(self.backend, self.context, None, None, categories)
 
@@ -115,16 +227,24 @@ class ConfigWriteContext(BackendTools):
         result: dict[str, Any],
         entity_type: str,
     ) -> None:
-        applied = await self.backend.execute(
-            "entities.category.write",
-            {
-                "entity_id": entity_id,
-                "category": category,
-                "scope": scope,
-                "entity_type": entity_type,
-            },
-            self.context,
-        )
+        try:
+            applied = await self.backend.execute(
+                "entities.category.write",
+                {
+                    "entity_id": entity_id,
+                    "category": category,
+                    "scope": scope,
+                    "entity_type": entity_type,
+                },
+                self.context,
+            )
+        except (ToolFailure, PermissionError, TimeoutError, OSError) as error:
+            # The config is already persisted. A denied/failed follow-up must
+            # not describe the whole write as a rejection and invite a replay.
+            result.setdefault("warnings", []).append(
+                f"{entity_type.capitalize()} saved but failed to set category: {error}"
+            )
+            return
         result.update(
             {key: value for key, value in applied.items() if key != "warnings"}
         )

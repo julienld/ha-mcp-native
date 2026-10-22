@@ -189,10 +189,15 @@ class _OptionsFlowProgress:
     ) -> dict[str, Any]:
         if self.current_step.get("type") == _FlowType.FORM:
             self.check_form(self.current_step)
+        previous_status = self.apply_status
         self.apply_status = "unknown"
         try:
             submit = submit_fn or client.submit_options_flow_step
             result = await submit(flow_id, payload)
+        except ToolFailure as error:
+            if error.status == "not_started":
+                self.apply_status = previous_status
+            raise
         except HomeAssistantAuthError:
             self.apply_status = "not_applied"
             raise

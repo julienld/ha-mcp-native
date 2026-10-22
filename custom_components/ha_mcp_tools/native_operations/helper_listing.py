@@ -10,6 +10,7 @@ from ha_mcp.runtime.helper_listing_shape import (
     _component_covers,
     _raise_flow_requires_component,
     _shape_component_helpers_response,
+    enrich_helper_records,
     raise_if_helper_flows_degraded,
     shape_all_helpers_response,
 )
@@ -22,11 +23,27 @@ from .helpers import list_storage_items
 
 
 async def _tag_listing(hass: HomeAssistant, helper_type: str) -> dict[str, Any]:
-    # Core's collection helpers have a state; tags are the sole uncovered
-    # storage type in helpers_list. They carry no entity-registry metadata.
+    # Tags are the sole storage type helpers_list does not enumerate. Core's
+    # tag/list already supplies their registry names; the shared enrichment
+    # adds the same current entity IDs as the existing remote list path.
     if helper_type != "tag":
         raise UnsupportedOperation(f"helpers.catalog.{helper_type}")
     items = list_storage_items(hass, "tag")["items"]
+    registry = er.async_get(hass)
+    rows = []
+    for item in items:
+        entity_id = registry.async_get_entity_id("tag", "tag", item["id"])
+        if entity_id and (entry := registry.async_get(entity_id)) is not None:
+            rows.append(
+                {
+                    "unique_id": item["id"],
+                    "platform": "tag",
+                    "entity_id": entity_id,
+                    "name": entry.name,
+                    "original_name": entry.original_name,
+                }
+            )
+    enrich_helper_records("tag", items, rows)
     return {
         "success": True,
         "helper_type": "tag",
@@ -39,7 +56,7 @@ async def _tag_listing(hass: HomeAssistant, helper_type: str) -> dict[str, Any]:
 async def catalog(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
     helper_type = arguments["helper_type"]
     is_flow = helper_type not in SIMPLE_HELPER_TYPES
-    params = {"include_flow_helpers": is_flow}
+    params: dict[str, Any] = {"include_flow_helpers": is_flow}
     if helper_type != "all":
         params["helper_types"] = [helper_type]
     result = _do_helpers_list(hass, params, **await _helpers_list_prep(hass, params))

@@ -4,10 +4,16 @@ import importlib
 from typing import Any
 
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
+from ha_mcp.utils.config_hash import json_values_equal
 
 CONFIG_MUTATION_OPERATIONS = frozenset(
     {f"config.{domain}.delete" for domain in ("automation", "script", "scene")}
-    | {"config.backup.capture"}
+    | {
+        "config.backup.capture",
+        "config.script.write",
+        "config.scene.write",
+        "config.automation.write",
+    }
 )
 
 
@@ -37,15 +43,36 @@ async def execute_config_mutation(
             or (current.get("config") or {}).get("id")
             or identifier
         )
-        if (
-            not current["found"]
-            or key != arguments["storage_key"]
-            or current["config"] != arguments["expected_config"]
+        previous = current.get("config") if current["found"] else None
+        if key != arguments["storage_key"] or not json_values_equal(
+            previous, arguments["expected_config"]
         ):
             raise ToolFailure(
                 "CONFIG_CONFLICT",
                 "The config changed after its snapshot was read; no mutation was sent.",
                 status="not_started",
+            )
+        if operation == "config.automation.write":
+            automation: dict[str, Any] = await client.upsert_automation_config(
+                arguments["data"],
+                None if arguments.get("allocated") else key,
+                _resolved=True,
+                **({"_new_unique_id": key} if arguments.get("allocated") else {}),
+            )
+            return automation
+        if operation == "config.script.write":
+            written: dict[str, Any] = await client.upsert_script_config(
+                arguments["data"], identifier, resolved_id=key
+            )
+            return written
+        if operation == "config.scene.write":
+            scene: dict[str, Any] = await client.upsert_scene_config(
+                arguments["data"], identifier, resolved_id=key
+            )
+            return scene
+        if not current["found"]:
+            raise ToolFailure(
+                "RESOURCE_NOT_FOUND", f"{domain} not found: {key}", status="not_started"
             )
         if domain == "scene":
             resolved = (

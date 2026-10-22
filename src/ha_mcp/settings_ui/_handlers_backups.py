@@ -138,9 +138,7 @@ async def _view_backup(
 async def _diff_backup(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    import difflib
-
-    import yaml  # type: ignore[import-untyped]
+    from ..runtime.snapshot_projection import panel_diff
 
     mgr = _backup_mgr(server)
     if mgr is None:
@@ -178,28 +176,7 @@ async def _diff_backup(
             code=ErrorCode.CONNECTION_FAILED,
             status=502,
         )
-    backup_yaml = yaml.safe_dump(
-        snapshot.get("config"), default_flow_style=False, sort_keys=True
-    ).splitlines()
-    current_yaml = yaml.safe_dump(
-        current, default_flow_style=False, sort_keys=True
-    ).splitlines()
-    diff = list(
-        difflib.unified_diff(
-            backup_yaml,
-            current_yaml,
-            fromfile=f"backup:{name}",
-            tofile=f"current:{snapshot['entity_id']}",
-            lineterm="",
-        )
-    )
-    return JSONResponse(
-        {
-            "success": True,
-            "diff": "\n".join(diff),
-            "backup_present": current is not None,
-        }
-    )
+    return JSONResponse(panel_diff(name, snapshot, current))
 
 
 async def _restore_backup(
@@ -216,34 +193,10 @@ async def _restore_backup(
     except (ValueError, LookupError) as err:
         return _bad_request(str(err))
     except BackupRestoreError as err:
-        code = {
-            "snapshot_not_found": ErrorCode.RESOURCE_NOT_FOUND,
-            "invalid_snapshot": ErrorCode.VALIDATION_INVALID_PARAMETER,
-            "unsupported_domain": ErrorCode.VALIDATION_INVALID_PARAMETER,
-            "backup_capture_failed": ErrorCode.BACKUP_CAPTURE_FAILED,
-            "entry_deleted": ErrorCode.RESOURCE_NOT_FOUND,
-        }.get(err.outcome.get("reason") or "", ErrorCode.SERVICE_CALL_FAILED)
-        return JSONResponse(
-            create_error_response(
-                code,
-                str(err),
-                context={"data": err.outcome},
-                suggestions=[
-                    "Inspect the current configuration and restore outcome before retrying",
-                ]
-                + (
-                    [
-                        "Use safety_backup to inspect or restore the captured previous state"
-                    ]
-                    if err.outcome.get("safety_backup")
-                    else []
-                ),
-            ),
-            status_code={
-                ErrorCode.RESOURCE_NOT_FOUND: 404,
-                ErrorCode.VALIDATION_INVALID_PARAMETER: 400,
-            }.get(code, 409),
-        )
+        from ..runtime.snapshot_projection import restore_error
+
+        payload, status = restore_error(err)
+        return JSONResponse(payload, status_code=status)
     except MandatoryBackupError as err:
         logger.warning("Restore of %s blocked: %s", name, err.safe_cause)
         return JSONResponse(

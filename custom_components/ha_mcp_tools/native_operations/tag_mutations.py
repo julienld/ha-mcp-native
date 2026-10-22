@@ -28,6 +28,8 @@ async def write_tag(
     action: str,
     item_id: str | None,
     fields: dict[str, Any],
+    *,
+    check_registry: Callable[[], None] | None = None,
 ) -> Any:
     from homeassistant.components.tag import (
         TAG_ID,
@@ -50,6 +52,8 @@ async def write_tag(
     else:
         values = collection.UPDATE_SCHEMA(values)
     await admit(actor)
+    if check_registry is not None:
+        check_registry()
     if action == "create":
         tag_id = values.get(TAG_ID)
         if tag_id and collection.id_manager.has_id(tag_id):

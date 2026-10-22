@@ -25,6 +25,7 @@ from ..runtime.script_config import (
     _strip_empty_script_fields as _strip_empty_script_fields,
 )
 from ..runtime.script_writes import ScriptWriteTools
+from ..utils.python_sandbox import safe_execute
 from .auto_backup import with_auto_backup
 from .best_practice_checker import (
     BestPracticeCheckResult,
@@ -71,6 +72,9 @@ def _skip_script_run_backup(kwargs: dict[str, Any]) -> bool:
 
 
 class ConfigScriptTools(ScriptWriteTools):
+    async def _transform_config(self, expression: str, config: dict[str, Any]) -> Any:
+        return safe_execute(expression, config)
+
     """Script configuration management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:

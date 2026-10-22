@@ -96,7 +96,7 @@ async def test_a_stored_id_removal_waits_for_its_own_entity() -> None:
     client = _core(["my_button", "other"], RENAMED_ROWS)
     verify = AsyncMock(return_value=True)
 
-    with patch("ha_mcp.tools.tools_integrations.verify_entity_removed", verify):
+    with patch("ha_mcp.runtime.removal_wait.verify_removed", verify):
         await _remove(client, "my_button", wait=True)
 
     assert verify.await_args.args[1] == "input_button.renamed"
