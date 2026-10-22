@@ -59,7 +59,7 @@ def public_release(tmp_path, published_assets):
         "library_version": version,
         "component_version": version,
         "component_protocol_version": "9.0.0",
-        "dependency_profile": "native (standalone launchers are optional)",
+        "dependency_profile": "native wheel without active dependency edges; individual Core-managed requirements",
         "submodules": {"src/vendor": "b" * 40},
         "dependency": dependency,
         "files": {

@@ -14,13 +14,58 @@ import io
 import json
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
 import tomllib
 import zipfile
 from email.parser import BytesParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+MAX_WHEEL_INDEX_FILES = 10_000
+MAX_WHEEL_PAYLOAD_BYTES = 128 * 1024 * 1024
+MAX_WHEEL_INDEX_BYTES = 4 * 1024 * 1024
+_INSTALLER_FILES = frozenset(
+    {"INSTALLER", "direct_url.json", "REQUESTED", "uv_cache.json", "uv_build.json"}
+)
+_CORE_PROVIDED = frozenset(
+    {
+        "anyio",
+        "httpx",
+        "cryptography",
+        "pyjwt",
+        "pyyaml",
+        "typing-extensions",
+        "psutil",
+        "packaging",
+        "tzdata",
+    }
+)
+_STANDALONE_ONLY = frozenset(
+    {
+        "rich",
+        "cyclopts",
+        "pyperclip",
+        "watchfiles",
+        "pywin32",
+        "authlib",
+        "joserfc",
+        "jsonschema-path",
+        "openapi-pydantic",
+    }
+)
+_KNOWN_NATIVE_EXTRAS = {
+    "httpx": {"socks"},
+    "pydantic": {"email"},
+    "pyjwt": {"crypto"},
+    "py-key-value-aio": {"filetree", "keyring", "memory"},
+}
+_EXTRA_LEAVES = {
+    ("httpx", "socks"): "socksio==1.*",
+    ("pydantic", "email"): "email-validator>=2.0.0",
+    ("py-key-value-aio", "memory"): "cachetools>=5.0.0",
+}
 
 
 def run(*args: str, cwd: Path) -> str:
@@ -83,44 +128,60 @@ def stamp_library(project: Path, version: str) -> None:
     project.write_text(source, encoding="utf-8", newline="\n")
 
 
-def select_native_dependencies(project: Path) -> None:
-    """Keep CLI-only dependencies out of Home Assistant's shared environment."""
+def _native_requirement(requirement: str) -> list[str]:
+    parsed = re.fullmatch(r"([A-Za-z0-9_.-]+)(?:\[([^\]]+)\])?(.*)", requirement)
+    if parsed is None:
+        raise ValueError(f"Unrecognized project requirement: {requirement!r}")
+    name = re.sub(r"[-_.]+", "-", parsed[1]).lower()
+    if name in _STANDALONE_ONLY:
+        return []
+    extras = {extra.strip() for extra in (parsed[2] or "").split(",") if extra.strip()}
+    if extras - _KNOWN_NATIVE_EXTRAS.get(name, set()):
+        raise ValueError(f"Native profile needs an explicit extra audit: {requirement}")
+    result = [] if name in _CORE_PROVIDED else [parsed[1] + parsed[3]]
+    result.extend(
+        _EXTRA_LEAVES[(name, extra)]
+        for extra in sorted(extras)
+        if (name, extra) in _EXTRA_LEAVES
+    )
+    return result
+
+
+def select_native_dependencies(project: Path) -> list[str]:
+    """Let Core preflight each requirement, without a URL wheel's eager graph."""
     source = project.read_text(encoding="utf-8")
     metadata = tomllib.loads(source)
-    excluded_names = {"rich", "cyclopts", "pyperclip", "watchfiles", "pywin32"}
-    native: list[str] = []
-    standalone: list[str] = []
-    for requirement in metadata["project"]["dependencies"]:
-        name = re.match(r"[A-Za-z0-9_.-]+", requirement)
-        assert name is not None
-        target = (
-            standalone
-            if name[0].lower().replace("_", "-") in excluded_names
-            else native
+    original = metadata["project"]["dependencies"]
+    native = list(
+        dict.fromkeys(
+            item
+            for requirement in original
+            for item in _native_requirement(requirement)
         )
-        target.append(requirement)
-    replacement = (
-        "dependencies = [\n"
-        + "".join(f"    {json.dumps(requirement)},\n" for requirement in native)
-        + "]"
     )
     source, count = re.subn(
-        r"(?ms)^dependencies = \[.*?^\]", lambda _: replacement, source, count=1
+        r"(?ms)^dependencies = \[.*?^\]", "dependencies = []", source, count=1
     )
     if count != 1 or "[project.optional-dependencies]" in source:
         raise ValueError("Native dependency profile needs an explicit update")
     source = source.replace(
         "[project.scripts]",
         "[project.optional-dependencies]\nstandalone = "
-        + json.dumps(standalone)
+        + json.dumps(original)
         + "\n\n[project.scripts]",
         1,
     )
     project.write_text(source, encoding="utf-8", newline="\n")
+    return native
 
 
 def stamp_component(
-    component: Path, version: str, dependency: str, github: str
+    component: Path,
+    version: str,
+    dependency: str,
+    github: str,
+    *,
+    native_requirements: list[str] | None = None,
 ) -> None:
     manifest_path = component / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -132,7 +193,11 @@ def stamp_component(
         if re.match(r"ha-mcp(?:-dev)?(?:[<>= @]|$)", requirement)
         else requirement
         for requirement in manifest["requirements"]
+        if re.match(r"mcp(?:[<>= @]|$)", requirement) is None
     ]
+    manifest["requirements"] = list(
+        dict.fromkeys([*manifest["requirements"], *(native_requirements or [])])
+    )
     if manifest["requirements"].count(dependency) != 1:
         raise ValueError("Expected exactly one library requirement")
     constants = component / "const.py"
@@ -184,7 +249,7 @@ def build(
         staging = Path(temporary)
         gitlinks = stage_revision(repository, staging, revision)
         stamp_library(staging / "pyproject.toml", version)
-        select_native_dependencies(staging / "pyproject.toml")
+        native_requirements = select_native_dependencies(staging / "pyproject.toml")
         subprocess.run(
             ["uv", "build", "--wheel", "--out-dir", str(output)],
             cwd=staging,
@@ -195,7 +260,14 @@ def build(
         validate_wheel_metadata(wheel, version)
         dependency += "#sha256=" + hashlib.sha256(wheel.read_bytes()).hexdigest()
         component = staging / "custom_components" / "ha_mcp_tools"
-        stamp_component(component, component_version, dependency, github)
+        stamp_component(
+            component,
+            component_version,
+            dependency,
+            github,
+            native_requirements=native_requirements,
+        )
+        write_wheel_index(wheel, component / "native-wheel.json", version)
         # HACS extracts this archive directly into custom_components/ha_mcp_tools.
         component_zip = output / "ha_mcp_tools.zip"
         write_component_archive(component, staging / "LICENSE", component_zip)
@@ -209,7 +281,9 @@ def build(
         "builder_sha256": builder_sha256,
         "tag": tag,
         "library_version": version,
-        "dependency_profile": "native (standalone launchers are optional)",
+        "dependency_profile": "native wheel without active dependency edges; individual Core-managed requirements",
+        "native_requirements": native_requirements,
+        "core_provided": sorted(_CORE_PROVIDED),
         "component_version": component_version,
         "component_protocol_version": version.split(".dev", 1)[0],
         "dependency": dependency,
@@ -245,6 +319,77 @@ def validate_wheel_metadata(wheel: Path, version: str) -> None:
         metadata = BytesParser().parsebytes(archive.read(candidates[0]))
     if metadata["Name"] != "ha-mcp" or metadata["Version"] != version:
         raise ValueError("Wheel metadata does not match the candidate library version")
+
+
+def _indexed_member(info: zipfile.ZipInfo, dist_info: str) -> str | None:
+    name = info.orig_filename
+    path = PurePosixPath(name)
+    if stat.S_ISLNK(info.external_attr >> 16):
+        raise ValueError("A payload index cannot contain symbolic links")
+    if info.is_dir():
+        return None
+    if (
+        name != info.filename
+        or "\\" in name
+        or ":" in name
+        or str(path) != name
+        or path.is_absolute()
+        or ".." in path.parts
+        or not name.startswith(("ha_mcp/", dist_info + "/"))
+    ):
+        raise ValueError(f"Unexpected wheel member path: {name!r}")
+    if path.name in _INSTALLER_FILES:
+        raise ValueError(f"Installer-owned file must not be shipped: {name!r}")
+    if "__pycache__" in path.parts or path.suffix == ".pyc":
+        raise ValueError(f"Generated bytecode must not be shipped: {name!r}")
+    return None if name == dist_info + "/RECORD" else name
+
+
+def write_wheel_index(wheel: Path, destination: Path, version: str) -> None:
+    """Bind immutable wheel members; uv's installed RECORD is not trusted here."""
+    files: dict[str, dict[str, int | str]] = {}
+    dist_info = f"ha_mcp-{version}.dist-info"
+    total = 0
+    seen: set[str] = set()
+    with zipfile.ZipFile(wheel) as archive:
+        for info in archive.infolist():
+            if info.filename in seen:
+                raise ValueError("Duplicate wheel member")
+            seen.add(info.filename)
+            if (name := _indexed_member(info, dist_info)) is None:
+                continue
+            total += info.file_size
+            if (
+                len(files) >= MAX_WHEEL_INDEX_FILES
+                or info.file_size < 0
+                or total > MAX_WHEEL_PAYLOAD_BYTES
+            ):
+                raise ValueError("Wheel payload exceeds the native index bounds")
+            data = archive.read(info)
+            files[name] = {
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+    required = {"ha_mcp/__init__.py", dist_info + "/METADATA", dist_info + "/WHEEL"}
+    if not required <= files.keys():
+        raise ValueError("Wheel index lacks its required package or metadata members")
+    payload = (
+        json.dumps(
+            {
+                "format_version": 1,
+                "distribution": "ha-mcp",
+                "version": version,
+                "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                "files": files,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+    if len(payload) > MAX_WHEEL_INDEX_BYTES:
+        raise ValueError("Wheel index JSON exceeds its native byte bound")
+    destination.write_bytes(payload)
 
 
 def write_component_archive(

@@ -4,9 +4,10 @@ The public fork is
 [`julienld/ha-mcp-native`](https://github.com/julienld/ha-mcp-native).
 Choose a reviewed version from its [published releases](https://github.com/julienld/ha-mcp-native/releases)
 before installation. The preparation commands below create local artifacts;
-they do not publish an installable release. Publication,
-including a draft release or a pushed distribution tag, needs a separate final
-approval. Legacy compatibility has not been deprecated.
+they do not publish an installable release. Publication is a separate maintainer
+operation after artifact review and qualification. Legacy compatibility has not
+been deprecated. Consult [published-candidate status](../../tests/native/PUBLISHED.md): dev2 failed
+the shared-dependency installation check and must not be treated as qualified.
 
 ## What HACS must install
 
@@ -54,6 +55,14 @@ preserves their compatibility check while the manifest and library identify each
 candidate. `native-build.json` records both versions, the source SHA, submodule
 SHAs, artifact hashes and distribution-tree file hashes.
 
+The ZIP also carries `native-wheel.json`, a versioned index of the paired wheel's
+package and distribution-metadata bytes. It excludes the installed `RECORD`, which
+uv rewrites, and rejects installer-owned receipts in the source wheel. The index
+is bounded to 10,000 files, 128 MiB of payload and 4 MiB of JSON. It lets the
+runtime verify the installed payload when uv's PEP 610 receipt omits the hash;
+an explicitly contradictory receipt is still a refusal. This is artifact
+identity evidence, not a publisher signature.
+
 PEP 440 ordering gives `9.0.0.dev9 < 9.0.0.dev10 < 9.0.0`. This comparison was
 also exercised with AwesomeVersion 25.8.0, the version library used by HACS.
 Use a new, increasing development number and a new tag for every public
@@ -66,6 +75,65 @@ The local JSON evidence is a digest record, not a signature. HACS does not verif
 that JSON or a release attestation during ordinary ZIP installation. The wheel's
 [SHA-256 URL fragment](https://packaging.python.org/en/latest/specifications/version-specifiers/#direct-references)
 allows the Python installer to verify its downloaded bytes.
+
+## Dependency profile and the dev2 finding
+
+Core's [requirement manager](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/requirements.py)
+skips individually satisfied requirements. When installation is needed, its
+[package installer](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/util/package.py)
+uses `uv pip install --upgrade` under Core's constraints. A URL wheel with active
+`Requires-Dist` entries therefore re-resolves its dependency graph, including
+already-compatible packages. Installing the same wheel with ordinary pip in a
+Docker build did not exercise that behavior.
+
+The [dev2 public-install run](https://github.com/julienld/ha-mcp-native/actions/runs/39866932217)
+observed these replacements in Core 2026.10.2:
+
+| Package | Before → after | Relevant edge in the old wheel graph |
+| --- | --- | --- |
+| authlib | 1.7.2 → 1.8.0 | Unused native OIDC/provider dependency |
+| joserfc | 1.7.5 → 1.7.7 | Direct declaration and Authlib |
+| click | 8.1.8 → 8.3.1 | Uvicorn |
+| cachetools | 7.2.2 → 7.2.4 | `py-key-value-aio[memory]` |
+| certifi | 2026.7.22 → 2026.10.19 | HTTPX |
+| pycparser | 3.11 → 3.12 | Cryptography → CFFI |
+| pydantic-settings | 2.16.0 → 2.16.1 | Direct declaration |
+| platformdirs | 4.13.3 → 4.13.5 | Direct declaration |
+| starlette | 1.8.0 → 1.9.0 | Direct declaration and SSE-Starlette |
+
+Authlib 1.8 violated PySenz's upper bound; Click 8.3 violated gTTS and PyOmie's
+upper bounds. Broader compatibility ranges alone did not prevent these changes.
+
+The revised candidate wheel has **no active `Requires-Dist` entries**. All
+original project dependencies remain available through its `standalone` extra.
+The component manifest declares the required host packages individually, so Core
+can retain each compatible installed version. The profile:
+
+- relies on the [Core base contract](https://github.com/home-assistant/core/blob/2026.10.2/pyproject.toml)
+  for HTTPX/AnyIO, Cryptography, PyJWT, PyYAML, typing extensions, packaging and
+  psutil, rather than redeclaring their graphs through the URL wheel;
+- keeps Pydantic, Pydantic Settings, Starlette/SSE, HTTPX2, Uvicorn and other
+  required non-base packages in the component requirements. A pin in Core's
+  constraints file does not itself prove that a package is installed;
+- declares `cachetools`, `socksio` and `email-validator` independently, retaining
+  their runtime capabilities without requesting the parent extras. The native
+  session store uses memory, not filetree/keyring persistence;
+- leaves unused OIDC/provider Authlib/Joserfc and OpenAPI-provider dependencies
+  in `standalone`, and uses the existing private MCP SDK for legacy Assist too.
+  It does not install Core's shared `mcp` package.
+
+No additional vendor tree or custom installer is introduced by this profile.
+Missing packages still have their own transitive dependencies, so the profile
+must pass both the full Container environment and a fresh Core-base environment
+seeded with the older image's certifi. Both use Core's real installer and compare
+**all** distributions: the full lane after setup/restart, the minimal lane after
+each installation and its SDK/state/transport probes. Compatibility ranges admit
+future Core versions; they are not an assurance that every future dependency
+graph is unchanged. A changed shared dependency remains a qualification failure.
+
+This correction prevents new resolver churn; it does not undo packages already
+changed by dev2. Restore or recreate an affected Core environment through the
+installation platform's supported procedure, preserving its configuration.
 
 ## Prepare a reviewable candidate
 
@@ -87,7 +155,7 @@ together. Verify that the snapshot's component files match the archive, that its
 manifest names that wheel and hash, and that the source commit links resolve.
 Use the same artifacts for the qualification run and eventual upload.
 
-After approval, the minimal publication sequence is:
+After artifact review and qualification, the minimal publication sequence is:
 
 1. Initialize a separate local Git checkout from `hacs-repository/`, without
    adding workflows or copying the development checkout's `.git` directory.
@@ -96,9 +164,11 @@ After approval, the minimal publication sequence is:
 2. Push only a dedicated distribution branch and the reviewed version tag to
    `julienld/ha-mcp-native`. Do not push to `master`, move the default branch,
    retag an existing release, or dispatch an upstream publishing workflow.
-3. Enable immutable releases if approved, create a GitHub **draft pre-release**,
+3. Create a GitHub **draft pre-release**,
    attach the exact wheel, `ha_mcp_tools.zip` and `native-build.json`, and verify
-   their uploaded digests. Publish only after the final approval. Draft assets
+   their uploaded digests. Publish the reviewed artifacts. If repository immutable
+   releases are enabled, publication locks the tag and assets; that setting is
+   not assumed or required by this qualification. Draft assets
    are not anonymously installable by Home Assistant.
 4. Verify the published release and assets with `gh release verify` and
    `gh release verify-asset` when attestations are available. Then perform the

@@ -145,7 +145,7 @@ def release_contract(
         or proof.get("component_protocol_version") != version.split(".dev")[0]
     ):
         raise ValueError("Component and wheel version provenance disagree")
-    if proof.get("dependency_profile") != "native (standalone launchers are optional)":
+    if proof.get("dependency_profile") != "native wheel without active dependency edges; individual Core-managed requirements":
         raise ValueError("Expected the native dependency profile")
     declared = proof.get("submodules")
     if (

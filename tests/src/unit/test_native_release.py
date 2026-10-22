@@ -73,9 +73,17 @@ ha-mcp = "ha_mcp:main"
         with zipfile.ZipFile(
             output / f"ha_mcp-{version}-py3-none-any.whl", "w"
         ) as wheel:
+            wheel.writestr("ha_mcp/__init__.py", "# fixture library\n")
             wheel.writestr(
                 f"ha_mcp-{version}.dist-info/METADATA",
                 f"Metadata-Version: 2.3\nName: ha-mcp\nVersion: {version}\n",
+            )
+            wheel.writestr(
+                f"ha_mcp-{version}.dist-info/WHEEL",
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            )
+            wheel.writestr(
+                f"ha_mcp-{version}.dist-info/RECORD", "installer rewrites this\n"
             )
         return subprocess.CompletedProcess(args, 0)
 
@@ -111,6 +119,34 @@ def test_component_dependency_hash_binds_the_exact_wheel(
     with zipfile.ZipFile(output / "ha_mcp_tools.zip") as archive:
         requirement = json.loads(archive.read("manifest.json"))["requirements"][0]
     assert requirement.endswith("#sha256=" + proof["files"][filename])
+
+
+def test_component_payload_index_binds_installed_bytes_without_mutable_RECORD(
+    source, tmp_path, release_builder
+):
+    import hashlib
+
+    output = tmp_path / "indexed"
+    proof = release_builder.build(
+        source, output, "9.0.0.dev1", "9.0.0.dev1", "julienld/ha-mcp-native"
+    )
+    with zipfile.ZipFile(output / "ha_mcp_tools.zip") as archive:
+        index = json.loads(archive.read("native-wheel.json"))
+    assert index["format_version"] == 1 and index["distribution"] == "ha-mcp"
+    assert index["version"] == "9.0.0.dev1"
+    assert index["wheel_sha256"] == proof["files"]["ha_mcp-9.0.0.dev1-py3-none-any.whl"]
+    assert not any(path.endswith("/RECORD") for path in index["files"])
+    assert (
+        "ha_mcp/__init__.py" in index["files"]
+        and "ha_mcp-9.0.0.dev1.dist-info/WHEEL" in index["files"]
+    )
+    with zipfile.ZipFile(output / "ha_mcp-9.0.0.dev1-py3-none-any.whl") as wheel:
+        for name, expected in index["files"].items():
+            data = wheel.read(name)
+            assert expected == {
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "size": len(data),
+            }
 
 
 def test_existing_candidate_is_never_overwritten(source, tmp_path, release_builder):

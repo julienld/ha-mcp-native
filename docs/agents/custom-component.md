@@ -72,8 +72,12 @@ Native migration candidates use `scripts/native_release.py` to build a paired
 component archive and library wheel from one immutable Git revision, including
 the pinned skills submodule. The script stamps the staged artifacts and their
 exact dependency URL; it does not change the working tree's release versions.
-The candidate's native dependency profile keeps CLI-only dependencies in the
-optional `standalone` extra.
+The HACS candidate wheel has no active dependency edges. Its complete original
+dependency list is available through the optional `standalone` extra; the
+component manifest lists native host requirements individually. Core can then
+skip compatible installed roots instead of re-resolving the wheel's graph with
+`uv --upgrade`. The [installation guide](../native-migration/installation.md)
+records the provided-by-Core contract, separated extras and remaining checks.
 
 ## Compatibility
 
@@ -118,6 +122,15 @@ Renovate advances the Core E2E image, not these package requirements. Never
 fix an embedded resolver failure by dropping HA's constraints or eagerly
 upgrading its shared packages.
 
+Core's normal installer uses `uv --upgrade` for a missing requirement. Broad
+ranges alone do not preserve the installed environment, and a local pip install
+under the constraints is not an equivalent qualification. Native candidate
+checks must run the real requirement manager, compare every preinstalled
+distribution after setup/restart, and exercise a minimal Core environment with
+older permitted transitive packages. Keep Pydantic declared: its constraint is
+not proof of presence in Core's base installation. Do not add a dependency on
+`homeassistant` itself, which would allow the URL wheel to re-resolve Core.
+
 Fast Checks verifies direct dependency alignment against both the current
 Core image and the `hacs.json` minimum, without adding E2E lanes. Existing
 legacy current-Core embedded E2E on x64/ARM64 covers transitive installation and
@@ -132,18 +145,21 @@ raising a dependency floor past versions older supported Core releases need.
 
 Native FastMCP and MCP SDKs live under `ha_mcp._vendor`; they do not replace
 Core's shared `mcp` package. The native wheel also uses a private Rich copy.
-Its Container build checks the installed versions of the shared SDK and key
-libraries before and after installation under Core's constraints, and rejects
-new `pip check` conflicts. This evidence does not cover every optional
-integration's dependencies.
+The published manifest does not require the shared MCP SDK, and legacy Assist
+uses the private SDK as well. The candidate and public-install lanes compare all
+installed distributions and new `pip check` conflicts, including after Core
+processes every manifest requirement. A minimal Core lane distinguishes base
+providers from packages preloaded only in the Container image. These checks do
+not cover every optional integration's dependency combination.
 
 As of 22 October 2026, the native qualification target and admission floor are
 Core **2026.10.2**. Creation, selection in options and startup check the native
 floor before loading modern owners, including for an imported entry or a Core
 downgrade. They refuse an unsupported native selection without changing its
-runtime or webhook automatically. The HACS installation floor remains
-**2026.8.0**, retained for legacy and shared-component compatibility. Direct
-dependency alignment passes against
+runtime or webhook automatically. The source/legacy channel's HACS installation
+floor remains **2026.8.0**, retained for legacy and shared-component compatibility.
+The generated native distribution snapshot instead advertises **2026.10.2** in
+its HACS metadata, matching its runtime floor. Direct dependency alignment passes against
 both versions; that does not qualify native execution on 2026.8. Native runtime
 support and the component installation floor are distinct claims. Candidate
 qualification records belong in
