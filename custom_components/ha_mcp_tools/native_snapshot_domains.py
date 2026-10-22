@@ -74,12 +74,7 @@ class NativeSnapshotDomains:
         if domain == "calendar_event":
             return await self.calendar_restore(data, actor).current()
         if domain == "dashboard_resource":
-            row = await self.resources(actor).read_snapshot(
-                data["entity_id"], data["config"]
-            )
-            # Recreated resources get a Core-generated ID; diff the values this
-            # snapshot can restore, matching the established resource comparison.
-            return {**row, "id": data["entity_id"]} if row is not None else None
+            return await self._resource_current(data, actor)
         if domain in {"automation", "script", "scene"}:
             from homeassistant.helpers.json import json_bytes
 
@@ -91,8 +86,14 @@ class NativeSnapshotDomains:
             # Core's YAML owner returns annotated nodes. Cross the same public
             # value boundary as NativeBackend before diffing or writing a snapshot.
             return json.loads(json_bytes(current))
-        if domain in {"label", "device"}:
-            return await self._registry_current(data, actor)
+        if domain in {
+            "label",
+            "device",
+            "entity",
+            "entity_registry",
+            "entity_exposure",
+        }:
+            return await self._identity_current(data, actor)
         if domain in {"category", "area_or_floor"}:
             from ha_mcp.runtime.snapshot_registry_restore import current_registry
 
@@ -111,17 +112,70 @@ class NativeSnapshotDomains:
             return await self._flow(data)
         return (await self.storage_before(data, actor)).snapshot
 
-    async def _registry_current(self, data: dict[str, Any], actor: CallContext) -> Any:
+    async def _resource_current(self, data: dict[str, Any], actor: CallContext) -> Any:
+        row = await self.resources(actor).read_snapshot(
+            data["entity_id"], data["config"]
+        )
+        # Core generates a new ID on recreation; comparison keeps the values
+        # this snapshot can actually restore.
+        return {**row, "id": data["entity_id"]} if row is not None else None
+
+    async def _identity_current(self, data: dict[str, Any], actor: CallContext) -> Any:
+        if data["domain"] == "entity":
+            return await self.states(actor).read_snapshot(data["entity_id"])
         key, service = {
             "label": ("label_id", self.labels),
             "device": ("id", self.devices),
+            "entity_registry": ("id", self.entities),
+            "entity_exposure": ("entity_id", self.legacy_exposure),
         }[data["domain"]]
         config = data["config"]
         if not isinstance(config, dict) or config.get(key) != data["entity_id"]:
             raise InvalidBackupSnapshotError(
                 f"{data['domain'].capitalize()} snapshot does not match its identity"
             )
+        if data["domain"] == "entity_exposure" and "preferences" not in config:
+            raise InvalidBackupSnapshotError(
+                "Legacy exposure snapshot has no preference before-image"
+            )
         return await service(actor).read_snapshot(data["entity_id"])
+
+    def entities(self, actor: CallContext) -> Any:
+        from .native_operations.entity_registry import NativeEntityRegistry
+
+        return NativeEntityRegistry(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    def states(self, actor: CallContext) -> Any:
+        from .native_operations.state_snapshots import NativeStateSnapshots
+
+        return NativeStateSnapshots(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    def legacy_exposure(self, actor: CallContext) -> Any:
+        from .native_operations.legacy_exposure import NativeLegacyExposure
+
+        return NativeLegacyExposure(
+            self.manager.hass, actor, authorize=self.manager.backend.authorize
+        )
+
+    async def restore_entity_registry(
+        self, data: dict[str, Any], before: Any, actor: CallContext
+    ) -> dict[str, Any]:
+        try:
+            result: dict[str, Any] = await self.entities(actor).restore_snapshot(
+                data["entity_id"], data["config"], before
+            )
+            return result
+        except ToolFailure as error:
+            if error.code != "RESOURCE_NOT_FOUND":
+                raise
+            raise BackupRestoreError(
+                "The saved entity registration no longer exists. Its integration owns creation; this restore cannot recreate the original registry identity.",
+                reason="entry_deleted",
+            ) from error
 
     def calendar_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
         from .native_operations.calendar_events import NativeCalendars
@@ -136,6 +190,7 @@ class NativeSnapshotDomains:
             ),
         )
         return NativeCalendarRestore(service, data["entity_id"], data["config"])
+
 
     def labels(self, actor: CallContext) -> Any:
         from .native_operations.labels import NativeLabels

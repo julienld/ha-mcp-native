@@ -43,6 +43,15 @@ def environment_name(name: str) -> str:
     )
 
 
+def setting_value(flags: dict[str, Any], name: str) -> Any:
+    """Resolve an entry-scoped value while honoring the existing environment alias."""
+    from ha_mcp.config_settings import Settings
+
+    return os.environ.get(
+        environment_name(name), flags.get(name, Settings.model_fields[name].default)
+    )
+
+
 @dataclass(frozen=True)
 class NativePolicy:
     tool_states: dict[str, str] = field(default_factory=dict)

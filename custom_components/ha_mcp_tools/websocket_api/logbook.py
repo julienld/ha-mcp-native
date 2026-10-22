@@ -77,19 +77,21 @@ def _serialize_logbook_result(
     return payload
 
 
-async def _logbook_events_prep(
-    hass: HomeAssistant, msg: dict[str, Any]
-) -> dict[str, Any]:
-    """Validate the request and run Core's query + encoding in the executor."""
-    start_time = _parse_time(msg["start_time"], "start_time")
-    if end_time_str := msg.get("end_time"):
+def prepare_logbook_query(
+    hass: HomeAssistant,
+    start_time_value: str,
+    end_time_value: str | None,
+    entity_ids: list[str] | None = None,
+    device_ids: list[str] | None = None,
+    context_id: str | None = None,
+) -> tuple[datetime, datetime, EventProcessor | None]:
+    """Resolve Core event filters and the real query owner on the HA loop."""
+    start_time = _parse_time(start_time_value, "start_time")
+    if end_time_str := end_time_value:
         end_time = _parse_time(end_time_str, "end_time")
     else:
         end_time = dt_util.utcnow()
 
-    entity_ids = msg.get("entity_ids")
-    device_ids = msg.get("device_ids")
-    context_id = msg.get("context_id")
     if context_id and (entity_ids or device_ids):
         # Core's processor asserts on this; fail with a shaped error instead.
         from homeassistant.exceptions import HomeAssistantError
@@ -102,10 +104,10 @@ async def _logbook_events_prep(
         entity_ids = async_filter_entities(hass, entity_ids)
         if not entity_ids and not device_ids:
             # Everything has been filtered away
-            return {"payload": _empty_result(msg["id"])}
+            return start_time, end_time, None
 
     if start_time > dt_util.utcnow():
-        return {"payload": _empty_result(msg["id"])}
+        return start_time, end_time, None
 
     if "logbook" not in hass.data:
         # Core's processor reads its config from ``hass.data[DOMAIN]``; without
@@ -129,6 +131,23 @@ async def _logbook_events_prep(
         timestamp=False,
         include_entity_name=True,
     )
+    return start_time, end_time, event_processor
+
+
+async def _logbook_events_prep(
+    hass: HomeAssistant, msg: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate the request and run Core's query + encoding in the executor."""
+    start_time, end_time, event_processor = prepare_logbook_query(
+        hass,
+        msg["start_time"],
+        msg.get("end_time"),
+        msg.get("entity_ids"),
+        msg.get("device_ids"),
+        msg.get("context_id"),
+    )
+    if event_processor is None:
+        return {"payload": _empty_result(msg["id"])}
     payload = await get_instance(hass).async_add_executor_job(
         _serialize_logbook_result, msg["id"], start_time, end_time, event_processor
     )

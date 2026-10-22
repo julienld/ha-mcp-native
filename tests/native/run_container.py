@@ -22,8 +22,10 @@ from configuration_checks import (
     exercise_todo,
 )
 from device_checks import exercise_devices
+from entity_checks import exercise_entities
 from history_checks import exercise_history
 from interop_checks import exercise_llm
+from log_checks import exercise_logs
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
 
@@ -394,8 +396,10 @@ async def exercise(checks: Checks) -> dict:
     await exercise_todo(checks, BASE)
     await exercise_calendars(checks, BASE)
     await exercise_devices(checks, BASE)
+    await exercise_entities(checks, BASE)
     await exercise_resources(checks, BASE)
     await exercise_history(checks)
+    await exercise_logs(checks)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -459,7 +463,8 @@ async def main() -> None:
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
         "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
-        "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\nnative_fixture:\n",
+        "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\n"
+        "system_log:\nlogger:\nlogbook:\nnative_fixture:\n",
         encoding="utf-8",
     )
     for filename, empty in (

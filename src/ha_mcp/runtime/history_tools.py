@@ -176,7 +176,8 @@ class HistoryFacade:
         falls back to last_updated; this may not be the actual state-change time
         with significant_changes_only (default) or a window-start snapshot.
         Attributes and unknown fields pass through unchanged.
-        Statistics timestamps use Unix milliseconds. Minimal history may omit attributes.
+        Statistics timestamps retain Core's native format; Core 2026.10 returns
+        start, end and last_reset as Unix seconds. Minimal history may omit attributes.
         No duplicate compact aliases are added. include_schema=True
         retains core_contract even when fields selects other data keys.
 

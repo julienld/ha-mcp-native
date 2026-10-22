@@ -1991,7 +1991,7 @@ async def _restore_todo_item(client: Any, entity_id: str, config: Any) -> Any:
     return await restore_todo(backend, actor, entity_id, config, before)
 
 
-# Generic entity (ha_set_entity) — fetch via state API, restore by re-setting.
+# Historical entity snapshots — state/attributes only, separate from registry edits.
 
 
 async def _fetch_entity_state(client: Any, entity_id: str) -> Any:
@@ -1999,7 +1999,7 @@ async def _fetch_entity_state(client: Any, entity_id: str) -> Any:
 
 
 async def _restore_entity_state(client: Any, entity_id: str, config: Any) -> Any:
-    # ha_set_entity just calls /api/states/<entity_id> POST with state+attributes.
+    # Keep the original state-only snapshot meaning; registry history has its own domain.
     if isinstance(config, dict):
         payload = {
             "state": config.get("state"),

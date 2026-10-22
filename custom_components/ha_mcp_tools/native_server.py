@@ -109,8 +109,25 @@ def mcp_result(result: ToolResult, *, allow_continuation: bool = True) -> Any:
     ):
         return continuation
 
+    content: Any = json.dumps(result.data, default=str)
+    if result.images:
+        import base64
+
+        from ha_mcp._vendor.mcp.types import ImageContent, TextContent
+
+        content = [
+            TextContent(type="text", text=content),
+            *(
+                ImageContent(
+                    type="image",
+                    data=base64.b64encode(image.data).decode("ascii"),
+                    mimeType=image.mime_type,
+                )
+                for image in result.images
+            ),
+        ]
     return MCPResult(
-        content=json.dumps(result.data, default=str),
+        content=content,
         structured_content=result.data if isinstance(result.data, dict) else None,
         is_error=result.is_error,
         meta={"ha_mcp": {"status": result.status, "operation_id": result.operation_id}},
@@ -149,9 +166,16 @@ def _project_tool(manager: NativeServerManager, definition: Any) -> Any:
             from ha_mcp._vendor.fastmcp.server.dependencies import get_context
 
             actor = replace(current_context(), progress=get_context().report_progress)
-            return mcp_result(
-                await self._manager.engine.call(self.name, arguments, actor)
-            )
+            result = await self._manager.engine.call(self.name, arguments, actor)
+            if result.images:
+                from ha_mcp.utils.owned_executor import await_owned_io
+
+                projected = await await_owned_io(
+                    self._manager.hass.async_add_executor_job(mcp_result, result)
+                )
+                await self._manager.backend.authorize(actor)
+                return projected
+            return mcp_result(result)
 
     return RuntimeTool()
 

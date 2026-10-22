@@ -1,5 +1,6 @@
 """Canonical label ownership on Core's loop, without a transport-shaped backend."""
 
+import asyncio
 import copy
 import importlib
 from contextlib import nullcontext
@@ -333,7 +334,9 @@ class NativeLabels:
         if targets is None:
             return None
         assigned: list[str] = []
-        for area_id in targets:
+        for index, area_id in enumerate(targets):
+            if index:
+                await asyncio.sleep(0)
             try:
                 await self._assign_one(
                     label_id, created_at, label_registry, area_id, warnings

@@ -7,17 +7,17 @@ via the Home Assistant entity registry API.
 
 import asyncio
 import logging
-import re
 from contextlib import AsyncExitStack
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any, Literal, cast
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
-from ..backends.legacy_entity_snapshots import capture_entity_registry
+from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy_entity_snapshots import (
+    capture_entity_device,
+    capture_entity_registry,
+)
 from ..backends.legacy_registry_errors import raise_entity_read_error
 from ..client.rest_client import (
     HomeAssistantCommandError,
@@ -25,6 +25,7 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
+from ..runtime import entity_write_values as _write_values
 from ..runtime.entities import EntityDiscoveryTools
 from ..runtime.entity_records import _format_fetched_entity as _format_fetched_entity
 from ..runtime.entity_records import (
@@ -35,9 +36,10 @@ from ..runtime.entity_records import (
 )
 from ..runtime.entity_records import _parse_get_entity_ids as _parse_get_entity_ids
 from ..runtime.entity_removal_tools import EntityRemovals, EntityRemovalTools
+from ..runtime.entity_write_tools import EntityWrites, EntityWriteTools
+from ..runtime.entity_write_values import apply_entity_rename
 from ..utils.registry_update_lock import registry_update_lock
 from .auto_backup import with_auto_backup
-from .coercion import JSON_STRING_COERCION
 from .component_api import (
     DEVICE_REGISTRY_CHILD_SEMANTICS,
     component_supports,
@@ -61,7 +63,6 @@ from .entity_update_fields import (
     reject_name_with_use_device_name,
 )
 from .helpers import (
-    WHITESPACE_CLEARS_NOTE,
     clearable_value,
     exception_to_structured_error,
     extract_tool_error_message,
@@ -165,23 +166,7 @@ async def fetch_entity_enrichment_via_component(
     return merged
 
 
-def _format_entity_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """Format entity registry entry for API response."""
-    return {
-        "entity_id": entry.get("entity_id"),
-        "name": entry.get("name"),
-        "original_name": entry.get("original_name"),
-        "icon": entry.get("icon"),
-        "area_id": entry.get("area_id"),
-        "disabled_by": entry.get("disabled_by"),
-        "hidden_by": entry.get("hidden_by"),
-        "aliases": entry.get("aliases", []),
-        "labels": entry.get("labels", []),
-        "categories": entry.get("categories", {}),
-        "device_class": entry.get("device_class"),
-        "original_device_class": entry.get("original_device_class"),
-        "options": entry.get("options", {}),
-    }
+_format_entity_entry = _write_values._format_entity_entry
 
 
 def _extract_ws_error(result: dict[str, Any]) -> str:
@@ -202,101 +187,33 @@ def _extract_ws_error(result: dict[str, Any]) -> str:
     return "no error detail returned by Home Assistant"
 
 
-def _parse_set_entity_ids(
-    entity_id: str | list[str],
-) -> tuple[list[str], bool]:
-    """Parse entity_id into (entity_ids, is_bulk). Raises on invalid input."""
-    if isinstance(entity_id, str):
-        return [entity_id], False
-    elif isinstance(entity_id, list):
-        if not entity_id:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    "entity_id list cannot be empty",
-                )
-            )
-        if not all(isinstance(e, str) for e in entity_id):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    "All entity_id values must be strings",
-                )
-            )
-        return entity_id, len(entity_id) > 1
-    else:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"entity_id must be string or list of strings, got {type(entity_id).__name__}",
-            )
-        )
+_parse_set_entity_ids = legacy_errors_sync(_write_values._parse_set_entity_ids)
 
 
-def _validate_enabled_constraint(
-    enabled: bool | None,
-    entity_ids: list[str],
-) -> None:
-    """Block registry-disable on automation and script entities.
-
-    Registry-disabling (enabled=False) removes the entity from the HA
-    state machine entirely, making it invisible in the UI and
-    unqueryable via state APIs until re-enabled AND the integration is
-    reloaded.  For automations, use
-    ha_config_set_automation(identifier=..., enabled=...) to control their
-    runtime enabled state.  For scripts,
-    ha_config_set_script(script_id=..., run="stop") only stops a currently
-    running execution; it does not disable the script, and Home Assistant
-    has no script runtime enable/disable service.
-    """
-    if enabled is False:
-        blocked = [
-            eid for eid in entity_ids if eid.split(".")[0] in ("automation", "script")
-        ]
-        if blocked:
-            _domain = blocked[0].split(".")[0]
-            if _domain == "script":
-                message = (
-                    "Cannot registry-disable script entities with "
-                    "ha_set_entity(enabled=False). This removes the entity from the "
-                    "state machine and hides it from the UI until it is re-enabled "
-                    "and scripts are reloaded. Use ha_config_set_script("
-                    f"script_id='{blocked[0]}', run='stop') only to stop a "
-                    "currently running execution; it does not disable the script. "
-                    "Home Assistant has no script runtime enable/disable service."
-                )
-                suggestions = [
-                    "Use ha_config_set_script(script_id=..., run='stop') only to "
-                    + "stop a currently running execution; it does not disable the script",
-                    "Home Assistant has no script runtime enable/disable service",
-                ]
-            else:
-                message = (
-                    f"Cannot registry-disable {_domain} entities with "
-                    "ha_set_entity(enabled=False). This removes the entity from the "
-                    "state machine and hides it from the UI until it is re-enabled "
-                    f"AND the {_domain}s are reloaded. Use "
-                    f"ha_config_set_automation(identifier='{blocked[0]}', "
-                    "enabled=False) instead to disable it without removing it."
-                )
-                suggestions = [
-                    "Use ha_config_set_automation(identifier=..., enabled=...) to "
-                    + "disable the automation (keeps it visible and manageable)",
-                    "Use ha_config_set_automation(identifier=..., enabled=True) to "
-                    + "re-enable it later",
-                    "ha_set_entity(enabled=False) is for registry-level disable — it fully hides the entity",
-                ]
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    message,
-                    suggestions=suggestions,
-                )
-            )
+_validate_enabled_constraint = legacy_errors_sync(
+    _write_values._validate_enabled_constraint
+)
 
 
 class EntityTools(EntityDiscoveryTools):
     """Entity registry tools: get, update, and remove entities."""
+
+    @property
+    def entities(self) -> EntityWrites:
+        # The public façade forwards only its declared keyword arguments.
+        return cast(EntityWrites, self)
+
+    ha_set_entity = tool(
+        name="ha_set_entity",
+        tags={"Entity Registry"},
+        annotations=write_hints(
+            "Set Entity", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(
+            domain="entity_registry", id_param="entity_id", skip_fn=lambda kw: True
+        )(log_tool_usage(legacy_errors(EntityWriteTools.ha_set_entity)))
+    )
 
     @property
     def removals(self) -> EntityRemovals:
@@ -355,26 +272,15 @@ class EntityTools(EntityDiscoveryTools):
         parsed_aliases: list[str | None] | None,
         use_entity_name_alias: bool | None,
     ) -> tuple[list[str | None] | None, str | None]:
-        """Apply the own-name (``null``) alias switch; returns (aliases, note).
-
-        With no explicit switch, the registry's existing ``null`` survives a
-        string-only write — HA's Voice settings dialog does the same (#2495).
-        """
-        if use_entity_name_alias is None:
-            if parsed_aliases is None or None in parsed_aliases:
-                return parsed_aliases, None
-            if None in await self._get_entity_aliases(entity_id):
-                return [None, *parsed_aliases], "entity-name alias kept"
-            return parsed_aliases, None
-        source = (
-            parsed_aliases
-            if parsed_aliases is not None
-            else await self._get_entity_aliases(entity_id)
+        need_current = (
+            use_entity_name_alias is None
+            and parsed_aliases is not None
+            and None not in parsed_aliases
+        ) or (use_entity_name_alias is not None and parsed_aliases is None)
+        current = await self._get_entity_aliases(entity_id) if need_current else []
+        return _write_values.merge_entity_aliases(
+            current, parsed_aliases, use_entity_name_alias
         )
-        strings: list[str | None] = [a for a in source if a is not None]
-        if use_entity_name_alias:
-            return [None, *strings], "entity-name alias on"
-        return strings, "entity-name alias off"
 
     async def _resolve_final_labels(
         self,
@@ -394,49 +300,11 @@ class EntityTools(EntityDiscoveryTools):
                     context={"entity_id": entity_id},
                 )
             )
-        if label_operation == "add":
-            # Add new labels without duplicates
-            return list(set(current_labels) | set(parsed_labels))
-        # remove: use set for O(1) membership check
-        labels_to_remove = set(parsed_labels)
-        return [lbl for lbl in current_labels if lbl not in labels_to_remove]
+        return _write_values.merge_entity_labels(
+            current_labels, parsed_labels, label_operation
+        )
 
-    def _validate_entity_rename(
-        self,
-        entity_id: str,
-        new_entity_id: str,
-        message: dict[str, Any],
-        updates_made: list[str],
-    ) -> None:
-        """Validate and apply a rename to the update message. Raises on invalid input."""
-        entity_pattern = r"^[a-z_]+\.[a-z0-9_]+$"
-        if not re.match(entity_pattern, new_entity_id):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"Invalid new_entity_id format: {new_entity_id}",
-                    suggestions=[
-                        "Use format: domain.object_id (lowercase letters, numbers, underscores only)"
-                    ],
-                    context={"new_entity_id": new_entity_id},
-                )
-            )
-        current_domain = entity_id.split(".", maxsplit=1)[0]
-        new_domain = new_entity_id.split(".", maxsplit=1)[0]
-        if current_domain != new_domain:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"Domain mismatch: cannot change from '{current_domain}' to '{new_domain}'",
-                    suggestions=[f"New entity_id must start with '{current_domain}.'"],
-                    context={
-                        "entity_id": entity_id,
-                        "new_entity_id": new_entity_id,
-                    },
-                )
-            )
-        message["new_entity_id"] = new_entity_id
-        updates_made.append(f"entity_id -> {new_entity_id}")
+    _validate_entity_rename = staticmethod(legacy_errors_sync(apply_entity_rename))
 
     async def _execute_registry_update(
         self,
@@ -618,6 +486,7 @@ class EntityTools(EntityDiscoveryTools):
             "device_id": device_id,
             "name_by_user": new_device_name,
         }
+        await capture_entity_device(self._client, device_id)
         device_result = await self._client.send_websocket_message(device_msg)
         if device_result.get("success"):
             device_rename_result = {"success": True, "device_id": device_id}
@@ -773,59 +642,7 @@ class EntityTools(EntityDiscoveryTools):
 
         return exposure_result, entity_entry
 
-    def _build_entity_response(
-        self,
-        entity_id: str,
-        original_entity_id: str,
-        entity_entry: dict[str, Any],
-        updates_made: list[str],
-        new_entity_id: str | None,
-        exposure_result: dict[str, bool] | None,
-        device_rename_result: dict[str, Any] | None,
-        device_name_warning: str | None = None,
-    ) -> dict[str, Any]:
-        """Build the final response dict for a single-entity update."""
-        response_data: dict[str, Any] = {
-            "success": True,
-            "entity_id": entity_id,
-            "updates": updates_made,
-            "entity_entry": _format_entity_entry(entity_entry),
-            "message": f"Entity updated: {', '.join(updates_made)}",
-        }
-
-        # Include old_entity_id and rename warning when a rename was performed
-        if new_entity_id is not None:
-            response_data["old_entity_id"] = original_entity_id
-            response_data.setdefault("warnings", []).append(
-                "Remember to update any automations, scripts, or dashboards "
-                "that reference the old entity_id"
-            )
-
-        if exposure_result is not None:
-            response_data["exposure"] = exposure_result
-
-        if device_name_warning is not None:
-            response_data.setdefault("warnings", []).append(device_name_warning)
-
-        if device_rename_result is not None:
-            response_data["device_rename"] = device_rename_result
-            # Return-shape contract: warnings are a top-level list as well.
-            if device_rename_result.get("warnings"):
-                response_data.setdefault("warnings", []).extend(
-                    device_rename_result["warnings"]
-                )
-            # Mark partial when a device rename was requested but didn't complete
-            # for an operational reason: WS-call failure (device_id present + warnings)
-            # or upstream registry lookup failure (lookup_failed marker). Not partial
-            # when the entity simply has no device — that's a no-op, not an incomplete
-            # operation.
-            if device_rename_result.get("warnings") and (
-                device_rename_result.get("device_id")
-                or device_rename_result.get("lookup_failed")
-            ):
-                response_data["partial"] = True
-
-        return response_data
+    _build_entity_response = staticmethod(_write_values.entity_write_result)
 
     async def _update_single_entity(
         self,
@@ -1126,13 +943,9 @@ class EntityTools(EntityDiscoveryTools):
         entity_entry; a refetch failure keeps the pre-exposure snapshot since
         the exposure already committed.
         """
-        async with AsyncExitStack() as owners:
-            for eid in sorted(set(eligible_ids)):
-                await owners.enter_async_context(registry_update_lock("entity", eid))
-            if parsed_expose_to:
-                for eid in dict.fromkeys(eligible_ids):
-                    await capture_entity_registry(self._client, eid, "ha_set_entity")
-            expose_error = await self._bulk_apply_expose(eligible_ids, parsed_expose_to)
+        expose_error = await self._bulk_expose_with_backup(
+            eligible_ids, parsed_expose_to
+        )
         if expose_error is not None:
             failed = [
                 {"entity_id": eid, "error": f"Exposure failed: {expose_error}"}
@@ -1174,6 +987,17 @@ class EntityTools(EntityDiscoveryTools):
                 len(refetch_errors) - len(newly_failed),
             )
         return still_eligible, newly_failed
+
+    async def _bulk_expose_with_backup(
+        self, eligible_ids: list[str], parsed_expose_to: dict[str, bool]
+    ) -> str | None:
+        async with AsyncExitStack() as owners:
+            for eid in sorted(set(eligible_ids)):
+                await owners.enter_async_context(registry_update_lock("entity", eid))
+            if parsed_expose_to:
+                for eid in dict.fromkeys(eligible_ids):
+                    await capture_entity_registry(self._client, eid, "ha_set_entity")
+            return await self._bulk_apply_expose(eligible_ids, parsed_expose_to)
 
     async def _bulk_update_entities(
         self,
@@ -1310,263 +1134,26 @@ class EntityTools(EntityDiscoveryTools):
                 errors[eid] = msg
         return raw, errors
 
-    @tool(
-        name="ha_set_entity",
-        tags={"Entity Registry"},
-        annotations=write_hints(
-            "Set Entity", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(
-        domain="entity_registry",
-        # Capture the real registry row under its durable UUID inside the
-        # per-entity owner, including bulk targets, instead of state+attributes.
-        skip_fn=lambda kw: True,
-        id_param="entity_id",
-    )
-    @log_tool_usage
-    async def ha_set_entity(
+    async def set(
         self,
-        entity_id: Annotated[
-            str | list[str],
-            JSON_STRING_COERCION,
-            Field(description="Entity ID or list of entity IDs to update."),
-        ],
-        area_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Area/room ID to assign the entity to. Use empty string '' to "
-                    "unassign from current area. " + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        name: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Display name for the entity. Use empty string '' to remove custom "
-                    "name and revert to default. " + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        use_device_name: Annotated[
-            bool | None,
-            Field(
-                description=(
-                    "HA 2026.10's 'Use device name' switch. True names the entity "
-                    "after its device and follows device renames; False restores "
-                    "the integration's default name. Omit to leave it as is; not "
-                    "combinable with name."
-                ),
-                default=None,
-            ),
-        ] = None,
-        icon: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Icon for the entity (e.g., 'mdi:thermometer'). Use empty string "
-                    "'' to remove custom icon. " + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        device_class: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Override the entity's display device class — what the HA UI's 'Show "
-                    "As' dropdown writes. Use empty string '' to clear the override and "
-                    "fall back to the integration default. Examples: 'window', 'door', "
-                    "'motion' for binary_sensor; 'temperature', 'humidity' for sensor. "
-                    + WHITESPACE_CLEARS_NOTE
-                ),
-                default=None,
-            ),
-        ] = None,
-        options: Annotated[
-            dict[str, dict[str, Any]] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Per-domain entity registry options (e.g. sensor 'display_precision', "
-                    "weather 'forecast_type'). Pass a dict mapping domain to a sub-dict, "
-                    'e.g. {"sensor": {"display_precision": 2}}. Multiple domains are sent '
-                    "as separate registry updates. For 'Show As' use device_class; for "
-                    "voice-assistant exposure use expose_to, not "
-                    "options.<assistant>.should_expose."
-                ),
-                default=None,
-            ),
-        ] = None,
-        enabled: Annotated[
-            bool | None,
-            Field(
-                description=(
-                    "True to enable the entity, False to disable it. "
-                    "WARNING: Setting enabled=False is a registry-level disable — it completely "
-                    "removes the entity from the state machine and hides it from the UI. "
-                    "A reload or restart is required to restore it after re-enabling."
-                ),
-                default=None,
-            ),
-        ] = None,
-        hidden: Annotated[
-            bool | None,
-            Field(
-                description="True to hide the entity from UI, False to show it.",
-                default=None,
-            ),
-        ] = None,
-        aliases: Annotated[
-            str | list[str | None] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "List of voice assistant aliases for the entity (replaces existing "
-                    "aliases). A null entry is the entity's own name (HA's 'use entity "
-                    "name' switch); it is kept automatically unless your list already "
-                    "contains null. To turn that switch off or on, use "
-                    "use_entity_name_alias."
-                ),
-                default=None,
-            ),
-        ] = None,
-        use_entity_name_alias: Annotated[
-            bool | None,
-            Field(
-                description=(
-                    "HA's 'use entity name' voice-alias switch. True keeps the entity's "
-                    "own name answering in Assist, False turns it off so only the "
-                    "aliases match. Omit to leave it as is. Works with or without "
-                    "aliases."
-                ),
-                default=None,
-            ),
-        ] = None,
-        categories: Annotated[
-            dict[str, str | None] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Category assignment as a dict mapping scope to category_id. "
-                    'Example: {"automation": "category_id_here"}. '
-                    'Use null value to clear: {"automation": null}.'
-                ),
-                default=None,
-            ),
-        ] = None,
-        labels: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description="List of label IDs for the entity. Behavior depends on label_operation parameter. Use [] with label_operation='set' to clear.",
-                default=None,
-            ),
-        ] = None,
-        label_operation: Annotated[
-            Literal["set", "add", "remove"],
-            Field(
-                description="How to apply labels: 'set' replaces all labels, 'add' adds to existing, 'remove' removes specified labels.",
-                default="set",
-            ),
-        ] = "set",
-        expose_to: Annotated[
-            dict[str, bool] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Control voice assistant exposure. Pass a dict mapping assistant IDs to booleans. "
-                    "Valid assistants: 'conversation' (Assist), 'cloud.alexa', 'cloud.google_assistant'. "
-                    'Example: {"conversation": true, "cloud.alexa": false}.'
-                ),
-                default=None,
-            ),
-        ] = None,
-        new_entity_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "New entity ID to rename to (e.g., 'light.new_name'). "
-                    "Domain must match the original."
-                ),
-                default=None,
-            ),
-        ] = None,
-        new_device_name: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "New display name for the associated device. "
-                    "If provided, both entity and device are updated in one operation. "
-                    "Empty or whitespace-only never changes the device name: it is "
-                    "reported under warnings when other fields are given and is an "
-                    "error when it is the only update. To clear the device name use "
-                    "ha_set_device(name='')."
-                ),
-                default=None,
-            ),
-        ] = None,
+        entity_id: str | list[str],
+        area_id: str | None = None,
+        name: str | None = None,
+        use_device_name: bool | None = None,
+        icon: str | None = None,
+        device_class: str | None = None,
+        options: dict[str, dict[str, Any]] | None = None,
+        enabled: bool | None = None,
+        hidden: bool | None = None,
+        aliases: str | list[str | None] | None = None,
+        use_entity_name_alias: bool | None = None,
+        categories: dict[str, str | None] | None = None,
+        labels: str | list[str] | None = None,
+        label_operation: Literal["set", "add", "remove"] = "set",
+        expose_to: dict[str, bool] | None = None,
+        new_entity_id: str | None = None,
+        new_device_name: str | None = None,
     ) -> dict[str, Any]:
-        """Update entity properties in the entity registry.
-
-        Allows modifying entity metadata such as area assignment, display name,
-        icon, "Show As" device class override, per-domain registry options,
-        enabled/disabled state, visibility, aliases, labels, voice assistant
-        exposure, and entity_id rename in a single call.
-
-        BULK OPERATIONS:
-        When entity_id is a list, only labels, expose_to, and categories parameters are supported.
-        Other parameters (area_id, name, use_device_name, icon, device_class, options, enabled, hidden, aliases, use_entity_name_alias, new_entity_id, new_device_name) require single entity.
-
-        SHOW AS / DEVICE CLASS: a device_class change applies instantly, no reload
-        needed.
-
-        REGISTRY OPTIONS: multi-domain options are sent as separate registry
-        updates because HA's WS schema requires options_domain + options to be
-        paired one domain at a time.
-
-        ENTITY ID RENAME: Voice exposure settings are preserved automatically.
-
-        WARNING: Renaming an entity_id does NOT update references in automations,
-        scripts, templates, or dashboards. All consumers of the old entity_id must
-        be updated manually — HA does not propagate the rename automatically.
-
-        Rename limitations:
-        - Entity history is preserved (HA 2022.4+)
-        - Entities without unique IDs cannot be renamed
-        - Entities disabled by their integration cannot be renamed
-
-        DEVICE RENAME:
-        new_device_name can be combined with new_entity_id to rename both in one
-        call. The device is looked up automatically.
-
-        Use ha_search() or ha_get_device() to find entity IDs.
-        Use ha_config_get_label() to find available label IDs.
-
-        EXAMPLES:
-        - Assign to area: ha_set_entity("sensor.temp", area_id="living_room")
-        - Set Show As: ha_set_entity("binary_sensor.zone_10", device_class="window")
-        - Set sensor precision: ha_set_entity("sensor.power", options={"sensor": {"display_precision": 2}})
-        - Rename entity and device: ha_set_entity("light.old", new_entity_id="light.new", new_device_name="New Lamp")
-        - Add labels to multiple: ha_set_entity(["light.a", "light.b"], labels=["new"], label_operation="add")
-        - Expose to Alexa: ha_set_entity("light.lamp", expose_to={"cloud.alexa": True})
-
-        ENABLED/DISABLED WARNING:
-        A disabled entity will NOT appear in state queries, dashboards, or
-        automations until re-enabled AND the integration is reloaded. This is
-        NOT the same as "turning off" an entity.
-
-        For automations and scripts, enabled=False is blocked. For automations,
-        use ha_config_set_automation(identifier="automation.xxx", enabled=False)
-        (or enabled=True to re-enable).
-        For scripts, ha_config_set_script(script_id="script.xxx", run="stop")
-        only stops a currently running execution; it does not disable the script.
-        Home Assistant has no script runtime enable/disable service.
-        """
         try:
             entity_ids, is_bulk = _parse_set_entity_ids(entity_id)
 

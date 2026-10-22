@@ -55,9 +55,14 @@ class NativeRestoreOperations:
     storage: StorageBefore | None = field(default=None, init=False)
     calendar_owner: Any = field(default=None, init=False)
     resource_owner: Any = field(default=None, init=False)
+    state_owner: Any = field(default=None, init=False)
 
     async def needs_safety(self) -> bool:
         domain = self.data["domain"]
+        if domain == "entity":
+            self.state_owner = self.snapshots.domains.states(self.actor)
+            self.before = await self.state_owner.read_snapshot(self.data["entity_id"])
+            return self.before is not None
         if domain == "dashboard_resource":
             self.resource_owner = self.snapshots.domains.resources(self.actor)
             self.before = await self.resource_owner.read_snapshot(
@@ -85,9 +90,14 @@ class NativeRestoreOperations:
             "area_or_floor",
             "label",
             "device",
+            "entity_registry",
+            "entity_exposure",
         }:
             self.before = await self.snapshots.domains.current(self.data, self.actor)
             return self.before is not None
+        return await self._storage_needs_safety(domain)
+
+    async def _storage_needs_safety(self, domain: str) -> bool:
         helper_type = "zone" if domain == "zone" else domain.removeprefix("helper_")
         if (
             domain not in {"zone", f"helper_{helper_type}"}
@@ -129,13 +139,14 @@ class NativeRestoreOperations:
             return None
         store = self.store
         before = copy.deepcopy(self.before)
+        identifier = self.data["entity_id"]
 
         def capture() -> Path | None:
             from homeassistant.helpers.json import json_bytes
 
             return store.capture(
                 self.data["domain"],
-                self.data["entity_id"],
+                identifier,
                 json.loads(json_bytes(before)),
                 "ha_manage_backup.restore.safety",
                 force=True,
@@ -160,14 +171,19 @@ class NativeRestoreOperations:
 
     async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
         self.snapshots._require_restore_access(self.actor)
+        if self.data["domain"] == "calendar_event":
+            assert self.calendar_owner is not None
+            return await self.calendar_owner.apply(self.before)
+        if self.data["domain"] == "entity":
+            assert self.state_owner is not None
+            return await self.state_owner.restore_snapshot(
+                self.data["entity_id"], self.data["config"], self.before
+            )
         if self.data["domain"] == "dashboard_resource":
             assert self.resource_owner is not None
             return await self.resource_owner.restore_snapshot(
                 self.data["entity_id"], self.data["config"], self.before
             )
-        if self.data["domain"] == "calendar_event":
-            assert self.calendar_owner is not None
-            return await self.calendar_owner.apply(self.before)
         if (
             _is_flow_helper_domain(self.data["domain"])
             or self.data["domain"] == "helper_config_subentry"
@@ -183,14 +199,17 @@ class NativeRestoreOperations:
             return await self.snapshots.domains.apply_config(
                 self.data, self.before, self.actor
             )
-        if self.data["domain"] == "label":
-            return await self.snapshots.domains.restore_label(
-                self.data, self.before, self.actor
-            )
-        if self.data["domain"] == "device":
-            return await self.snapshots.domains.restore_device(
-                self.data, self.before, self.actor
-            )
+        if self.data["domain"] in {"label", "device", "entity_registry"}:
+            restore = {
+                "label": self.snapshots.domains.restore_label,
+                "device": self.snapshots.domains.restore_device,
+                "entity_registry": self.snapshots.domains.restore_entity_registry,
+            }[self.data["domain"]]
+            return await restore(self.data, self.before, self.actor)
+        if self.data["domain"] == "entity_exposure":
+            return await self.snapshots.domains.legacy_exposure(
+                self.actor
+            ).restore_snapshot(self.data["entity_id"], self.data["config"], self.before)
         if self.data["domain"] in {"category", "area_or_floor"}:
             from ha_mcp.runtime.snapshot_registry_restore import restore_registry
 
@@ -254,6 +273,32 @@ class NativeRestoreOperations:
             and self.resource_owner.initialization_started
         ):
             outcome = {**outcome, "resource_initialization_started": True}
+        if self.data["domain"] == "entity":
+            from .native_operations.state_snapshots import STATE_ONLY_WARNING
+
+            outcome = {
+                **outcome,
+                "temporary_state_only": True,
+                "warnings": [STATE_ONLY_WARNING],
+            }
+        if (
+            self.data["domain"] in {"entity_registry", "entity_exposure"}
+            and isinstance(error, ToolFailure)
+            and isinstance(error.data, dict)
+        ):
+            outcome = {
+                **outcome,
+                **{
+                    key: error.data[key]
+                    for key in (
+                        "partial",
+                        "confirmed_phases",
+                        "options_succeeded",
+                        "exposure_succeeded",
+                    )
+                    if key in error.data
+                },
+            }
         raise BackupRestoreError(
             message,
             apply_status=status,
@@ -265,6 +310,10 @@ class NativeRestoreOperations:
 
     def completed(self, result: Any) -> dict[str, Any]:
         extra = {}
+        if self.data["domain"] == "entity" and isinstance(result, dict):
+            extra.update(
+                {"temporary_state_only": True, "warnings": result.get("warnings", [])}
+            )
         if (
             _is_flow_helper_domain(self.data["domain"])
             or self.data["domain"] == "helper_config_subentry"

@@ -88,6 +88,17 @@ async def call_exposed(
         )
     except ToolFailure as err:
         result = ToolResult(err.data, is_error=True, status=err.status or "not_started")
+    if result.images:
+        data = (
+            dict(result.data)
+            if isinstance(result.data, dict)
+            else {"result": result.data}
+        )
+        data["warnings"] = [
+            *(data.get("warnings") or []),
+            "Home Assistant Assist cannot receive tool images. The structured result and operation outcome are preserved; use an MCP client to receive the screenshot images.",
+        ]
+        result = replace(result, data=data, images=())
     wire = mcp_result(result, allow_continuation=False).to_mcp_result()
     payload = _meta_as_field_name(
         wire.model_dump(exclude_unset=True, exclude_none=True, by_alias=True)

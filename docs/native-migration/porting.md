@@ -169,6 +169,16 @@ every resource owner and reports a failed drain instead of claiming completion.
 
 ## Evidence before publication
 
+Log sources reuse Core's `system_log` producer, logger settings, configured
+error-log path and logbook `EventProcessor`. The fault-log read keeps the
+File & YAML Tools entry gate and its path policy. The Supervisor log reader
+borrows the existing Core Supervisor client's session and credentials; it
+creates neither a client nor a token. Its private transport access is audited
+against `aiohasupervisor` 0.6.0, whose public methods cannot supply the `Range`
+header required for journald pagination. Only fixed service-log endpoints and
+one validated app-slug segment are accepted. Container CI cannot qualify the
+HAOS/Supervisor branch; its isolated transport tests are narrower evidence.
+
 Preserve public input/output schemas, coercion, tags and result shapes with the
 catalog guards and existing tool tests. Add focused tests for the new Core
 boundary: actual target resolution, owner validation, read-only/revocation after

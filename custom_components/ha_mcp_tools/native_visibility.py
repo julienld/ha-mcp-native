@@ -201,6 +201,16 @@ class NativeVisibility:
         config = await self._config(name)
         if config is None or not config.enforce:
             return result
+        if result.images:
+            return replace(
+                result,
+                images=(),
+                data=enforcement_error(
+                    name,
+                    "Images cannot be filtered for hidden entities under visibility enforcement.",
+                ),
+                is_error=True,
+            )
         try:
             matcher = await self._matcher(config)
         except VisibilityDataUnavailable:

@@ -61,6 +61,9 @@
     "registry_key": "Core registry entry UUID (config.id), independent of entity_id renames",
     "preserve_legacy_state_snapshots": true,
     "registry_restore": "existing identity only; restore user registry fields and options through Core owners, never synthetic state writes",
+    "legacy_exposure_domain": "entity_exposure",
+    "legacy_exposure_restore": "state-only entities retain exact Core exposure preferences, including absent preferences versus explicit false; a new registry registration causes a conflict",
+    "legacy_state_restore": "only state and attributes through the actual StateMachine, with a fresh actor Context; may create a temporary state, trigger automations and be replaced by its provider; does not restore a registration or physical device",
     "safety_compare": "typed before-image captured before awaits; restore must refuse a change after that same safety image",
     "missing_registration": "explicit unsupported recreation; restoring history does not recreate an integration-owned entity"
   },

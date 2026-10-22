@@ -32,7 +32,7 @@ async def exercise_history(checks: Any) -> None:
         entity["statistics"], (1000.0, 3000.0), (10000.0, 12000.0), strict=True
     ):
         assert isclose(row["state"], state) and isclose(row["sum"], total), result
-        assert isclose(row["last_reset"], seeded["last_reset_ms"]), result
+        assert row["last_reset"] == seeded["last_reset"], result
     checks.passed(
         "native_recorder_SQLite_statistics_conversion_and_unconverted_reset_timestamps"
     )

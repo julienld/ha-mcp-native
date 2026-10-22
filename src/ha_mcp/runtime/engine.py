@@ -217,13 +217,21 @@ class Engine:
         result: ToolResult,
         deadline: float,
     ) -> ToolResult:
+        if result.is_error or result.status in {"not_started", "pending", "denied"}:
+            result = replace(result, images=())
         if self.result_filter is None:
             return result
         try:
             async with asyncio.timeout_at(deadline):
                 filtered = await self.result_filter(name, arguments, context, result)
             return replace(
-                filtered, status=result.status, operation_id=result.operation_id
+                filtered,
+                status=result.status,
+                operation_id=result.operation_id,
+                images=()
+                if filtered.is_error
+                or result.status in {"not_started", "pending", "denied"}
+                else filtered.images,
             )
         except Exception:
             _LOGGER.exception(
@@ -239,6 +247,7 @@ class Engine:
                     },
                 },
                 is_error=True,
+                images=(),
             )
 
     async def _invoke_authorized(

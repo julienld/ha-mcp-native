@@ -123,3 +123,16 @@ async def test_calendar_backup_keeps_the_observed_image_without_rereading(
     rows = store.list_snapshots(domain="calendar_event")
     assert any(store.read_snapshot(row["name"])["config"] == before for row in rows)
     entity.async_get_events.assert_not_awaited()
+
+
+async def test_calendar_history_keeps_a_provider_uid_containing_the_key_separator(
+    calendars: tuple,
+) -> None:
+    _manager, snapshots, store, _path, entity, _ = calendars
+    entity.events[0].uid = "provider::event"
+    saved = {**vars(entity.events[0]), "calendar_entity_id": entity.entity_id}
+    path = store.capture(
+        "calendar_event", "calendar.family::provider::event", saved, "fixture"
+    )
+    _data, current = await snapshots.snapshot_comparison(path.name, CallContext("owner"))
+    assert current["uid"] == "provider::event"

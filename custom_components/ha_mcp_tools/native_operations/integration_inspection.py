@@ -9,14 +9,15 @@ from homeassistant.core import HomeAssistant
 from ha_mcp.errors import HomeAssistantAPIError, HomeAssistantConnectionError
 
 
-async def log_levels(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
+def logger_levels(hass: HomeAssistant) -> list[dict[str, Any]] | None:
+    """Core logger domains and levels, without a transport envelope."""
     from homeassistant.components.logger.helpers import DATA_LOGGER, get_logger
     from homeassistant.config_entries import DISCOVERY_SOURCES
     from homeassistant.setup import async_get_loaded_integrations
 
     owner = hass.data.get(DATA_LOGGER)
     if owner is None:
-        return {"success": False, "error": "Logger integration not loaded"}
+        return None
     domains = set(async_get_loaded_integrations(hass))
     domains.update(
         flow["handler"]
@@ -24,18 +25,22 @@ async def log_levels(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str
         if flow["context"].get("source") in DISCOVERY_SOURCES
     )
     domains.update(owner.settings.async_get_integration_domains())
-    return {
-        "success": True,
-        "result": [
-            {
-                "domain": domain,
-                "level": get_logger(
-                    f"homeassistant.components.{domain}"
-                ).getEffectiveLevel(),
-            }
-            for domain in domains
-        ],
-    }
+    return [
+        {
+            "domain": domain,
+            "level": get_logger(
+                f"homeassistant.components.{domain}"
+            ).getEffectiveLevel(),
+        }
+        for domain in domains
+    ]
+
+
+async def log_levels(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
+    rows = logger_levels(hass)
+    if rows is None:
+        return {"success": False, "error": "Logger integration not loaded"}
+    return {"success": True, "result": rows}
 
 
 async def knx_project(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -18,6 +18,7 @@ import psutil
 from aiohttp import web
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.const import Platform
 from homeassistant.core import Context
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
@@ -101,6 +102,12 @@ class FixtureView(HomeAssistantView):
                     "device_removals": data.get("device_removals", 0),
                 }
             )
+        if operation == "entity":
+            from .sensor import describe_sensor
+
+            return web.json_response(
+                describe_sensor(self.hass, self.hass.data[DOMAIN]["sensor_entry_id"])
+            )
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         connections = await self.hass.async_add_executor_job(
             lambda: psutil.Process().net_connections(kind="inet")
@@ -152,10 +159,8 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
-        elif operation == "seed_history":
-            from .history import seed_history
-
-            return web.json_response(await seed_history(self.hass))
+        elif operation in {"seed_history", "seed_logs", "seed_entity_history"}:
+            return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
             from homeassistant.components.lovelace.const import LOVELACE_DATA
 
@@ -208,6 +213,19 @@ class FixtureView(HomeAssistantView):
         else:
             return web.json_response({"error": "unknown_operation"}, status=404)
         return web.json_response({"ok": True})
+
+    async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "seed_entity_history":
+            from .sensor import seed_entity_state_history
+
+            return await seed_entity_state_history(self.hass, manager)
+        if operation == "seed_logs":
+            from .logs import seed_logs
+
+            return await seed_logs(self.hass)
+        from .history import seed_history
+
+        return await seed_history(self.hass)
 
 
 async def async_setup(hass, config):
@@ -300,14 +318,21 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
 
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, "native-device")},
+        identifiers={(DOMAIN, f"{entry.entry_id}:native-device")},
         name=entry.title,
     )
     hass.data[DOMAIN]["device_id"] = device.id
+    hass.data[DOMAIN]["sensor_entry_id"] = entry.entry_id
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
     return True
+
+
+async def async_unload_entry(hass: Any, entry: Any) -> bool:
+    return await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
 
 
 async def async_remove_config_entry_device(hass: Any, entry: Any, device: Any) -> bool:
     data = hass.data[DOMAIN]
     data["device_removals"] = data.get("device_removals", 0) + 1
+    await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
     return True

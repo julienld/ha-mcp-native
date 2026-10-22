@@ -6,7 +6,6 @@ import asyncio
 import copy
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +17,7 @@ from ha_mcp.tool_api import CallContext
 from ha_mcp.utils.owned_executor import await_owned_io
 
 from .const import SERVER_CONFIG_SUBDIR
-from .native_server_policy import environment_name
+from .native_server_policy import setting_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,12 +32,7 @@ class NativeSnapshots:
         self.stores: dict[Path, SnapshotStore] = {}
 
     def _value(self, name: str) -> Any:
-        from ha_mcp.config_settings import Settings
-
-        return os.environ.get(
-            environment_name(name),
-            self.manager.policy.flags.get(name, Settings.model_fields[name].default),
-        )
+        return setting_value(self.manager.policy.flags, name)
 
     def _store(self) -> SnapshotStore:
         configured = str(self._value("auto_backup_dir") or "").strip()
@@ -184,8 +178,9 @@ class NativeSnapshots:
                 "ha_remove_area_or_floor",
                 "ha_config_set_label",
             },
-            "device": {"ha_set_device", "ha_remove_device"},
-            "entity": {"ha_set_entity", "ha_remove_entity"},
+            "device": {"ha_set_device", "ha_remove_device", "ha_set_entity"},
+            "entity_registry": {"ha_set_entity", "ha_remove_entity"},
+            "entity_exposure": {"ha_set_entity"},
         }
         if source not in allowed.get(domain, set()):
             raise ValueError("Unsupported native registry snapshot domain/source pair")
@@ -197,9 +192,23 @@ class NativeSnapshots:
             return None
         if not isinstance(payload["current_config"], dict):
             raise ValueError("Registry snapshot must contain an object")
+        if domain == "entity_registry":
+            from ha_mcp.runtime.entity_snapshot_values import entity_registry_identity
+
+            identity = entity_registry_identity(payload["current_config"])
+            if identity["id"] != payload["backup_id"]:
+                raise ValueError(
+                    "Entity registry snapshot does not match its durable identity"
+                )
+        if domain == "entity_exposure" and (
+            payload["current_config"].get("entity_id") != payload["backup_id"]
+            or "preferences" not in payload["current_config"]
+        ):
+            raise ValueError("Legacy exposure snapshot does not match its identity")
         return await self._capture_value(
             domain, payload["backup_id"], payload["current_config"], source
         )
+
 
     async def resource_backup(
         self, payload: dict[str, Any], context: CallContext
@@ -371,7 +380,13 @@ class NativeSnapshots:
                     lock_domain, data["entity_id"], config
                 )
                 target = identity[f"{lock_domain}_id"]
-            if lock_domain in {"label", "device", "dashboard_resource"}:
+            if lock_domain in {
+                "label",
+                "device",
+                "dashboard_resource",
+                "entity_registry",
+                "entity_exposure",
+            }:
                 # The Core service owns its mutation lock; it rechecks the
                 # captured before-image after acquiring it, so no lock is reentered.
                 lock_domain = f"snapshot_restore:{lock_domain}"

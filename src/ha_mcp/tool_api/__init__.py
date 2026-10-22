@@ -6,6 +6,34 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+MAX_TOOL_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_RESULT_IMAGE_BYTES = 40 * 1024 * 1024
+MAX_RESULT_IMAGES = 8
+
+
+@dataclass(frozen=True, slots=True)
+class ToolImage:
+    """Bounded image bytes; only a transport projection encodes them."""
+
+    data: bytes = field(repr=False)
+    mime_type: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.data, bytes)
+            or not self.data
+            or len(self.data) > MAX_TOOL_IMAGE_BYTES
+        ):
+            raise ValueError("Tool image exceeds the supported byte bounds")
+        if self.mime_type not in {
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+            "image/bmp",
+        }:
+            raise ValueError("Unsupported tool image media type")
+
 
 @dataclass(frozen=True, slots=True)
 class CallContext:
@@ -30,6 +58,15 @@ class ToolResult:
     is_error: bool = False
     status: str | None = None
     operation_id: str | None = None
+    images: tuple[ToolImage, ...] = field(default=(), repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.images, tuple) or len(self.images) > MAX_RESULT_IMAGES:
+            raise ValueError("Tool result exceeds the supported image count")
+        if any(not isinstance(image, ToolImage) for image in self.images):
+            raise TypeError("Tool result images must be ToolImage values")
+        if sum(len(image.data) for image in self.images) > MAX_RESULT_IMAGE_BYTES:
+            raise ValueError("Tool result exceeds the aggregate image byte bound")
 
 
 class ToolFailure(Exception):
@@ -116,6 +153,7 @@ __all__ = [
     "ResultFilter",
     "ToolDefinition",
     "ToolFailure",
+    "ToolImage",
     "ToolResult",
     "UnsupportedOperation",
 ]

@@ -19,19 +19,25 @@ from .registry_access import authorize_actor
 
 def _identity(identifier: str, config: Any) -> tuple[str, str, str | None]:
     entity_id, _, rest = identifier.partition("::")
-    uid, _, recurrence_id = rest.partition("::")
+    if not isinstance(config, dict):
+        raise InvalidBackupSnapshotError("Calendar snapshot must contain an event")
+    key_uid, _, key_recurrence_id = rest.partition("::")
+    uid = config.get("uid", key_uid)
+    recurrence_id = config.get("recurrence_id") or (
+        key_recurrence_id if uid == key_uid else None
+    )
+    references = (uid, f"{uid}::{recurrence_id}") if recurrence_id else (uid,)
     if (
-        not isinstance(config, dict)
-        or not entity_id.startswith("calendar.")
+        not entity_id.startswith("calendar.")
+        or not isinstance(uid, str)
         or not uid
         or config.get("calendar_entity_id", entity_id) != entity_id
-        or config.get("uid", uid) != uid
-        or (recurrence_id and config.get("recurrence_id") != recurrence_id)
+        or rest not in references
     ):
         raise InvalidBackupSnapshotError(
             "Calendar snapshot does not match its identity"
         )
-    return entity_id, uid, recurrence_id or config.get("recurrence_id") or None
+    return entity_id, uid, recurrence_id or None
 
 
 def _values(identifier: str, config: dict[str, Any]) -> dict[str, Any]:

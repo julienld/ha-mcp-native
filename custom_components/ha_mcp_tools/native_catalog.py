@@ -7,8 +7,10 @@ from ha_mcp.tool_api import ToolDefinition
 
 from .native_calendar_tools import build_calendar_tools
 from .native_device_tools import build_device_tools
+from .native_entity_tools import entity_removal_definition, entity_write_definition
 from .native_history_tools import history_definition
 from .native_label_tools import build_label_tools
+from .native_log_tools import logs_definition
 from .native_operations.templates import template_definition
 from .native_resource_tools import build_resource_tools
 from .native_trace_tools import trace_definition
@@ -24,9 +26,12 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *bridge,
         *build_label_tools(manager),
         *build_device_tools(manager),
+        entity_removal_definition(manager),
+        entity_write_definition(manager),
         *build_calendar_tools(manager),
         *build_resource_tools(manager),
         template_definition(manager.backend),
         trace_definition(manager),
         history_definition(manager),
+        logs_definition(manager),
     ]

@@ -87,7 +87,16 @@ async def restore_entity_registry(
             reason="identity_changed",
         )
     result = None
+    confirmed_phases: list[str] = []
     for payload in entity_restore_payloads(config, current):
+        verified = await fetch_entity_registry(client, identity)
+        if not json_values_equal(verified, current):
+            raise BackupRestoreError(
+                "The entity registration changed between restore phases; no further update was sent.",
+                reason="config_conflict",
+                apply_status="unknown" if confirmed_phases else "not_applied",
+                confirmed_phases=confirmed_phases,
+            )
         response = await client.send_websocket_message(
             {"type": "config/entity_registry/update", **payload}
         )
@@ -96,6 +105,24 @@ async def restore_entity_registry(
                 f"Entity registry restore failed: {response.get('error')}"
             )
         result = response.get("result")
+        written = result.get("entity_entry") if isinstance(result, dict) else None
+        if not isinstance(written, dict) or not json_values_equal(
+            entity_registry_identity(written), entity_registry_identity(config)
+        ):
+            raise HomeAssistantError(
+                "Entity registry restore did not return the same durable identity"
+            )
+        current = written
+        confirmed_phases.append(payload.get("options_domain", "registry"))
+    if confirmed_phases and not json_values_equal(
+        await fetch_entity_registry(client, identity), current
+    ):
+        raise BackupRestoreError(
+            "The entity registration changed after the last restore acknowledgement; its final state could not be confirmed.",
+            reason="readback_mismatch",
+            apply_status="unknown",
+            confirmed_phases=confirmed_phases,
+        )
     return result
 
 
@@ -118,4 +145,24 @@ async def capture_entity_registry(client: Any, entity_id: str, source: str) -> N
     except _CAPTURE_TRANSIENT_ERRORS as error:
         _LOGGER.warning(
             "Entity-registry pre-write capture failed: %s", type(error).__name__
+        )
+
+
+async def capture_entity_device(client: Any, device_id: str) -> None:
+    """The entity tool's rename changes a separate device-registry owner."""
+    from ha_mcp.backup_manager import _CAPTURE_TRANSIENT_ERRORS, get_backup_manager
+    from ha_mcp.config import get_global_settings
+
+    settings = get_global_settings()
+    if not settings.enable_auto_backup:
+        return
+    try:
+        await get_backup_manager(client, settings).maybe_snapshot(
+            "device",
+            device_id,
+            tool_name="ha_set_entity",
+        )
+    except _CAPTURE_TRANSIENT_ERRORS as error:
+        _LOGGER.warning(
+            "Entity device pre-write capture failed: %s", type(error).__name__
         )

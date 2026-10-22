@@ -553,3 +553,28 @@ async def test_native_label_removed_by_core_listener_after_area_update_is_not_re
         result.data["assigned_areas"] == [] and result.data["write_committed"] is True
     )
     assert len(areas.calls) == 1 and areas.entries["existing"].labels == {"other"}
+
+
+async def test_native_label_assignments_yield_to_queued_policy_changes_between_areas(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, _, _, areas, _, _, _ = _setup(native, monkeypatch)
+    update = areas.async_update
+
+    def update_then_queue_disable(**data: Any) -> Any:
+        entry = update(**data)
+        asyncio.get_running_loop().call_soon(setattr, engine, "enabled_tools", set())
+        return entry
+
+    monkeypatch.setattr(areas, "async_update", update_then_queue_disable)
+    result = await engine.call(
+        "ha_config_set_label",
+        {"label_id": "existing", "name": "Existing", "areas": ["existing", "second"]},
+        CallContext("actor"),
+    )
+    assert result.is_error and result.status == "confirmed", result.data
+    assert result.data["label_applied"] is True and result.data["assigned_areas"] == [
+        "existing"
+    ]
+    assert "existing" not in areas.entries["second"].labels and len(areas.calls) == 1

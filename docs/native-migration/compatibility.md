@@ -136,7 +136,7 @@ ID that already exists is rejected before snapshot capture and mutation.
 
 ## Readiness evidence
 
-Entity edit history distinguishes two persisted domains. Historical `entity`
+Entity edit history distinguishes its persisted domains. Historical `entity`
 snapshots retain their original state-and-attributes meaning. New
 `entity_registry` snapshots preserve Core's full registry entry and use its UUID
 as the key, so an `entity_id` rename does not redirect a restore to another
@@ -149,6 +149,19 @@ durable identity; it cannot recreate an integration-owned entity registration.
 Single and bulk removals capture each existing target. An uncertain Core
 removal stops a native bulk call, returning its confirmed progress and explicit
 `not_attempted` targets without replaying a removal.
+
+For state-only entities, `entity_exposure` snapshots preserve the actual Core
+exposure preferences. Missing preferences and explicit `false` remain distinct;
+restoring absence does not materialize disabled preferences. A registration
+created after the safety read causes a conflict instead of redirecting the
+write to the new registry entry.
+
+Native restoration of an old `entity` snapshot writes only its state and
+attributes through the actual StateMachine, using a fresh context for the
+current actor. It does not restore registry settings, saved timestamps, the old
+context or a physical device. Like the old REST state write, it may create a
+temporary state for a missing entity and trigger automations; an integration
+may publish its own state afterward. The response carries this warning.
 
 Native trace diagnostics distinguish an idle script (`off`) from a disabled
 automation. They read trace storage settings from the actual Core owner's

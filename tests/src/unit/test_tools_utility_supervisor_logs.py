@@ -93,7 +93,7 @@ def _register_and_collect(client: Any) -> dict[str, Any]:
 
         return _wrap
 
-    mcp = SimpleNamespace(tool=_tool)
+    mcp = SimpleNamespace(tool=_tool, add_tool=_tool())
     register_logs_tools(mcp, client)
     return collected
 

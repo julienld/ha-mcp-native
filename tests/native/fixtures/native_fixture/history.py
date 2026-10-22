@@ -61,7 +61,7 @@ async def seed_history(hass: HomeAssistant) -> dict[str, Any]:
         "statistic_id": statistic_id,
         "start": start.isoformat(),
         "end": (start + timedelta(hours=2)).isoformat(),
-        "last_reset_ms": reset.timestamp() * 1000,
+        "last_reset": reset.timestamp(),
         "state_entity_id": entity_id,
         "state_start": history_start.isoformat(),
     }
