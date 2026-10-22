@@ -75,12 +75,19 @@ def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     async def dependency_owner(hass: Any, domain: str) -> Any:
         assert hass is world.hass
+        world.loader_setup.assert_called_once_with(hass)
         world.events.append(domain)
         world.additions[f"dependency-{domain}"] = "1"
         return SimpleNamespace(domain=domain)
 
     world.owner = Mock(side_effect=requirements_owner)
     world.hass = SimpleNamespace(async_stop=AsyncMock())
+    world.loader_setup = Mock()
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.loader",
+        SimpleNamespace(async_setup=world.loader_setup),
+    )
     world.dependency_owner = AsyncMock(side_effect=dependency_owner)
     monkeypatch.setitem(
         sys.modules,
@@ -272,3 +279,25 @@ async def test_real_private_sdk_http_client_exercises_lazy_state_store() -> None
 
     install()
     await minimal_probes._legacy_http()
+
+
+async def test_native_probe_initializes_core_loader_before_authentication(
+    minimal: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class InitializedCoreReached(Exception):
+        pass
+
+    async def auth(hass: Any, _providers: Any, _modules: Any) -> Any:
+        minimal.loader_setup.assert_called_once_with(hass)
+        raise InitializedCoreReached
+
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.auth",
+        SimpleNamespace(auth_manager_from_config=auth),
+    )
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.auth.const", SimpleNamespace(GROUP_ID_ADMIN="admin")
+    )
+    with pytest.raises(InitializedCoreReached):
+        await minimal_probes._native(tmp_path)

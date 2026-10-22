@@ -81,9 +81,11 @@ async def install_declared_dependencies(
     observe: Callable[[str], None],
 ) -> None:
     from homeassistant.core import HomeAssistant
+    from homeassistant.loader import async_setup as async_setup_loader
     from homeassistant.requirements import async_get_integration_with_requirements
 
     hass = HomeAssistant(str(config))
+    async_setup_loader(hass)
     visited: set[str] = set()
     try:
         for field, label in (

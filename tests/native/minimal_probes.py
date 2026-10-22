@@ -21,8 +21,10 @@ async def _native(config: Path) -> None:
     from homeassistant.auth import auth_manager_from_config
     from homeassistant.auth.const import GROUP_ID_ADMIN
     from homeassistant.core import HomeAssistant
+    from homeassistant.loader import async_setup as async_setup_loader
 
     hass = HomeAssistant(str(config))
+    async_setup_loader(hass)
     hass.auth = await auth_manager_from_config(hass, [], [])
     user = await hass.auth.async_create_user(
         "Minimal fixture", group_ids=[GROUP_ID_ADMIN]
