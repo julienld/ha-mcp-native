@@ -70,7 +70,11 @@
   "native_annotation_overrides": {
     "ha_config_get_dashboard": {
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
-      "reason": "Describing a custom card or listing card types can initialize the actual Core resource owner and migrate resources on first inspection. Native argument policy permits ordinary config/list/search reads and subsequent inspection of loaded resources in read-only mode. The original openWorldHint=true and the standalone annotations remain unchanged."
+      "reason": "Describing a custom card or listing card types can initialize the actual Core resource owner and migrate resources on first inspection. include_screenshot requires write admission because the renderer may persist its user's profile. Native argument policy permits ordinary config/list/search reads and subsequent inspection of loaded resources in read-only mode. The original openWorldHint=true and the standalone annotations remain unchanged."
+    },
+    "ha_get_dashboard_screenshot": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "The renderer may persist its user's profile even without explicit theme arguments. Every native render requires write admission, with a final check before each HTTP request; native execution never retries a failed capture and stops queued viewports after uncertainty. Standalone annotations remain unchanged."
     },
     "ha_config_list_dashboard_resources": {
       "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},

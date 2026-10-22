@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from camera_checks import exercise_camera_assist
+from screenshot_checks import exercise_screenshot_assist
 
 
 async def exercise_llm(checks: Any) -> None:
@@ -11,6 +12,7 @@ async def exercise_llm(checks: Any) -> None:
     await checks.control("configure", {})
     await checks.ready()
     await exercise_camera_assist(checks)
+    await exercise_screenshot_assist(checks)
     result = await checks.control(
         "llm",
         {

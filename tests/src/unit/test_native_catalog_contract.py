@@ -162,6 +162,7 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         "ha_get_integration",
         "ha_config_list_dashboard_resources",
         "ha_config_get_dashboard",
+        "ha_get_dashboard_screenshot",
     }
     assert overrides["ha_config_get_dashboard"]["annotations"] == {
         "readOnlyHint": False,

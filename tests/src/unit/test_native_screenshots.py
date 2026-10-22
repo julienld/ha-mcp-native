@@ -38,7 +38,11 @@ def renderer(native, monkeypatch):
         hass=hass,
         backend=SimpleNamespace(authorize=authorize),
         policy=NativePolicy(
-            flags={"dashboard_screenshot_engine_url": "http://renderer.test:10000"}
+            flags={
+                "dashboard_screenshot_engine_url": "http://renderer.test:10000",
+                "enable_beta_features": True,
+                "enable_dashboard_screenshot": True,
+            }
         ),
     )
     client = httpx.AsyncClient

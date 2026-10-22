@@ -41,6 +41,7 @@ from pipeline_checks import exercise_pipelines
 from radio_checks import exercise_radios
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
+from screenshot_checks import exercise_screenshots
 from search_checks import exercise_search
 from system_checks import exercise_system_actions, exercise_system_self_reload
 from theme_checks import exercise_themes
@@ -418,6 +419,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_updates(checks)
     await exercise_radios(checks)
     await exercise_files_yaml(checks, BASE)
+    await exercise_screenshots(checks, BASE)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)

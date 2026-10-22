@@ -18,9 +18,12 @@ from .registry_access import authorize_actor
 def dashboard_read_writes(hass: Any, arguments: dict[str, Any]) -> bool:
     card_type = arguments.get("card_type") or ""
     return bool(
-        arguments.get("describe")
-        and (not card_type or card_type.startswith("custom:"))
-        and resources_need_loading(hass)
+        arguments.get("include_screenshot")
+        or (
+            arguments.get("describe")
+            and (not card_type or card_type.startswith("custom:"))
+            and resources_need_loading(hass)
+        )
     )
 
 

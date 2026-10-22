@@ -33,9 +33,12 @@ from custom_components.ha_mcp_tools.native_pipeline_tools import pipeline_defini
 from ha_mcp.runtime.update_tools import UpdateToolsFacade
 from ha_mcp.runtime.update_plans import update_targets
 from custom_components.ha_mcp_tools.native_update_tools import update_definition
+from custom_components.ha_mcp_tools.native_screenshot_tools import screenshot_definition
+from ha_mcp.runtime.screenshot_tools import ScreenshotFacade
 assert BlueprintTools and blueprint_definition and NativeBlueprintRestore
 assert PipelineTools and pipeline_definition and validate_sentence
 assert UpdateToolsFacade and update_definition and update_targets('skip', 'update.fixture', None) == (['update.fixture'], [])
+assert screenshot_definition and ScreenshotFacade
 assert parse_blueprint_body('value: !input selected') == {'value': {'__input__': 'selected'}}
 """
     result = subprocess.run(

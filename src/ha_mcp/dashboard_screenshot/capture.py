@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, Protocol, cast
 from urllib.parse import quote
@@ -334,18 +335,18 @@ def _validate_viewport_presets(value: Any) -> list[ViewportPreset] | None:
 
 def validate_capture_parameters(
     *,
-    width: Any,
-    height: Any,
-    viewport_presets: Any,
-    orientation: Any,
-    zoom: Any,
-    wait_ms: Any,
-    full_page: Any,
-    theme: Any,
-    dark_mode: Any,
-    language: Any,
-    image_format: Any,
-    render_timeout_seconds: Any,
+    width: Any = DEFAULT_WIDTH,
+    height: Any = DEFAULT_HEIGHT,
+    viewport_presets: Any = None,
+    orientation: Any = None,
+    zoom: Any = 1.0,
+    wait_ms: Any = DEFAULT_WAIT_MS,
+    full_page: Any = False,
+    theme: Any = None,
+    dark_mode: Any = False,
+    language: Any = None,
+    image_format: Any = "png",
+    render_timeout_seconds: Any = DEFAULT_RENDER_TIMEOUT_SECONDS,
 ) -> _CaptureOptions:
     """Validate capture inputs independently of FastMCP/Pydantic callers."""
     valid_width = _bounded_int(
@@ -592,11 +593,14 @@ async def _request_viewport_image(
     request_context: dict[str, Any],
     aggregate_bytes: int,
     remaining_batch_bytes: int,
+    request_guard: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[bytes, int | Literal["auto"], bool]:
     """Render one viewport, including the legacy full-page compatibility retry."""
     fallback_used = False
     capture_height = viewport.height
     while True:
+        if request_guard is not None:
+            await request_guard()
         try:
             async with http_client.stream("GET", url, params=params) as response:
                 if response.status_code >= 400:
@@ -609,6 +613,7 @@ async def _request_viewport_image(
                         and options.full_page
                         and viewport.height == "auto"
                         and not fallback_used
+                        and request_guard is None
                     ):
                         # Puppet <2.5.0 does not understand WIDTHxauto.
                         fallback_used = True
@@ -697,6 +702,7 @@ async def _request_or_collect_failure(
     aggregate_bytes: int,
     remaining_batch_bytes: int,
     partial_failures: list[dict[str, Any]] | None,
+    request_guard: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[bytes, int | Literal["auto"], bool] | None:
     """Render one viewport or record its structured failure for a partial batch."""
     try:
@@ -712,6 +718,7 @@ async def _request_or_collect_failure(
             request_context=request_context,
             aggregate_bytes=aggregate_bytes,
             remaining_batch_bytes=remaining_batch_bytes,
+            request_guard=request_guard,
         )
     except ToolError as exc:
         if partial_failures is None:
@@ -819,6 +826,7 @@ async def capture_dashboard_images(
     capture_warnings: list[str] | None = None,
     engine_target: EngineTarget | None = None,
     theme_observer: CaptureThemeObserver | None = None,
+    request_guard: Callable[[], Awaitable[None]] | None = None,
 ) -> list[DashboardImageCapture]:
     """Render one or more ordered dashboard images via the screenshot engine.
 
@@ -831,8 +839,10 @@ async def capture_dashboard_images(
     user's saved frontend theme before and after rendering. It never writes:
     when the render changed the theme it reports the previous value through
     ``capture_warnings`` so the agent can restore it with the write-annotated
-    ``ha_manage_theme``, keeping this path honestly read-only (#1909, #1991).
-    Guard failures are non-fatal.
+    ``ha_manage_theme``. The observer never writes; the renderer can persist
+    preferences. Native callers require write admission and pass a final
+    ``request_guard``; that also disables compatibility retries and stops the
+    batch after a failed viewport. Observer failures are non-fatal.
     """
     path = _validate_dashboard_path(dashboard_path)
     options = validate_capture_parameters(
@@ -860,8 +870,8 @@ async def capture_dashboard_images(
 
     # ThemeGuard bracket. Puppet's settheme dispatch persists onto the engine
     # token user's profile and syncs to that user's live sessions (#1909).
-    # Both reads here; the guard reports the change rather than undoing it, so
-    # this tool issues no writes and stays read-only (#1991). Armed for every
+    # Both observer calls read; renderer effects still require native write
+    # admission. The guard reports the change rather than undoing it. Armed for every
     # capture, not just themed ones: the upstream fix that would spare the
     # no-parameter case is unreleased as of Puppet 2.6.0.
     guard = (
@@ -920,9 +930,10 @@ async def capture_dashboard_images(
                     aggregate_bytes=aggregate_bytes,
                     remaining_batch_bytes=remaining_batch_bytes,
                     partial_failures=partial_failures,
+                    request_guard=request_guard,
                 )
                 if outcome is None:
-                    if (
+                    if request_guard is not None or (
                         partial_failures
                         and partial_failures[-1].get("limit_kind") == "batch"
                     ):

@@ -25,6 +25,7 @@ from .native_overview_tools import overview_definition
 from .native_pipeline_tools import pipeline_definition
 from .native_radio_tools import radio_definition
 from .native_resource_tools import build_resource_tools
+from .native_screenshot_tools import screenshot_definition
 from .native_search_tools import search_definition
 from .native_system_tools import system_definitions
 from .native_theme_tools import theme_definition
@@ -55,6 +56,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         pipeline_definition(manager),
         radio_definition(manager),
         search_definition(manager),
+        screenshot_definition(manager),
         health_definition(manager),
         *system_definitions(manager),
         theme_definition(manager),

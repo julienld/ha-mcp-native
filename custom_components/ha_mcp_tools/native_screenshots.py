@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -20,11 +20,17 @@ from ha_mcp.dashboard_screenshot.provision import (
     EngineTarget,
     _select_started_verified_puppet,
 )
-from ha_mcp.runtime.dashboard_routes import resolve_dashboard_view
+from ha_mcp.runtime.dashboard_routes import (
+    DashboardRenderTarget,
+    resolve_dashboard_view,
+)
+from ha_mcp.runtime.screenshot_routes import resolve_dashboard_render_target
+from ha_mcp.runtime.screenshot_values import screenshot_result
 from ha_mcp.tool_api import CallContext, ToolFailure, ToolImage, ToolResult
 from ha_mcp.utils.owned_executor import await_owned_io
 
-from .native_operations.registry_access import authorize_actor
+from .native_operations.dashboard_storage import DashboardStorage
+from .native_operations.registry_access import admit_registry_write, authorize_actor
 from .native_operations.screenshot_theme import NativeThemeObserver
 from .native_server_policy import setting_value
 
@@ -33,6 +39,25 @@ from .native_server_policy import setting_value
 class NativeScreenshots:
     manager: Any
     actor: CallContext
+    started: bool = field(default=False, init=False)
+
+    def _check_enabled(self) -> None:
+        if not self.manager.policy.flag(
+            "enable_beta_features"
+        ) or not self.manager.policy.flag("enable_dashboard_screenshot"):
+            raise ToolFailure(
+                "FEATURE_DISABLED",
+                "Dashboard screenshot mode is disabled",
+                status="not_started",
+            )
+
+    async def _authorize_result(self) -> None:
+        try:
+            await authorize_actor(self.actor, self.manager.backend.authorize)
+        except ToolFailure as error:
+            if self.started:
+                error.status = "outcome_unknown"
+            raise
 
     async def _discover(self) -> tuple[str, str | None]:
         from homeassistant.components.hassio import get_supervisor_client
@@ -109,10 +134,11 @@ class NativeScreenshots:
         *,
         after_write: bool,
     ) -> ToolResult | dict[str, Any]:
+        self.started = False
         try:
             return await self._capture(result, url_path, config, view_path)
         except Exception as error:
-            await authorize_actor(self.actor, self.manager.backend.authorize)
+            await self._authorize_result()
             if isinstance(error, ToolError):
                 try:
                     data = json.loads(str(error))
@@ -151,27 +177,109 @@ class NativeScreenshots:
                 status="not_started",
             )
         target = resolve_dashboard_view(url_path, config, view_path)
-        engine, token = await self._target()
-        await authorize_actor(self.actor, self.manager.backend.authorize)
-        observer = NativeThemeObserver(
-            self.manager.hass, self.actor, self.manager.backend.authorize, token=token
-        )
-        warnings: list[str] = list(target.warnings)
-        captures = await await_owned_io(
-            capture_dashboard_images(
-                target.render_path,
-                engine_target=EngineTarget(engine),
-                theme_observer=observer,
-                capture_warnings=warnings,
-            )
-        )
+        captures, warnings = await self._render(target, {}, None)
+        warnings = [*target.warnings, *warnings]
         assembled: ToolResult = await await_owned_io(
             self.manager.hass.async_add_executor_job(
                 self._assemble, result, captures, target.render_path, warnings
             )
         )
-        await authorize_actor(self.actor, self.manager.backend.authorize)
+        await self._authorize_result()
         return assembled
+
+    async def screenshot(self, **arguments: Any) -> ToolResult:
+        self.started = False
+        dashboards = DashboardStorage(
+            self.manager.hass, self.actor, authorize=self.manager.backend.authorize
+        )
+
+        async def read_config(name: str) -> dict[str, Any]:
+            state = await dashboards.read(name, force=True)
+            if state.config is None:
+                raise ToolFailure(
+                    "RESOURCE_NOT_FOUND",
+                    "Dashboard config is unavailable",
+                    status="not_started",
+                )
+            return state.config
+
+        target = await resolve_dashboard_render_target(
+            read_config,
+            dashboard_path=arguments.pop("dashboard_path"),
+            url_path=arguments.pop("url_path"),
+            view_path=arguments.pop("view_path"),
+        )
+        failures: list[dict[str, Any]] = []
+        captures, warnings = await self._render(target, arguments, failures)
+        value = screenshot_result(captures, target, failures, warnings)
+        if failures:
+            value.update(
+                operation_outcome="outcome_unknown",
+                requires_reread=True,
+                retry_performed=False,
+            )
+            value.setdefault("warnings", []).append(
+                "Rendering stopped after a failed viewport. Earlier images are available, but engine-profile effects are uncertain; no request was retried."
+            )
+        await self._authorize_result()
+        return ToolResult(
+            value,
+            images=tuple(ToolImage(c.data, c.mime_type) for c in captures),
+            status="outcome_unknown" if failures else "confirmed",
+        )
+
+    async def _render(
+        self,
+        target: DashboardRenderTarget,
+        options: dict[str, Any],
+        failures: list[dict[str, Any]] | None,
+    ) -> tuple[list[Any], list[str]]:
+        from ha_mcp.dashboard_screenshot.capture import validate_capture_parameters
+
+        validate_capture_parameters(**options)
+        self.started = False
+        await admit_registry_write(self.actor, self.manager.backend.authorize)
+        self._check_enabled()
+        engine, token = await self._target()
+        observer = NativeThemeObserver(
+            self.manager.hass, self.actor, self.manager.backend.authorize, token=token
+        )
+        warnings: list[str] = []
+
+        async def before_request() -> None:
+            visibility = getattr(self.manager, "visibility", None)
+            if visibility is not None:
+                await visibility.before("ha_get_dashboard_screenshot", {}, self.actor)
+            await admit_registry_write(self.actor, self.manager.backend.authorize)
+            self._check_enabled()
+            self.started = True
+
+        async def render() -> list[Any]:
+            try:
+                return await capture_dashboard_images(
+                    target.render_path,
+                    **options,
+                    engine_target=EngineTarget(engine),
+                    theme_observer=observer,
+                    capture_warnings=warnings,
+                    partial_failures=failures,
+                    request_guard=before_request,
+                )
+            except (Exception, asyncio.CancelledError) as error:
+                if isinstance(error, ToolFailure):
+                    if self.started:
+                        error.status = "outcome_unknown"
+                    raise
+                if not self.started:
+                    raise
+                raise ToolFailure(
+                    "OUTCOME_UNKNOWN",
+                    "Rendering started and may have changed the engine user's profile. No retry was performed.",
+                    status="outcome_unknown",
+                ) from error
+
+        captures = await await_owned_io(render())
+        return captures, warnings
 
     @staticmethod
     def _assemble(

@@ -51,7 +51,7 @@ def build_dashboard_tools(manager: Any) -> list[ToolDefinition]:
                 meta={
                     "ha_mcp": {
                         "native_support": {
-                            "note": "Dashboard config/list/search reads do not write. Describing custom cards or listing card types can initialize Core resources and migrate legacy resources; that first inspection requires write admission."
+                            "note": "Dashboard config/list/search reads do not write. Describing custom cards or listing card types can initialize Core resources and migrate legacy resources; that first inspection requires write admission. include_screenshot also requires write admission because the renderer may persist its user's profile."
                         }
                     }
                 }

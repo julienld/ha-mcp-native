@@ -236,6 +236,17 @@ have unit coverage; this Core Container bench does not exercise an external
 renderer. An accessory-image failure preserves primary data and outcomes with
 a warning. It does not establish image support in Assist.
 
+The standalone native screenshot tool and dashboard reads with
+`include_screenshot=true` require write admission: the renderer can persist
+its user's profile, even without explicit theme parameters. The native
+screenshot annotations conservatively reflect that effect; historical remote
+annotations remain unchanged. Authority and admission are rechecked immediately
+before each renderer request. Native capture disables the historical HTTP 400
+full-page retry and stops queued viewports after an uncertain request. Earlier
+successful images remain available as partial results with an unknown outcome
+and explicit warning. An accessory failure retains the primary dashboard write
+outcome. Assist refuses image-only screenshot calls before renderer discovery.
+
 `ha_get_integration` has the same conservative native safety hints. Its explicit
 options/subentry schema requests initialize real Core flows; password-field
 redaction also probes an options flow when options are returned. Such flows can
