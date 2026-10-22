@@ -11,7 +11,7 @@ from ha_mcp.runtime import Engine
 from ha_mcp.tool_api import CallContext, ToolFailure
 
 from .test_component_helper_collections import FakeRegistry, ItemNotFound, _hass
-from .test_component_ws_search import wsapi
+from .test_component_ws_search import _REAL_VOL, wsapi
 from .test_native_engine_backend import authorize
 from .test_native_engine_backend import native as native
 from .test_native_helper_mutations import CoreStorage
@@ -156,12 +156,10 @@ async def test_future_core_await_between_validation_and_commit_is_refused(
 async def test_schema_rejection_remains_before_the_core_dispatch_boundary(
     direct, monkeypatch
 ):
-    from voluptuous import Invalid
-
     collection, _user, backend, _engine = direct
 
     async def invalid(self, fields):
-        raise Invalid("Rejected field")
+        raise _REAL_VOL.Invalid("Rejected field")
 
     monkeypatch.setattr(ImmediateStorage, "_process_create_data", invalid)
     result = await backend.execute(

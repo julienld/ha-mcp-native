@@ -73,7 +73,8 @@ class FakeCollection:
     async def async_create_item(self, data: dict[str, Any]) -> dict[str, Any]:
         if self.invalid:
             raise self.invalid
-        item = {"id": data["name"].lower(), **data}
+        item_id = data.get("id") or self.id_manager.generate_id(data["name"])
+        item = {**data, "id": item_id}
         self.data[item["id"]] = item
         return item
 
