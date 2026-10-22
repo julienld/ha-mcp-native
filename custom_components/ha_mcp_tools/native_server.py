@@ -38,18 +38,20 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_BODY = 1_048_576
+_INSTRUCTIONS = "Use Home Assistant tools with the caller's permissions. Preserve errors and uncertain operation outcomes; do not retry an uncertain write automatically."
 
 
-def _prewarm() -> None:
+def _prewarm() -> bool:
     """Resolve SDK imports and terminal caches outside HA's event loop."""
     importlib.import_module("ha_mcp.runtime.catalog")
     importlib.import_module(f"{__package__}.native_backend")
     importlib.import_module("ha_mcp._vendor.fastmcp")
+    importlib.import_module("ha_mcp.settings_ui")
+    importlib.import_module("ha_mcp.policy.handlers")
     from io import StringIO
 
-    from rich.console import Console
-
     from ha_mcp._vendor.fastmcp.server.dependencies import is_docket_available
+    from ha_mcp._vendor.rich.console import Console
 
     is_docket_available()
     console = Console(file=StringIO(), force_terminal=True, width=100)
@@ -58,6 +60,9 @@ def _prewarm() -> None:
         raise RuntimeError("Private SDK traceback warmup")
     except RuntimeError:
         console.print_exception(show_locals=False)
+    from ha_mcp.utils.skill_loader import best_practices_skill, get_skills_dir
+
+    return best_practices_skill(get_skills_dir()) is not None
 
 
 def current_context() -> CallContext:
@@ -70,6 +75,11 @@ def current_context() -> CallContext:
 def mcp_result(result: ToolResult) -> Any:
     """Keep payloads intact and report execution outcome in MCP metadata."""
     from ha_mcp._vendor.fastmcp.tools.base import ToolResult as MCPResult
+
+    from .native_approvals import project_continuation
+
+    if (continuation := project_continuation(result)) is not None:
+        return continuation
 
     return MCPResult(
         content=json.dumps(result.data, default=str),
@@ -128,6 +138,10 @@ class NativeServerManager:
         self._http_tasks: set[asyncio.Task] = set()
         self._stopped = False
         self.policy = NativePolicy()
+        self.approval_gate: Any = None
+        self.settings_ui: Any = None
+        self.skill_available = False
+        self.acknowledgment: Any = None
         self.http_limit = max(
             1, min(256, int(entry.options.get(OPT_NATIVE_HTTP_LIMIT, 32)))
         )
@@ -146,19 +160,32 @@ class NativeServerManager:
 
     async def async_start(self) -> None:
         """Start on HA's loop; enter and exit lifespan from one supervisor task."""
-        await self.hass.async_add_executor_job(_prewarm)
+        self.skill_available = await self.hass.async_add_executor_job(_prewarm)
         from ha_mcp._vendor.fastmcp import FastMCP
         from ha_mcp._vendor.mcp.server.request_state import RequestStateSecurity
         from ha_mcp.runtime import Engine
         from ha_mcp.runtime.catalog import build_initial_catalog
+        from ha_mcp.runtime.best_practices import AcknowledgmentState
+        from ha_mcp.runtime.skills import SkillGuideReader
 
+        from .native_approvals import NativeApprovalGate, approval_context_middleware
         from .native_backend import NativeBackend
+        from .native_settings import NativeSettings
 
-        self.backend = NativeBackend(self.hass)
-        self.engine = Engine(self.backend, tools=build_initial_catalog(self.backend))
+        self.acknowledgment = AcknowledgmentState()
+        self.backend = NativeBackend(self.hass, service_policy=self.service_policy,
+                                     skill_guide_reader=SkillGuideReader(ack_line=self.skill_ack_line),
+                                     skill_content_enabled=lambda: self.policy.flag("enable_mandatory_bps"))
+        self.settings_ui = NativeSettings(self)
+        self.approval_gate = NativeApprovalGate(self)
+        self.engine = Engine(
+            self.backend,
+            tools=build_initial_catalog(self.backend),
+            policy_guard=self.approval_gate,
+        )
         self.mcp = FastMCP(
             name="Home Assistant MCP",
-            instructions="Use Home Assistant tools with the caller's permissions. Preserve errors and uncertain operation outcomes; do not retry an uncertain write automatically.",
+            instructions=_INSTRUCTIONS,
             request_state_security=RequestStateSecurity(
                 keys=[secrets.token_bytes(32)],
                 ttl=300,
@@ -174,6 +201,7 @@ class NativeServerManager:
 
         register_import_tools(self)
         self.mcp.add_middleware(catalogue_middleware(self))
+        self.mcp.add_middleware(approval_context_middleware())
         await self.refresh_policy()
         self.app = self.mcp.http_app(
             path=self.path, stateless_http=True, host_origin_protection=False
@@ -187,6 +215,7 @@ class NativeServerManager:
             if self._startup_error is not None:
                 raise self._startup_error
             self.accepting = True
+            self.approval_gate.start_decisions()
             self.entry.async_on_unload(
                 self.hass.async_add_shutdown_job(HassJob(self.async_stop))
             )
@@ -215,7 +244,37 @@ class NativeServerManager:
         self.policy = policy
         self.engine.read_only = policy.read_only
         names = {*self.engine.tools, "ha_native_llm_tools", "ha_native_llm_call"}
-        self.engine.enabled_tools = {name for name in names if policy.enabled(name)}
+        self.engine.enabled_tools = {name for name in names if (
+            policy.tool_enabled(self.engine.tools[name]) if name in self.engine.tools else policy.enabled(name)
+        )}
+        self.mcp.instructions = _INSTRUCTIONS + ("\n\n" + policy.custom_instructions if policy.custom_instructions else "")
+
+    def service_policy(self, domain: str, service: str) -> None:
+        from ha_mcp.runtime.service_policy import check_service_policy
+
+        check_service_policy(
+            domain,
+            service,
+            enable_snapshot_actions=self.policy.flag("enable_snapshot_actions"),
+            backup_read_only=self.policy.flag("backup_read_only"),
+        )
+
+    def strict_best_practices(self) -> bool:
+        return self.skill_available and self.policy.flag("enable_mandatory_bps") and self.policy.flag("enable_strict_mandatory_bps")
+
+    def skill_ack_line(self) -> str | None:
+        return self.acknowledgment.line() if self.strict_best_practices() else None
+
+    def check_best_practices(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        from ha_mcp.runtime.best_practices import STRICT_BPS_GATED_TOOLS, STRICT_BPS_KEY_PARAM, required_acknowledgment_error
+        from ha_mcp.tool_api import ToolResult
+
+        if name not in STRICT_BPS_GATED_TOOLS:
+            return None
+        supplied = arguments.pop(STRICT_BPS_KEY_PARAM, None)
+        if self.strict_best_practices() and not self.acknowledgment.accepts(supplied):
+            return ToolResult(required_acknowledgment_error(name), is_error=True, status="not_started")
+        return None
 
     async def async_stop(self) -> None:
         """Cancellation of an unload caller never cancels owned cleanup."""
@@ -231,6 +290,13 @@ class NativeServerManager:
         self.accepting = False
         if self.engine is not None:
             await self.engine.stop()
+        if self.approval_gate is not None:
+            await self.approval_gate.stop()
+        if (
+            self.backend is not None
+            and (stop_backend := getattr(self.backend, "stop", None)) is not None
+        ):
+            await stop_backend()
         tasks = tuple(self._http_tasks)
         for task in tasks:
             task.cancel()
@@ -397,34 +463,3 @@ class NativeServerManager:
                 status=504,
                 text="Streaming MCP replies cannot be relayed through a cloudhook",
             )
-
-
-def native_panel_response(
-    manager: NativeServerManager, method: str, path: str
-) -> web.Response:
-    """The existing authenticated panel exposes native runtime status."""
-    if not manager.is_running:
-        return web.Response(status=503, text="The MCP server is not running")
-    if method != "GET":
-        return web.Response(status=405, text="Use the integration's Configure screen")
-    status: dict[str, Any] = {
-        "runtime": "native",
-        "running": True,
-        "tools": sorted(manager.engine.tools),
-        "active_requests": len(manager._http_tasks),
-    }
-    if path.startswith("api/"):
-        return web.json_response(status)
-    from html import escape
-
-    names = "".join(f"<li>{escape(name)}</li>" for name in status["tools"])
-    return web.Response(
-        content_type="text/html",
-        text=(
-            "<!doctype html><html><meta charset=utf-8><title>HA-MCP</title>"
-            "<body><h1>HA-MCP · Native runtime</h1>"
-            "<p>Running inside Home Assistant. Configure access and Assist exposure "
-            "in Settings → Devices &amp; services → HA-MCP → Configure.</p>"
-            f"<h2>Available tools</h2><ul>{names}</ul></body></html>"
-        ),
-    )

@@ -22,17 +22,9 @@ Three auth postures, chosen in the options flow:
   authorization server with a static client_id/secret, for MCP clients (Google
   Gemini Spark) that need a credential to paste rather than an HA sign-in.
 
-The forwarding handler mirrors ``mcp_proxy._handle_webhook`` exactly (hop-by-hop
-header stripping, the SSE streaming branch with anti-buffering headers, the
-content-type whitelist, ``Mcp-Session-Id`` propagation, and the 502/500 error
-mapping); the ``ha_auth`` bearer check + discovery documents mirror the add-on's
-``auth_native.py`` + the ``ha_auth`` subset of ``oauth.py``; the ``legacy``
-provider + its root ``/authorize`` + ``/token`` views live in
-:mod:`oauth_legacy`, ported from the ``legacy`` subset of the add-on's
-``oauth.py``. The six RFC 8414 / RFC 9728 discovery views below are shared by
-``ha_auth``, ``legacy``, and ``none`` (which serves a distinct auto-approve
-authorization-server document pointing at :mod:`oauth_autoapprove`'s endpoints)
-— see :func:`active_auth_mode`.
+The same discovery and authentication surface serves the native runtime and
+the explicitly selected legacy loopback relay. Native requests invoke the
+ASGI application directly on Home Assistant's event loop.
 """
 
 from __future__ import annotations

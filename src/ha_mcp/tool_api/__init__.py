@@ -73,6 +73,7 @@ class ToolDefinition:
     output_schema: dict[str, Any] | None = None
     validate: ArgumentValidator | None = field(default=None, repr=False, compare=False)
     tags: frozenset[str] = frozenset()
+    source_module: str | None = None
 
     @property
     def read_only(self) -> bool:

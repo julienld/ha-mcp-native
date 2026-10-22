@@ -61,9 +61,9 @@ TRANSPORT_METHODS = frozenset(
 )
 
 
-def _load_extractor() -> Any:
+def _load_script(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(
-        "native_inventory_tool_extractor", ROOT / "scripts" / "extract_tools.py"
+        f"native_inventory_{name}", ROOT / "scripts" / f"{name}.py"
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -128,7 +128,22 @@ def _module_scan(path: Path) -> dict[str, Any]:
                     "wire_literals": _wire_literals(node),
                 }
             )
-    return {"calls": calls, "wire_literals": _wire_literals(tree)}
+    operations = {
+        call.args[0].value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and "backend" in ast.unparse(call.func)
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    }
+    return {
+        "calls": calls,
+        "wire_literals": _wire_literals(tree),
+        "semantic_operations": sorted(operations),
+    }
 
 
 def _family(path: str) -> tuple[str, str, list[str]]:
@@ -362,13 +377,34 @@ def _core_seams() -> list[dict[str, Any]]:
 
 def build_inventory() -> dict[str, Any]:
     """Conservative module-level dependency candidates, never proof of porting."""
-    catalog = _load_extractor().extract_tools()
+    extractor = _load_script("extract_tools")
+    resolver = _load_script("extract_tools_shared").SharedToolExtractor(
+        extractor._import_source,
+        extractor._module_scope,
+        extractor._extract_tool_from_node,
+    )
+    catalog = extractor.extract_tools()
+    native_catalog = ast.parse(
+        (SOURCE / "runtime" / "catalog.py").read_text(encoding="utf-8")
+    )
+    declarations = {
+        call.args[2].value
+        for call in ast.walk(native_catalog)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "define_tool"
+        and len(call.args) >= 3
+        and isinstance(call.args[2], ast.Constant)
+    }
     tools = []
     module_cache: dict[str, dict[str, Any]] = {}
     for tool in sorted(catalog, key=lambda entry: entry["name"]):
         filename = tool["source_file"]
         if filename not in module_cache:
             module_cache[filename] = _module_scan(SOURCE / "tools" / filename)
+        method = resolver.resolve_function(SOURCE / "tools" / filename, tool["name"])
+        shared_source = getattr(method, "_source_path", SOURCE / "tools" / filename)
+        shared_scan = _module_scan(shared_source)
         family, risk, reasons = _family(filename)
         tools.append(
             {
@@ -380,6 +416,9 @@ def build_inventory() -> dict[str, Any]:
                 "migration_risk": risk,
                 "risk_reasons": reasons,
                 "native_status": "not_verified",
+                "native_catalog_declaration": tool["name"] in declarations,
+                "shared_source": shared_source.relative_to(ROOT).as_posix(),
+                "semantic_operation_candidates": shared_scan["semantic_operations"],
                 "evidence": [],
                 "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
                 "operation_candidates": module_cache[filename]["wire_literals"],
@@ -389,11 +428,15 @@ def build_inventory() -> dict[str, Any]:
     return {
         "format_version": 1,
         "baseline_revision": BASELINE,
+        "source_scope": "current working-tree AST; baseline_revision identifies the immutable preservation reference",
         "method": "AST module-level candidates; neither complete call graph nor effort estimate",
         "status_rule": "not_verified is the default; only matching implementation plus real Core evidence can establish parity",
         "counts": {
             "decorated_tools": len(tools),
             "beta_tagged_tools": sum(tool["beta"] for tool in tools),
+            "native_catalog_declarations": sum(
+                tool["native_catalog_declaration"] for tool in tools
+            ),
             "families": dict(sorted(Counter(tool["family"] for tool in tools).items())),
         },
         "tools": tools,
@@ -437,7 +480,21 @@ async def _capture_registered_tools() -> list[dict[str, Any]]:
     ]
 
 
-def capture_runtime() -> dict[str, Any]:
+async def _capture_server_extras() -> list[dict[str, Any]]:
+    from ha_mcp.server import HomeAssistantSmartMCPServer
+
+    server = HomeAssistantSmartMCPServer()
+    tool = await server.mcp.get_tool("ha_get_skill_guide")
+    contract = tool.to_mcp_tool().model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+    # Prose includes bundled frontmatter and a degraded-install notice. A source
+    # archive does not contain submodule assets, so it cannot pin that prose.
+    contract.pop("description", None)
+    return [contract]
+
+
+def capture_runtime(*, server_extras: bool = False) -> dict[str, Any]:
     """Use actual registration with feature flags, isolated settings and no HA I/O."""
     sys.path.insert(0, str(ROOT / "src"))
     from ha_mcp.config import FEATURE_FLAG_FIELDS, _reset_global_settings
@@ -460,11 +517,17 @@ def capture_runtime() -> dict[str, Any]:
             os.environ["HAMCP_ENABLE_DEV_MODE"] = "true"
             get_data_dir.cache_clear()
             _reset_global_settings()
-            tools = asyncio.run(_capture_registered_tools())
+            tools = asyncio.run(
+                _capture_server_extras()
+                if server_extras
+                else _capture_registered_tools()
+            )
             return {
                 "format_version": 1,
                 "baseline_revision": BASELINE,
-                "scope": "raw decorated registry, all boolean feature flags and dev mode; server transforms excluded",
+                "scope": "server-generated stable metadata, asset-dependent description excluded"
+                if server_extras
+                else "raw decorated registry, all boolean feature flags and dev mode; server transforms excluded",
                 "tools": tools,
             }
     finally:
@@ -490,8 +553,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--capture-runtime", action="store_true")
+    parser.add_argument("--capture-server-extras", action="store_true")
     args = parser.parse_args()
-    if args.capture_runtime:
+    if args.capture_server_extras:
+        result = _write_or_check(
+            OUTPUT / "catalog-extras-baseline.json",
+            capture_runtime(server_extras=True),
+            args.check,
+        )
+    elif args.capture_runtime:
         result = _write_or_check(
             OUTPUT / "catalog-baseline.json", capture_runtime(), args.check
         )

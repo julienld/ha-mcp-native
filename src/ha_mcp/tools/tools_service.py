@@ -14,7 +14,7 @@ from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantClient,
@@ -716,6 +716,27 @@ class ServiceTools(SharedServiceCallTools):
     def __init__(self, client: HomeAssistantClient, device_tools: Any) -> None:
         self._client = client
         self._device_tools = device_tools
+
+    _parse_service_data = staticmethod(
+        legacy_errors_sync(SharedServiceCallTools._parse_service_data)
+    )
+    _validate_service_call_params = staticmethod(
+        legacy_errors_sync(SharedServiceCallTools._validate_service_call_params)
+    )
+    _reject_incompatible_ws_params = staticmethod(
+        legacy_errors_sync(SharedServiceCallTools._reject_incompatible_ws_params)
+    )
+    _parse_result_projection_params = staticmethod(
+        legacy_errors_sync(SharedServiceCallTools._parse_result_projection_params)
+    )
+    _raise_for_missing_or_unavailable_target = staticmethod(
+        legacy_errors_sync(
+            SharedServiceCallTools._raise_for_missing_or_unavailable_target
+        )
+    )
+    _build_component_call_response = legacy_errors_sync(
+        SharedServiceCallTools._build_component_call_response
+    )
 
     async def _validate_entity_before_wait(self, entity_id: str | None) -> str | None:
         """Fetch entity_id's pre-call state, failing fast on a settled bad target.

@@ -373,7 +373,9 @@ def _build_visibility_handlers(*, data_dir: Path) -> dict[str, Any]:
     }
 
 
-def _render_settings_html(request: Request | None = None) -> str:
+def _render_settings_html(
+    request: Request | None = None, *, theme_prefs: dict[str, str] | None = None
+) -> str:
     """Substitute theme preferences and the request-selected locale.
 
     The ``server-prefs`` head script carries a ``data-prefs`` attribute
@@ -388,7 +390,11 @@ def _render_settings_html(request: Request | None = None) -> str:
     then English. Only the selected merged catalog is embedded in the page.
     """
     theme_payload = html.escape(
-        json.dumps(_load_theme_prefs(), separators=(",", ":")), quote=True
+        json.dumps(
+            _load_theme_prefs() if theme_prefs is None else theme_prefs,
+            separators=(",", ":"),
+        ),
+        quote=True,
     )
     locale = select_locale(
         cookie_locale=request.cookies.get(LOCALE_COOKIE) if request else None,

@@ -24,6 +24,10 @@ class RemoteBackend:
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
         await self.authorize(context)
+        if operation in {"skills.guide", "skills.files"}:
+            from .remote_skill_ops import execute_skill_operation
+
+            return await execute_skill_operation(operation, arguments)
         if operation == "instance.timezone":
             from ha_mcp.tools.response_helpers import fetch_ha_timezone
 
@@ -51,6 +55,10 @@ class RemoteBackend:
 
         if operation in SERVICE_OPERATIONS:
             return await execute_service_operation(self.client, operation, arguments)
+        from .remote_helper_ops import HELPER_OPERATIONS, execute_helper_operation
+
+        if operation in HELPER_OPERATIONS:
+            return await execute_helper_operation(self.client, operation, arguments)
         raise UnsupportedOperation(operation)
 
     async def _states(self, entity_ids: list[str]) -> dict[str, Any]:

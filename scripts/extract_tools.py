@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import copy
 import importlib.util
 import json
 import re
@@ -717,91 +716,17 @@ def _extract_tool_from_node(
     }
 
 
-def _shared_method(
-    path: Path,
-    class_name: str,
-    method_name: str,
-    seen: set[tuple[Path, str, str]],
-) -> tuple[ast.AsyncFunctionDef, ModuleScope] | None:
-    """Resolve a project-owned method through imports and ordinary inheritance.
-
-    Only read AST inside ``PACKAGE_ROOT``. No class, decorator or source module
-    is executed, including when an import cycle or an unsupported base appears.
-    """
-    identity = (path, class_name, method_name)
-    if identity in seen:
-        return None
-    seen.add(identity)
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            return _class_method(path, node, method_name, seen)
-    return _imported_method(path, tree, class_name, method_name, seen)
-
-
-def _class_method(
-    path: Path,
-    owner: ast.ClassDef,
-    method_name: str,
-    seen: set[tuple[Path, str, str]],
-) -> tuple[ast.AsyncFunctionDef, ModuleScope] | None:
-    for member in owner.body:
-        if isinstance(member, ast.AsyncFunctionDef) and member.name == method_name:
-            return member, _module_scope(path)
-    for base in owner.bases:
-        if isinstance(base, ast.Name):
-            resolved = _shared_method(path, base.id, method_name, seen)
-            if resolved is not None:
-                return resolved
-    return None
-
-
-def _imported_method(
-    path: Path,
-    tree: ast.Module,
-    class_name: str,
-    method_name: str,
-    seen: set[tuple[Path, str, str]],
-) -> tuple[ast.AsyncFunctionDef, ModuleScope] | None:
-    for node in tree.body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        source = _import_source(path, node)
-        if source is None:
-            continue
-        for alias in node.names:
-            if (alias.asname or alias.name) == class_name:
-                return _shared_method(source, alias.name, method_name, seen)
-    return None
-
-
-def _extract_shared_tool(node: ast.Assign, path: Path) -> dict | None:
-    """Read ``method = tool(...)(wrapper(SharedOwner.method))`` registrations."""
-    value = node.value
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Call):
-        return None
-    decorator = value.func
-    if not isinstance(decorator.func, ast.Name) or decorator.func.id != "tool":
-        return None
-    for reference in ast.walk(value):
-        if not isinstance(reference, ast.Attribute) or not isinstance(
-            reference.value, ast.Name
-        ):
-            continue
-        resolved = _shared_method(path, reference.value.id, reference.attr, set())
-        if resolved is None:
-            continue
-        method, scope = resolved
-        method = copy.deepcopy(method)
-        method.decorator_list = [decorator]
-        return _extract_tool_from_node(method, path.name, scope)
-    raise ValueError(
-        f"Cannot resolve shared tool registration in {path.name}:{node.lineno}"
-    )
-
-
 def extract_tools() -> list[dict]:
     """Extract all tool metadata from source files via AST parsing."""
+    spec = importlib.util.spec_from_file_location(
+        "extract_tools_shared", Path(__file__).with_name("extract_tools_shared.py")
+    )
+    assert spec is not None and spec.loader is not None
+    shared_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shared_module)
+    shared = shared_module.SharedToolExtractor(
+        _import_source, _module_scope, _extract_tool_from_node
+    )
     tools = []
 
     for f in TOOL_FILES:
@@ -814,7 +739,7 @@ def extract_tools() -> list[dict]:
             if isinstance(node, ast.AsyncFunctionDef):
                 tool = _extract_tool_from_node(node, f.name, scope)
             elif isinstance(node, ast.Assign):
-                tool = _extract_shared_tool(node, f)
+                tool = shared.extract(node, f)
             else:
                 continue
             if tool is not None:

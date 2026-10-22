@@ -8,19 +8,29 @@ via the Home Assistant entity registry API.
 import asyncio
 import logging
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NoReturn
 
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
+from ..runtime.entities import EntityDiscoveryTools
+from ..runtime.entity_records import _format_fetched_entity as _format_fetched_entity
+from ..runtime.entity_records import (
+    _match_registry_by_unique_id as _match_registry_by_unique_id,
+)
+from ..runtime.entity_records import (
+    _merge_entity_enrichment as _merge_entity_enrichment,
+)
+from ..runtime.entity_records import _parse_get_entity_ids as _parse_get_entity_ids
 from ..utils.registry_update_lock import registry_update_lock
 from .auto_backup import with_auto_backup
 from .coercion import JSON_STRING_COERCION
@@ -45,7 +55,6 @@ from .entity_update_fields import (
     build_state_tag_fields,
     ensure_use_device_name_allowed,
     reject_name_with_use_device_name,
-    uses_device_name,
 )
 from .helpers import (
     WHITESPACE_CLEARS_NOTE,
@@ -80,36 +89,6 @@ _CLEAR_DEVICE_NAME_HINT = (
     "new_device_name cannot clear the device name; use ha_set_device(name='') "
     "instead, or name=' ' if your client cannot send an empty string"
 )
-
-
-def _format_fetched_entity(entry: dict[str, Any]) -> dict[str, Any]:
-    """Project a raw HA entity-registry extended dict into ha_get_entity's shape.
-
-    Shared by the single-entity get, the bulk get_entries backend, and the
-    unique_id resolver so every ha_get_entity response carries the same keys.
-    """
-    return {
-        "entity_id": entry.get("entity_id"),
-        "name": entry.get("name"),
-        "uses_device_name": uses_device_name(entry),
-        "original_name": entry.get("original_name"),
-        "icon": entry.get("icon"),
-        "area_id": entry.get("area_id"),
-        "disabled_by": entry.get("disabled_by"),
-        "hidden_by": entry.get("hidden_by"),
-        "enabled": entry.get("disabled_by") is None,
-        "hidden": entry.get("hidden_by") is not None,
-        "aliases": entry.get("aliases", []),
-        "labels": entry.get("labels", []),
-        "categories": entry.get("categories", {}),
-        "device_class": entry.get("device_class"),
-        "original_device_class": entry.get("original_device_class"),
-        "options": entry.get("options", {}),
-        "platform": entry.get("platform"),
-        "device_id": entry.get("device_id"),
-        "config_entry_id": entry.get("config_entry_id"),
-        "unique_id": entry.get("unique_id"),
-    }
 
 
 async def fetch_entity_enrichment_via_component(
@@ -182,50 +161,6 @@ async def fetch_entity_enrichment_via_component(
     return merged
 
 
-def _merge_entity_enrichment(
-    record: dict[str, Any], enrichment: dict[str, Any] | None
-) -> None:
-    """Additively attach resolved area/floor/label NAMES to an entity record.
-
-    The base record already carries ``area_id`` and label *ids* (``labels``); the
-    component join adds the resolved, device-inherited NAMES under non-clobbering
-    keys — ``area`` / ``floor`` / ``label_names`` — so nothing existing is
-    overwritten. ``aliases`` is already on the base record (same set — the
-    component sorts, so ordering may differ — and the base value is authoritative),
-    so it is not re-added. A ``None`` / empty enrichment is a no-op: on a capability
-    miss the fields are simply absent, leaving the legacy response shape unchanged.
-    """
-    if not enrichment:
-        return
-    record["area"] = enrichment.get("area")
-    record["floor"] = enrichment.get("floor")
-    record["label_names"] = enrichment.get("labels") or []
-
-
-def _match_registry_by_unique_id(
-    entries: list[dict[str, Any]],
-    unique_id: str,
-    domain: str | None,
-    platform: str | None,
-) -> list[dict[str, Any]]:
-    """Return formatted registry entries matching unique_id (+ optional filters).
-
-    ``domain`` is compared against the entity_id prefix (the registry's unique
-    key uses the entity domain); ``platform`` against the entry's platform.
-    """
-    matches: list[dict[str, Any]] = []
-    for entry in entries:
-        if entry.get("unique_id") != unique_id:
-            continue
-        entry_domain = (entry.get("entity_id") or "").split(".")[0]
-        if domain is not None and entry_domain != domain:
-            continue
-        if platform is not None and entry.get("platform") != platform:
-            continue
-        matches.append(_format_fetched_entity(entry))
-    return matches
-
-
 def _format_entity_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Format entity registry entry for API response."""
     return {
@@ -294,40 +229,6 @@ def _parse_set_entity_ids(
         )
 
 
-def _parse_get_entity_ids(
-    entity_id: str | list[str],
-) -> tuple[list[str], bool, dict[str, Any] | None]:
-    """Parse entity_id into (entity_ids, is_bulk, early_response). early_response is non-None for empty list."""
-    if isinstance(entity_id, str):
-        return [entity_id], False, None
-    if not isinstance(entity_id, list):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"entity_id must be string or list of strings, got {type(entity_id).__name__}",
-            )
-        )
-    if not entity_id:
-        return (
-            [],
-            False,
-            {
-                "success": True,
-                "entity_entries": [],
-                "count": 0,
-                "message": "No entities requested",
-            },
-        )
-    if not all(isinstance(e, str) for e in entity_id):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                "All entity_id values must be strings",
-            )
-        )
-    return entity_id, True, None
-
-
 def _validate_enabled_constraint(
     enabled: bool | None,
     entity_ids: list[str],
@@ -390,7 +291,7 @@ def _validate_enabled_constraint(
             )
 
 
-class EntityTools:
+class EntityTools(EntityDiscoveryTools):
     """Entity registry tools: get, update, and remove entities."""
 
     def __init__(self, client: Any) -> None:
@@ -1380,77 +1281,6 @@ class EntityTools:
                 errors[eid] = msg
         return raw, errors
 
-    async def _resolve_by_unique_id(
-        self,
-        unique_id: str,
-        domain: str | None,
-        platform: str | None,
-    ) -> dict[str, Any]:
-        """Resolve a stable unique_id to its entity_id(s) via one registry list.
-
-        The registry's unique key is (domain, platform, unique_id), so the same
-        unique_id can appear under multiple platforms — every match is returned
-        with a ``matches`` count so callers can disambiguate. ``domain`` /
-        ``platform`` narrow the match set when provided.
-        """
-        list_resp = await self._client.send_websocket_message(
-            {"type": "config/entity_registry/list"}
-        )
-        if not list_resp.get("success"):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.SERVICE_CALL_FAILED,
-                    f"Failed to list entity registry: {_extract_ws_error(list_resp)}",
-                    context={"unique_id": unique_id},
-                    suggestions=["Check Home Assistant connection and retry"],
-                )
-            )
-
-        matches = _match_registry_by_unique_id(
-            list_resp.get("result") or [], unique_id, domain, platform
-        )
-
-        if not matches:
-            filters = {"unique_id": unique_id}
-            if domain is not None:
-                filters["domain"] = domain
-            if platform is not None:
-                filters["platform"] = platform
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.ENTITY_NOT_FOUND,
-                    f"No entity found with unique_id '{unique_id}'"
-                    + (
-                        f" (domain={domain}, platform={platform})"
-                        if domain is not None or platform is not None
-                        else ""
-                    ),
-                    context=filters,
-                    suggestions=[
-                        "unique_id must match exactly — it is the integration's "
-                        + "internal id, not the entity_id",
-                        "Drop the domain/platform filters if you set them",
-                        "Use ha_search() to browse entities and their platforms",
-                    ],
-                )
-            )
-
-        # config/entity_registry/list carries as_partial_dict, which omits
-        # aliases and the device_class override — those come back as their
-        # defaults ([] / None) in resolver mode. Callers needing them can
-        # re-query ha_get_entity(entity_id=...) with a resolved id.
-        response: dict[str, Any] = {
-            "success": True,
-            "unique_id": unique_id,
-            "matches": len(matches),
-            "entity_entries": matches,
-        }
-        if domain is not None:
-            response["domain"] = domain
-        if platform is not None:
-            response["platform"] = platform
-        return response
-
     @tool(
         name="ha_set_entity",
         tags={"Entity Registry"},
@@ -1812,223 +1642,37 @@ class EntityTools:
             exception_to_structured_error(e, context={"entity_id": entity_id})
             return None  # unreachable: exception_to_structured_error always raises
 
-    @tool(
+    ha_get_entity = tool(
         name="ha_get_entity",
         tags={"Entity Registry"},
         annotations=read_only_hints("Get Entity", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_entity(
-        self,
-        entity_id: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description="Entity ID or list of entity IDs to retrieve (e.g., 'sensor.temperature' or ['light.living_room', 'switch.porch']).",
-                default=None,
-            ),
-        ] = None,
-        unique_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Stable integration unique_id (entity_id is mutable, "
-                    "unique_id is not). Mutually exclusive with entity_id."
-                ),
-                default=None,
-            ),
-        ] = None,
-        domain: Annotated[
-            str | None,
-            Field(
-                description="Resolver filter (unique_id mode only): restrict matches to this entity domain, e.g. 'sensor'.",
-                default=None,
-            ),
-        ] = None,
-        platform: Annotated[
-            str | None,
-            Field(
-                description="Resolver filter (unique_id mode only): restrict matches to this integration platform, e.g. 'hue'.",
-                default=None,
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """Get entity registry information for one or more entities.
+    )(log_tool_usage(legacy_errors(EntityDiscoveryTools.ha_get_entity)))
 
-        Returns detailed entity registry metadata: area, custom name/icon,
-        original name, disabled_by/hidden_by (with enabled/hidden shorthands),
-        aliases (a null entry = the entity's own name), labels, categories,
-        device_class override, per-domain options, platform, device_id,
-        config_entry_id and unique_id.
+    def _raise_entity_error(self, error: Exception, entity_id: Any) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        exception_to_structured_error(error, context={"entity_id": entity_id})
 
-        RESOLVER MODE:
-        Pass unique_id (instead of entity_id) to resolve a stable integration
-        unique_id to its entity_id(s). Since the registry's unique key is
-        (domain, platform, unique_id), the same unique_id can match multiple
-        platforms — all matches are returned in entity_entries with a `matches`
-        count. Narrow with domain/platform. Resolver reads as_partial_dict, so
-        aliases and the device_class override come back as defaults ([]/null).
+    async def _fetch_enrichment(
+        self, entity_ids: list[str]
+    ) -> dict[str, dict[str, Any]] | None:
+        return await fetch_entity_enrichment_via_component(self._client, entity_ids)
 
-        When config_entry_id is non-null — e.g. for UI-created template / group /
-        utility_meter / derivative helpers — pass it to
-        ``ha_get_integration(entry_id=..., include_options=True)`` to read the
-        helper's current config (template body, group members, etc.) without
-        scanning a domain list. Voice-assistant exposure is stored under options
-        but is set via ha_set_entity(expose_to=...).
-
-        Resolved-name enrichment (present only when the ha_mcp_tools component
-        advertises it; otherwise these keys are absent): `area` (assigned area
-        NAME, device-inherited when the entity has none), `floor`, and
-        `label_names`. This tool's base `labels` carries the label ids;
-        ha_search result_fields and ha_get_entity_exposure instead emit the
-        resolved names under `labels`.
-
-        RELATED TOOLS: ha_set_entity() to modify these properties; ha_get_state()
-        for current state/attributes; ha_search() to find entities.
-
-        EXAMPLES:
-        - Single entity: ha_get_entity("sensor.temperature")
-        - Multiple entities: ha_get_entity(["light.living_room", "switch.porch"])
-        - Resolve a unique_id: ha_get_entity(unique_id="00:11:22:33", domain="sensor")
-        """
-        try:
-            # Resolver mode (unique_id) is mutually exclusive with entity_id.
-            if unique_id is not None:
-                if entity_id is not None:
-                    raise_tool_error(
-                        create_error_response(
-                            ErrorCode.VALIDATION_INVALID_PARAMETER,
-                            "Provide exactly one of entity_id or unique_id, not both.",
-                            suggestions=[
-                                "Pass unique_id alone to resolve it to entity_id(s)",
-                                "Pass entity_id alone to look an entity up directly",
-                            ],
-                        )
-                    )
-                logger.info(f"Resolving unique_id '{unique_id}' to entity_id(s)")
-                return await self._resolve_by_unique_id(unique_id, domain, platform)
-
-            if entity_id is None:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_MISSING_PARAMETER,
-                        "Provide entity_id (an id or list) or unique_id.",
-                        suggestions=[
-                            "ha_get_entity('sensor.temperature')",
-                            "ha_get_entity(unique_id='abc123') to resolve a unique_id",
-                        ],
-                    )
-                )
-            # domain/platform are resolver-only filters (unique_id is None here).
-            if domain is not None or platform is not None:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        "domain/platform are resolver filters — they only apply "
-                        "when unique_id is provided.",
-                        suggestions=[
-                            "Drop domain/platform, or pass unique_id to use them",
-                        ],
-                    )
-                )
-
-            return await self._get_by_entity_id(entity_id)
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting entity: {e}")
-            exception_to_structured_error(
-                e,
-                context={"entity_id": entity_id},
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-
-    async def _get_single_entity(self, eid: str) -> dict[str, Any]:
-        """Look up one entity registry entry, with additive enrichment."""
-        logger.info(f"Getting entity registry entry for {eid}")
-        try:
-            result = await self._fetch_entity(eid)
-        except ValueError as e:
+    async def _list_entity_registry(self, unique_id: str) -> list[dict[str, Any]]:
+        list_resp = await self._client.send_websocket_message(
+            {"type": "config/entity_registry/list"}
+        )
+        if not list_resp.get("success"):
             raise_tool_error(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
-                    f"Entity not found: {e}",
-                    context={"entity_id": eid},
-                    suggestions=[
-                        "Use ha_search() to find valid entity IDs",
-                        "Check the entity_id spelling and format (e.g., 'sensor.temperature')",
-                    ],
+                    f"Failed to list entity registry: {_extract_ws_error(list_resp)}",
+                    context={"unique_id": unique_id},
+                    suggestions=["Check Home Assistant connection and retry"],
                 )
             )
-        # Additive area/floor/label-name enrichment via the component when it
-        # advertises entity_enrich; a capability miss leaves the fields off
-        # (legacy shape unchanged).
-        enriched = await fetch_entity_enrichment_via_component(self._client, [eid])
-        if enriched is not None:
-            _merge_entity_enrichment(result, enriched.get(eid))
-        return {
-            "success": True,
-            "entity_id": eid,
-            "entity_entry": result,
-        }
-
-    async def _get_by_entity_id(self, entity_id: str | list[str]) -> dict[str, Any]:
-        """Look up entities by entity_id (single or bulk list)."""
-        entity_ids, is_bulk, early_response = _parse_get_entity_ids(entity_id)
-        if early_response is not None:
-            return early_response
-
-        if not is_bulk:
-            return await self._get_single_entity(entity_ids[0])
-
-        # Bulk case - fetch all entities in one chunked get_entries call
-        # (native HA bulk command) instead of one registry get per id.
-        logger.info(f"Getting entity registry entries for {len(entity_ids)} entities")
-        raw_map, error_map = await self._get_entries_raw(entity_ids)
-
-        # Iterate the requested ids (not the map) to preserve request order and
-        # duplicate handling; each id is classified found/error exactly as the
-        # old per-id fan-out did.
-        entity_entries: list[dict[str, Any]] = []
-        errors: list[dict[str, Any]] = []
-        for eid in entity_ids:
-            raw = raw_map.get(eid)
-            if raw is not None:
-                entity_entries.append(_format_fetched_entity(raw))
-            else:
-                errors.append(
-                    {
-                        "entity_id": eid,
-                        "error": error_map.get(eid, "Entity not found"),
-                    }
-                )
-
-        # Additive area/floor/label-name enrichment for the found entities via the
-        # component's entity_enrich capability; missing ⇒ fields simply absent.
-        found_ids: list[str] = [
-            e["entity_id"]
-            for e in entity_entries
-            if isinstance(e.get("entity_id"), str)
-        ]
-        enriched = await fetch_entity_enrichment_via_component(self._client, found_ids)
-        if enriched is not None:
-            for entry in entity_entries:
-                entry_id = entry.get("entity_id")
-                if isinstance(entry_id, str):
-                    _merge_entity_enrichment(entry, enriched.get(entry_id))
-
-        response: dict[str, Any] = {
-            "success": True,
-            "count": len(entity_entries),
-            "entity_entries": entity_entries,
-        }
-        if errors:
-            response["errors"] = errors
-            response["suggestions"] = [
-                "Use ha_search() to find valid entity IDs for failed lookups"
-            ]
-        return response
+        rows: list[dict[str, Any]] = list_resp.get("result") or []
+        return rows
 
     async def _bulk_remove_entities(self, entity_ids: list[str]) -> dict[str, Any]:
         """Remove many entities sequentially, classifying each outcome.

@@ -135,7 +135,11 @@ async def call_imported(
         )
 
     return await manager.engine.call_owned(
-        "ha_native_llm_call", invoke, actor, writes=writes
+        "ha_native_llm_call",
+        invoke,
+        actor,
+        writes=writes,
+        arguments={"name": qualified_name, "arguments": arguments},
     )
 
 

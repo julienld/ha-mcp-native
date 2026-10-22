@@ -6,6 +6,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from ..errors import ErrorCode, create_error_response
+from ..runtime.entity_records import uses_device_name as uses_device_name
 from .helpers import clearable_value, raise_tool_error
 
 # Home Assistant release that reads an empty entity-name override as "use the
@@ -30,11 +31,6 @@ def reject_name_with_use_device_name(
                 ],
             )
         )
-
-
-def uses_device_name(entry: dict[str, Any]) -> bool:
-    """An empty name override follows the device name; without a device there is nothing to follow."""
-    return entry.get("name") == "" and bool(entry.get("device_id"))
 
 
 def reject_use_device_name_without_device(

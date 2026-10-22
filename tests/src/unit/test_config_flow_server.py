@@ -20,6 +20,14 @@ class TestServerBranch:
 
     OWNER = "selected-owner"
 
+    def _flow(self):
+        flow = _make_flow()
+        flow.hass.auth.async_get_users = AsyncMock(return_value=[SimpleNamespace(
+            id=self.OWNER, name="Selected owner", is_active=True,
+            is_admin=True, system_generated=False,
+        )])
+        return flow
+
     def _defaults(self, form) -> dict:
         return {
             cf.SETUP_REMOTE_ACCESS: cf.REMOTE_ACCESS_DISABLED,
@@ -27,7 +35,7 @@ class TestServerBranch:
         }
 
     def test_server_step_shows_owner_and_remote_access(self):
-        flow = _make_flow()
+        flow = self._flow()
         form = asyncio.run(flow.async_step_server(None))
         assert form["type"] == "form"
         fields = {marker.schema for marker in form["data_schema"].schema}
@@ -36,7 +44,7 @@ class TestServerBranch:
         assert const.OPT_BIND_HOST not in fields
 
     def test_new_install_defaults_to_assist_only_native_runtime(self):
-        flow = _make_flow()
+        flow = self._flow()
         form = asyncio.run(flow.async_step_server(None))
         entry = asyncio.run(flow.async_step_server(self._defaults(form)))
         assert entry["type"] == "entry"
@@ -48,54 +56,66 @@ class TestServerBranch:
         flow.hass.auth.async_create_access_token.assert_not_called()
 
     @pytest.mark.parametrize(
-        "mode", [const.WEBHOOK_AUTH_NONE, const.WEBHOOK_AUTH_HA, const.WEBHOOK_AUTH_LEGACY]
+        "mode",
+        [const.WEBHOOK_AUTH_NONE, const.WEBHOOK_AUTH_HA, const.WEBHOOK_AUTH_LEGACY],
     )
     def test_choosing_remote_access_preserves_auth_modes(self, mode):
-        flow = _make_flow()
-        entry = asyncio.run(flow.async_step_server({
-            cf.SETUP_REMOTE_ACCESS: mode, const.DATA_NATIVE_OWNER_ID: self.OWNER,
-        }))
+        flow = self._flow()
+        entry = asyncio.run(
+            flow.async_step_server(
+                {
+                    cf.SETUP_REMOTE_ACCESS: mode,
+                    const.DATA_NATIVE_OWNER_ID: self.OWNER,
+                }
+            )
+        )
         assert entry["options"][const.OPT_ENABLE_WEBHOOK] is True
         assert entry["options"][const.OPT_WEBHOOK_AUTH] == mode
 
     def test_disabled_remote_access_keeps_ha_sign_in_for_later_enable(self):
-        flow = _make_flow()
+        flow = self._flow()
         entry = asyncio.run(flow.async_step_server(self._defaults(None)))
         assert entry["options"][const.OPT_WEBHOOK_AUTH] == const.WEBHOOK_AUTH_HA
 
     def test_previous_token_setup_payload_resolves_owner_without_retaining_token(self):
-        flow = _make_flow()
+        flow = self._flow()
         flow.hass.auth.async_validate_access_token.return_value = SimpleNamespace(
             user=SimpleNamespace(id=self.OWNER)
         )
-        entry = asyncio.run(flow.async_step_server({cf.SETUP_ADMIN_TOKEN: "old-payload-token"}))
+        entry = asyncio.run(
+            flow.async_step_server({cf.SETUP_ADMIN_TOKEN: "old-payload-token"})
+        )
         assert entry["data"][const.DATA_NATIVE_OWNER_ID] == self.OWNER
         assert const.DATA_ADMIN_TOKEN not in entry["data"]
         flow.hass.auth.async_create_access_token.assert_not_called()
 
     def test_expired_token_setup_payload_does_not_select_an_owner(self):
-        flow = _make_flow()
+        flow = self._flow()
         flow.hass.auth.async_validate_access_token.return_value = None
         result = asyncio.run(flow.async_step_server({cf.SETUP_ADMIN_TOKEN: "expired"}))
         assert result["type"] == "form"
 
     @pytest.mark.parametrize("owner", ["", "missing"])
     def test_unselected_owner_keeps_form_open(self, owner):
-        flow = _make_flow()
-        result = asyncio.run(flow.async_step_server({const.DATA_NATIVE_OWNER_ID: owner}))
+        flow = self._flow()
+        result = asyncio.run(
+            flow.async_step_server({const.DATA_NATIVE_OWNER_ID: owner})
+        )
         assert result["type"] == "form"
         assert result["errors"] == {const.DATA_NATIVE_OWNER_ID: "token_not_admin"}
 
-    @pytest.mark.parametrize("restriction", ["is_admin", "is_active", "system_generated"])
+    @pytest.mark.parametrize(
+        "restriction", ["is_admin", "is_active", "system_generated"]
+    )
     def test_owner_must_be_a_live_human_administrator(self, restriction):
-        flow = _make_flow()
+        flow = self._flow()
         user = flow.hass.auth.async_get_users.return_value[0]
         setattr(user, restriction, restriction == "system_generated")
         result = asyncio.run(flow.async_step_server(self._defaults(None)))
         assert result["type"] == "form"
 
     def test_an_abandoned_setup_does_not_block_a_new_one(self):
-        flow = _make_flow()
+        flow = self._flow()
 
         async def claim(unique_id, *, raise_on_progress=True):
             if raise_on_progress:
@@ -108,21 +128,21 @@ class TestServerBranch:
         class AlreadyConfigured(Exception):
             pass
 
-        flow = _make_flow()
+        flow = self._flow()
         flow._abort_if_unique_id_configured.side_effect = AlreadyConfigured
         with pytest.raises(AlreadyConfigured):
             asyncio.run(flow.async_step_server(self._defaults(None)))
         flow.async_create_entry.assert_not_called()
 
     def test_server_preserves_the_existing_unique_id(self):
-        flow = _make_flow()
+        flow = self._flow()
         asyncio.run(flow.async_step_server(None))
         assert flow.async_set_unique_id.await_args.args == (cf._SERVER_UNIQUE_ID,)
         assert cf._SERVER_UNIQUE_ID != const.DOMAIN
 
     def test_server_aborts_on_unsupported_home_assistant(self, monkeypatch):
         monkeypatch.setattr(cf, "HA_VERSION", "2025.9.4")
-        flow = _make_flow()
+        flow = self._flow()
         result = asyncio.run(flow.async_step_server(None))
         assert result["reason"] == "unsupported_home_assistant"
         flow.async_set_unique_id.assert_not_awaited()

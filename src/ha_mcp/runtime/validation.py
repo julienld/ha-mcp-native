@@ -1,5 +1,6 @@
 """Transport-neutral policies shared by existing and native tool facades."""
 
+import re
 from typing import Any
 
 from ha_mcp.errors import ErrorCode, create_error_response
@@ -89,3 +90,53 @@ def validate_identifier_not_empty(
             context=final_context,
         )
     )
+
+
+WHITESPACE_CLEARS_NOTE = (
+    "A whitespace-only value acts like '', for clients that cannot send an "
+    "empty string."
+)
+
+
+_QUOTE_ONLY = re.compile(r"[\s\"'‘’“”]+")
+
+
+def clear_hint(param_name: str) -> str:
+    return (
+        f"To clear {param_name}, pass an empty string '', or a single space ' ' "
+        "if your client cannot send an empty string"
+    )
+
+
+def clearable_value(
+    value: str | None,
+    param_name: str,
+    *,
+    hint: str | None = None,
+) -> str | None:
+    """Map an empty or whitespace-only value to None, the registry's clear value.
+
+    Other values are returned stripped. A model whose client cannot send ``''``
+    falls back to ``'""'`` (#2585); a value made only of quotes and whitespace
+    is never a real value, so reject it.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if _QUOTE_ONLY.fullmatch(value):
+        raise_failure(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"{param_name} {value!r} contains only quote characters and whitespace",
+                suggestions=[hint or clear_hint(param_name)],
+                context={"parameter": param_name, "value": value},
+            )
+        )
+    return value
+
+
+def clear_or_keep(value: str | None, param_name: str) -> str | None:
+    """``clearable_value`` for params where None means "not passed": blank → ''."""
+    return None if value is None else clearable_value(value, param_name) or ""

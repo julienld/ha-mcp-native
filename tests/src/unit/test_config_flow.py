@@ -144,10 +144,6 @@ def _make_flow() -> cf.HaMcpToolsConfigFlow:
     """Build a flow with the HA framework methods stubbed to return markers."""
     flow = cf.HaMcpToolsConfigFlow()
     flow.hass = MagicMock(name="hass")
-    flow.hass.auth.async_get_users = AsyncMock(return_value=[SimpleNamespace(
-        id="selected-owner", name="Selected owner", is_active=True,
-        is_admin=True, system_generated=False,
-    )])
     flow.async_set_unique_id = AsyncMock(return_value=None)
     flow._abort_if_unique_id_configured = MagicMock(return_value=None)
     flow.async_show_menu = MagicMock(side_effect=lambda **kw: {"type": "menu", **kw})
@@ -604,12 +600,7 @@ class TestServerOptionsFlow:
         assert markers[0].schema == const.OPT_WEBHOOK_AUTH
 
     def test_form_prefills_every_field_from_saved_options(self):
-        # Review gap: the form must show the user's SAVED values, not the
-        # defaults, for every field (a regression here silently reverts a
-        # user's config on the next save). Dropdowns/toggles pre-fill via the
-        # schema default; the optional text fields pre-fill via suggested_value
-        # (a default there would make them impossible to clear — see
-        # test_clearing_an_override_field_sticks).
+        # A reopened form must preserve saved values on its next submission.
         saved = {
             const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY,
             const.OPT_NATIVE_IMPORT_APIS: ["assist"],
@@ -665,10 +656,6 @@ class TestServerOptionsFlow:
                 cf.server_credentials.ADMIN_PASSWORD,
             )
         }
-        # regenerate_secrets is a one-shot action, never pre-filled True;
-        # enable_webhook / enable_startup_notification / enable_sidebar_panel
-        # default on when unsaved. Pop off the schema (not inside assert, which
-        # `python -O` would strip) before comparing the remainder.
         regenerate_default = defaults.pop(const.OPT_REGENERATE_SECRETS)
         assert regenerate_default is False
         oauth_regenerate_default = defaults.pop(const.OPT_OAUTH_REGENERATE)

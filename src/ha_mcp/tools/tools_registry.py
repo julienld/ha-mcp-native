@@ -8,14 +8,31 @@ Important: Device renaming does NOT cascade to entities - they are independent r
 
 import asyncio
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, NoReturn
 
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
+from ..backends.remote import RemoteBackend
 from ..errors import ErrorCode, create_error_response
+from ..runtime.device_records import _add_integration_hints as _add_integration_hints
+from ..runtime.device_records import _build_entity_maps as _build_entity_maps
+from ..runtime.device_records import _classify_integration as _classify_integration
+from ..runtime.device_records import _device_config_entries as _device_config_entries
+from ..runtime.device_records import _extract_zigbee_info as _extract_zigbee_info
+from ..runtime.device_records import _filter_devices as _filter_devices
+from ..runtime.device_records import (
+    _first_ieee_from_connections as _first_ieee_from_connections,
+)
+from ..runtime.device_records import _get_device_info as _get_device_info
+from ..runtime.device_records import _list_devices_result as _list_devices_result
+from ..runtime.device_records import _matches_integration as _matches_integration
+from ..runtime.device_records import _process_device_domain as _process_device_domain
+from ..runtime.devices import DeviceDiscoveryTools
+from ..tool_api import CallContext
 from ..utils.device_registry_semantics import (
     EFFECTIVE_AREA_MARKER,
     annotate_device_rows_with_effective_area,
@@ -27,11 +44,6 @@ from .component_devices import (
     fetch_device_via_component,
 )
 from .config_helpers.registry import validate_registry_ids
-from .device_enrichment import (
-    enrich_matter_diagnostics,
-    enrich_zha_metrics,
-    enrich_zwave_status,
-)
 from .helpers import (
     WHITESPACE_CLEARS_NOTE,
     clearable_value,
@@ -41,175 +53,9 @@ from .helpers import (
     register_tool_methods,
     validate_identifier_not_empty,
 )
-from .response_helpers import build_pagination_metadata
 from .tool_hints import read_only_hints, write_hints
 
 logger = logging.getLogger(__name__)
-
-
-def _process_device_domain(
-    domain: str,
-    value: str,
-    ieee_address: str | None,
-    is_z2m: bool,
-    zwave_node_id: str | None,
-) -> tuple[str | None, bool, str | None]:
-    """Return updated (ieee_address, is_z2m, zwave_node_id) for a single identifier domain."""
-    # ZHA: identifier is ["zha", "IEEE_ADDRESS"]
-    if domain == "zha":
-        return value, is_z2m, zwave_node_id
-    # Z2M: identifier is ["mqtt", "zigbee2mqtt_0xIEEE"] or "zigbee2mqtt_bridge_0xIEEE"
-    if domain == "mqtt" and "zigbee2mqtt" in value.lower():
-        extracted = (
-            "0x" + value.rsplit("_0x", maxsplit=1)[-1]
-            if "_0x" in value
-            else ieee_address
-        )
-        return extracted, True, zwave_node_id
-    # Z-Wave JS: identifier is ["zwave_js", "{home_id}-{node_id}"]
-    if domain == "zwave_js" and "-" in value:
-        return ieee_address, is_z2m, value.split("-")[1]
-    return ieee_address, is_z2m, zwave_node_id
-
-
-def _extract_zigbee_info(
-    identifiers: list[Any],
-) -> tuple[list[str], str | None, bool, str | None]:
-    """Parse device identifiers into (integration_sources, ieee_address, is_z2m, zwave_node_id)."""
-    integration_sources: list[str] = []
-    ieee_address: str | None = None
-    is_z2m = False
-    zwave_node_id: str | None = None
-
-    for identifier in identifiers:
-        if isinstance(identifier, (list, tuple)) and len(identifier) >= 2:
-            domain = identifier[0]
-            if isinstance(domain, str):
-                if domain not in integration_sources:
-                    integration_sources.append(domain)
-                ieee_address, is_z2m, zwave_node_id = _process_device_domain(
-                    domain,
-                    str(identifier[1]),
-                    ieee_address,
-                    is_z2m,
-                    zwave_node_id,
-                )
-
-    return integration_sources, ieee_address, is_z2m, zwave_node_id
-
-
-def _first_ieee_from_connections(
-    connections: list[Any], existing_ieee: str | None
-) -> str | None:
-    """Return existing_ieee if already set; otherwise the first 'ieee' connection value, or None."""
-    if not isinstance(connections, list) or existing_ieee:
-        return existing_ieee
-    for connection in connections:
-        if (
-            isinstance(connection, (list, tuple))
-            and len(connection) >= 2
-            and connection[0] == "ieee"
-        ):
-            return str(connection[1])
-    return existing_ieee
-
-
-def _classify_integration(integration_sources: list[str], is_z2m: bool) -> str:
-    """Return the primary integration type string for a device."""
-    if "zha" in integration_sources:
-        return "zha"
-    if is_z2m:
-        return "zigbee2mqtt"
-    if "zwave_js" in integration_sources:
-        return "zwave_js"
-    if "mqtt" in integration_sources:
-        return "mqtt"
-    if integration_sources:
-        return integration_sources[0]
-    return "unknown"
-
-
-def _get_device_info(device: dict[str, Any]) -> dict[str, Any]:
-    """Extract integration info and build a device summary dict."""
-    integration_sources, ieee_address, is_z2m, zwave_node_id = _extract_zigbee_info(
-        device.get("identifiers", [])
-    )
-    ieee_address = _first_ieee_from_connections(
-        device.get("connections", []), ieee_address
-    )
-    integration_type = _classify_integration(integration_sources, is_z2m)
-    friendly_name = device.get("name_by_user") or device.get("name")
-
-    device_info: dict[str, Any] = {
-        "device_id": device.get("id"),
-        "name": friendly_name,
-        "manufacturer": device.get("manufacturer"),
-        "model": device.get("model"),
-        "sw_version": device.get("sw_version"),
-        "area_id": device.get(EFFECTIVE_AREA_MARKER, device.get("area_id")),
-        "integration_type": integration_type,
-        "integration_sources": integration_sources,
-        "via_device_id": device.get("via_device_id"),
-    }
-
-    if ieee_address:
-        device_info["ieee_address"] = ieee_address
-    if integration_type == "zigbee2mqtt":
-        device_info["friendly_name"] = friendly_name
-        device_info["mqtt_topic_hint"] = f"zigbee2mqtt/{friendly_name}/..."
-    if integration_type == "zha" and ieee_address:
-        device_info["zha_trigger_hint"] = (
-            f"Use ieee '{ieee_address}' for zha_event triggers"
-        )
-    if integration_type == "zwave_js" and zwave_node_id:
-        device_info["node_id"] = zwave_node_id
-
-    return device_info
-
-
-def _device_config_entries(device: dict[str, Any]) -> list[str]:
-    """Return the exact owning config-entry IDs for a main or child row.
-
-    Ordinary ``DeviceEntry`` rows carry ``config_entries`` while Core 2026.9
-    ``ChildDeviceEntry`` rows carry one singular ``config_entry_id``. Never mix,
-    coerce, or repair malformed ownership evidence: an explicitly present plural
-    field is authoritative and must be a list of non-empty strings.
-    """
-    if "config_entries" in device:
-        raw = device.get("config_entries")
-        if not isinstance(raw, list) or not all(
-            isinstance(entry_id, str) and entry_id for entry_id in raw
-        ):
-            return []
-        return list(raw)
-    entry_id = device.get("config_entry_id")
-    return [entry_id] if isinstance(entry_id, str) and entry_id else []
-
-
-def _build_entity_maps(
-    all_entities: list[dict[str, Any]], need_full: bool
-) -> tuple[dict[str, str], dict[str, list[dict[str, Any]]]]:
-    """Build entity→device and device→entities lookup maps.
-
-    device_to_entities is only populated when need_full is True; building it for
-    every list-mode request would be wasteful when only entity→device lookup is needed.
-    """
-    entity_to_device: dict[str, str] = {}
-    device_to_entities: dict[str, list[dict[str, Any]]] = {}
-    for e in all_entities:
-        eid = e.get("entity_id")
-        did = e.get("device_id")
-        if eid and did:
-            entity_to_device[eid] = did
-            if need_full:
-                device_to_entities.setdefault(did, []).append(
-                    {
-                        "entity_id": eid,
-                        "name": e.get("name") or e.get("original_name"),
-                        "platform": e.get("platform"),
-                    }
-                )
-    return entity_to_device, device_to_entities
 
 
 async def _fetch_entity_rows(client: Any) -> list[dict[str, Any]]:
@@ -421,6 +267,7 @@ async def _lookup_device_for_remove(client: Any, device_id: str) -> dict[str, An
     return device
 
 
+@legacy_errors
 async def _get_single_device_result(
     client: Any,
     device_id: str,
@@ -428,183 +275,9 @@ async def _get_single_device_result(
     all_devices: list[dict[str, Any]],
     device_to_entities: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Return the full-detail single-device response dict."""
-    device = next((d for d in all_devices if d.get("id") == device_id), None)
-    if not device:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"Device not found: {device_id}",
-                suggestions=["Use ha_get_device() to find valid device IDs"],
-                context={
-                    "device_id": device_id,
-                    "available_device_ids": [
-                        d.get("id") for d in all_devices[:10] if d.get("id")
-                    ],
-                },
-            )
-        )
-        return {}  # unreachable: raise_tool_error always raises
-
-    enrichment_warnings: list[str] = []
-    device_info = _get_device_info(device)
-    device_info["entities"] = device_to_entities.get(device_id, [])
-    device_info["name_by_user"] = device.get("name_by_user")
-    device_info["default_name"] = device.get("name")
-    device_info["hw_version"] = device.get("hw_version")
-    device_info["serial_number"] = device.get("serial_number")
-    device_info["disabled_by"] = device.get("disabled_by")
-    device_info["labels"] = device.get("labels", [])
-    device_info["config_entries"] = _device_config_entries(device)
-    device_info["connections"] = device.get("connections", [])
-    device_info["identifiers"] = device.get("identifiers", [])
-
-    if device_info.get("integration_type") == "zha" and device_info.get("ieee_address"):
-        await enrich_zha_metrics(client, device_info, enrichment_warnings)
-    if device_info.get("integration_type") == "zwave_js" and device_info.get("node_id"):
-        await enrich_zwave_status(client, device_id, device_info, enrichment_warnings)
-    if device_info.get("integration_type") == "matter":
-        await enrich_matter_diagnostics(
-            client, device_id, device_info, enrichment_warnings
-        )
-
-    entities = device_info.get("entities", [])
-    response: dict[str, Any] = {
-        "success": True,
-        "device": device_info,
-        "entities": entities,  # Also at top level for backward compatibility
-        "entity_count": len(entities),
-        "queried_by": "entity_id" if entity_id else "device_id",
-        "queried_entity_id": entity_id,
-    }
-    if enrichment_warnings:
-        # Top-level list[str] per the response contract — never nested under
-        # ``device``, where a caller reading the payload would miss it.
-        response["warnings"] = enrichment_warnings
-    return response
-
-
-def _matches_integration(
-    device_info: dict[str, Any], integration_lower: str, named_types: list[str]
-) -> bool:
-    """Check whether a device matches the requested integration filter."""
-    if integration_lower in named_types:
-        return bool(device_info.get("integration_type") == integration_lower)
-    return integration_lower in device_info.get("integration_sources", [])
-
-
-def _filter_devices(
-    all_devices: list[dict[str, Any]],
-    area_id: str | None,
-    manufacturer_lower: str | None,
-    integration_lower: str | None,
-    device_to_entities: dict[str, list[dict[str, Any]]],
-    detail_level: Literal["summary", "full"],
-) -> list[dict[str, Any]]:
-    """Filter devices for list mode and optionally attach entity lists."""
-    named_types = ["zigbee2mqtt", "zha", "zwave_js"]
-    matched: list[dict[str, Any]] = []
-    for device in all_devices:
-        effective_area = device.get(EFFECTIVE_AREA_MARKER, device.get("area_id"))
-        if area_id and effective_area != area_id:
-            continue
-        device_man = (device.get("manufacturer") or "").lower()
-        if manufacturer_lower and manufacturer_lower not in device_man:
-            continue
-        device_info = _get_device_info(device)
-        if integration_lower and not _matches_integration(
-            device_info, integration_lower, named_types
-        ):
-            continue
-        if detail_level == "full":
-            device_info["entities"] = device_to_entities.get(device.get("id") or "", [])
-        matched.append(device_info)
-    return matched
-
-
-def _add_integration_hints(
-    result: dict[str, Any],
-    integration_lower: str | None,
-    matched_devices: list[dict[str, Any]],
-) -> None:
-    """Add Z2M bridge info and integration-specific usage hints to result in-place."""
-    if integration_lower == "zigbee2mqtt":
-        bridge_info = None
-        for d in matched_devices:
-            if (
-                d.get("via_device_id") is None
-                and "bridge" in (d.get("name") or "").lower()
-            ):
-                bridge_info = {
-                    "device_id": d.get("device_id"),
-                    "name": d.get("name"),
-                    "ieee_address": d.get("ieee_address"),
-                }
-                break
-        if bridge_info:
-            result["bridge"] = bridge_info
-        result["usage_hint"] = (
-            "Use 'friendly_name' for MQTT topics: zigbee2mqtt/{friendly_name}/action"
-        )
-    elif integration_lower == "zha":
-        result["usage_hint"] = (
-            "Use 'ieee_address' for zha_event triggers in automations"
-        )
-    elif integration_lower == "zwave_js":
-        result["usage_hint"] = (
-            "Use node_id for Z-Wave device identification. "
-            "Single device lookup includes node status (security, routing)."
-        )
-
-
-def _list_devices_result(
-    all_devices: list[dict[str, Any]],
-    device_to_entities: dict[str, list[dict[str, Any]]],
-    integration: str | None,
-    area_id: str | None,
-    manufacturer: str | None,
-    limit: int,
-    offset: int,
-    detail_level: Literal["summary", "full"],
-) -> dict[str, Any]:
-    """Build the paginated device list response."""
-    integration_lower = integration.lower() if integration else None
-    manufacturer_lower = manufacturer.lower() if manufacturer else None
-
-    matched_devices = _filter_devices(
-        all_devices,
-        area_id,
-        manufacturer_lower,
-        integration_lower,
-        device_to_entities,
-        detail_level,
+    return await RegistryTools(client)._get_single_device_result(
+        device_id, entity_id, all_devices, device_to_entities
     )
-    total_matched = len(matched_devices)
-    paginated = matched_devices[offset : offset + limit]
-
-    result: dict[str, Any] = {
-        "success": True,
-        **build_pagination_metadata(total_matched, offset, limit, len(paginated)),
-        "total_devices": len(all_devices),
-        "devices": paginated,
-        "detail_level": detail_level,
-    }
-
-    filters_applied = []
-    if integration:
-        result["integration_filter"] = integration
-        filters_applied.append(f"integration={integration}")
-    if area_id:
-        result["area_filter"] = area_id
-        filters_applied.append(f"area_id={area_id}")
-    if manufacturer:
-        result["manufacturer_filter"] = manufacturer
-        filters_applied.append(f"manufacturer={manufacturer}")
-    if filters_applied:
-        result["filters"] = filters_applied
-
-    _add_integration_hints(result, integration_lower, matched_devices)
-    return result
 
 
 async def _remove_device_config_entries(
@@ -643,11 +316,12 @@ async def _remove_device_config_entries(
     return results
 
 
-class RegistryTools:
+class RegistryTools(DeviceDiscoveryTools):
     """Device registry tools: get, update, and remove devices."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        super().__init__(RemoteBackend(client), CallContext(None))
 
     async def _update_device_internal(
         self,
@@ -763,144 +437,38 @@ class RegistryTools:
             return None  # unreachable: exception_to_structured_error always raises
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
 
-    @tool(
+    @staticmethod
+    def _get_device_info(device: dict[str, Any]) -> dict[str, Any]:
+        return _get_device_info(device)
+
+    def _raise_device_error(self, error: Exception) -> NoReturn:
+        if isinstance(error, ToolError):
+            raise error
+        exception_to_structured_error(error)
+
+    async def _resolve_device_id_for_entity(self, entity_id: str) -> str:
+        return await _resolve_device_id_for_entity(self._client, entity_id)
+
+    async def _single_device_and_entities(
+        self, device_id: str
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        return await _single_device_and_entities(self._client, device_id)
+
+    async def _list_device_snapshot(
+        self, need_full: bool
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        all_entities = await _fetch_entity_rows(self._client) if need_full else []
+        _, device_to_entities = _build_entity_maps(all_entities, need_full)
+        all_devices = await _fetch_device_rows(self._client)
+        return all_devices, device_to_entities
+
+    ha_get_device = tool(
         name="ha_get_device",
         tags={"Device Registry", "Zigbee", "Z-Wave", "Matter"},
         annotations=read_only_hints(
             "Get Device (incl. Zigbee/ZHA/Z2M, Z-Wave and Matter)", open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_get_device(
-        self,
-        device_id: Annotated[
-            str | None,
-            Field(
-                description="Device ID to retrieve details for.",
-                default=None,
-            ),
-        ] = None,
-        entity_id: Annotated[
-            str | None,
-            Field(
-                description="Entity ID to find the associated device for (e.g., 'light.living_room')",
-                default=None,
-            ),
-        ] = None,
-        integration: Annotated[
-            str | None,
-            Field(
-                description="Filter devices by integration: 'zha', 'zigbee2mqtt', 'zwave_js', 'mqtt', 'hue', etc.",
-                default=None,
-            ),
-        ] = None,
-        area_id: Annotated[
-            str | None,
-            Field(
-                description="Filter devices by area ID (e.g., 'living_room')",
-                default=None,
-            ),
-        ] = None,
-        manufacturer: Annotated[
-            str | None,
-            Field(
-                description="Filter devices by manufacturer name (e.g., 'Philips')",
-                default=None,
-            ),
-        ] = None,
-        limit: Annotated[
-            int,
-            Field(
-                default=50,
-                ge=1,
-                le=200,
-                description="Max devices to return per page in list mode",
-            ),
-        ] = 50,
-        offset: Annotated[
-            int,
-            Field(
-                default=0,
-                ge=0,
-                description="Number of devices to skip for pagination",
-            ),
-        ] = 0,
-        detail_level: Annotated[
-            Literal["summary", "full"],
-            Field(
-                default="summary",
-                description=(
-                    "'summary': basic device info and protocol identifiers. 'full': in list"
-                    " mode also include each device's entities. Single-device lookups "
-                    "always return full detail, including radio metrics, node status and "
-                    "Matter diagnostics."
-                ),
-            ),
-        ] = "summary",
-    ) -> dict[str, Any]:
-        """Get device information with pagination, including Zigbee (ZHA/Z2M) and Z-Wave JS devices.
-
-        Without device_id/entity_id: Lists devices with optional filters and pagination.
-        With device_id or entity_id: Returns full detail for that specific device.
-
-        **List devices (paginated):**
-        - First page: ha_get_device()
-        - Next page: ha_get_device(offset=50)
-        - By area: ha_get_device(area_id="living_room")
-        - By integration: ha_get_device(integration="zigbee2mqtt")
-        - Full details in list: ha_get_device(detail_level="full", limit=10)
-
-        **Single device lookup (always full detail):**
-        - By device_id: ha_get_device(device_id="abc123")
-        - By entity_id: ha_get_device(entity_id="light.living_room")
-
-        **Zigbee:** integration="zha" or "zigbee2mqtt". Returns ieee_address, radio metrics.
-        **Z-Wave:** integration="zwave_js". Returns node_id, node_status.
-        **Matter:** integration="matter". Returns node_diagnostics (network type,
-        reachability, IPs, fabrics). For management use ha_manage_radio.
-        """
-        try:
-            # entity_id -> device_id is a single native entity read (no dump).
-            if entity_id and not device_id:
-                device_id = await _resolve_device_id_for_entity(self._client, entity_id)
-
-            if device_id:
-                # Single-device lookup: the device AND its entities come from one
-                # component device_get(include_entities) frame — no device- or
-                # entity-registry dump — or the legacy registries when the
-                # component can't serve it.
-                all_devices, device_to_entities = await _single_device_and_entities(
-                    self._client, device_id
-                )
-                return await _get_single_device_result(
-                    self._client, device_id, entity_id, all_devices, device_to_entities
-                )
-
-            # List mode: the device rows come from the component's device_list (or
-            # legacy list). The entity registry is read only for the full-detail
-            # list (a bulk device->entity map, where one dump beats N joins) and
-            # skipped for a summary list.
-            need_full = detail_level == "full"
-            all_entities = await _fetch_entity_rows(self._client) if need_full else []
-            _, device_to_entities = _build_entity_maps(all_entities, need_full)
-            all_devices = await _fetch_device_rows(self._client)
-            return _list_devices_result(
-                all_devices,
-                device_to_entities,
-                integration,
-                area_id,
-                manufacturer,
-                limit,
-                offset,
-                detail_level,
-            )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Error getting device: {e}")
-            exception_to_structured_error(e)
-            return None  # unreachable: exception_to_structured_error always raises
+    )(log_tool_usage(legacy_errors(DeviceDiscoveryTools.ha_get_device)))
 
     @tool(
         name="ha_set_device",

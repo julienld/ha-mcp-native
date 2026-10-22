@@ -5,7 +5,6 @@ Centralized utilities that can be shared across multiple tool implementations.
 """
 
 import functools
-import inspect
 import json
 import logging
 import re
@@ -35,6 +34,11 @@ from ..errors import (
     create_timeout_error,
     create_validation_error,
 )
+from ..runtime.validation import _QUOTE_ONLY as _QUOTE_ONLY
+from ..runtime.validation import WHITESPACE_CLEARS_NOTE as WHITESPACE_CLEARS_NOTE
+from ..runtime.validation import clear_hint as clear_hint
+from ..tool_api.parameters import HIDDEN_PARAM as HIDDEN_PARAM
+from ..tool_api.parameters import hidden_param_names as hidden_param_names
 from ..utils.usage_logger import log_tool_call
 from .coercion import UNSET
 
@@ -188,47 +192,17 @@ def validate_identifier_not_empty(
         raise_tool_error(error.data)
 
 
-WHITESPACE_CLEARS_NOTE = (
-    "A whitespace-only value acts like '', for clients that cannot send an "
-    "empty string."
-)
-_QUOTE_ONLY = re.compile(r"[\s\"'‘’“”]+")
-
-
-def clear_hint(param_name: str) -> str:
-    return (
-        f"To clear {param_name}, pass an empty string '', or a single space ' ' "
-        "if your client cannot send an empty string"
-    )
-
-
 def clearable_value(
-    value: str | None,
-    param_name: str,
-    *,
-    hint: str | None = None,
+    value: str | None, param_name: str, *, hint: str | None = None
 ) -> str | None:
-    """Map an empty or whitespace-only value to None, the registry's clear value.
+    """Map the shared clear-value policy back to the historical ToolError facade."""
+    from ha_mcp.runtime.validation import clearable_value as clear
+    from ha_mcp.tool_api import ToolFailure
 
-    Other values are returned stripped. A model whose client cannot send ``''``
-    falls back to ``'""'`` (#2585); a value made only of quotes and whitespace
-    is never a real value, so reject it.
-    """
-    if value is None:
-        return None
-    value = value.strip()
-    if not value:
-        return None
-    if _QUOTE_ONLY.fullmatch(value):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"{param_name} {value!r} contains only quote characters and whitespace",
-                suggestions=[hint or clear_hint(param_name)],
-                context={"parameter": param_name, "value": value},
-            )
-        )
-    return value
+    try:
+        return clear(value, param_name, hint=hint)
+    except ToolFailure as error:
+        raise_tool_error(error.data)
 
 
 async def get_connected_ws_client(
@@ -682,31 +656,18 @@ def ws_failure_code(result: dict[str, Any]) -> ErrorCode:
 
 
 def clear_or_keep(value: str | None, param_name: str) -> str | None:
-    """``clearable_value`` for params where None means "not passed": blank → ''."""
-    return None if value is None else clearable_value(value, param_name) or ""
+    """Preserve None-as-omitted and the historical ToolError facade."""
+    from ha_mcp.runtime.validation import clear_or_keep as clear
+    from ha_mcp.tool_api import ToolFailure
 
-
-class _HiddenParam:
-    """Annotated marker for a parameter left out of the published input schema."""
+    try:
+        return clear(value, param_name)
+    except ToolFailure as error:
+        raise_tool_error(error.data)
 
 
 # Argument validation runs on the function signature, not the published schema,
 # so a hidden parameter is still accepted from callers that pass it.
-HIDDEN_PARAM = _HiddenParam()
-
-
-def hidden_param_names(fn: Any) -> frozenset[str]:
-    """Names of ``fn``'s parameters annotated with ``HIDDEN_PARAM``."""
-    try:
-        signature = inspect.signature(fn, eval_str=True)
-    except NameError:
-        # A string annotation naming a TYPE_CHECKING-only import can't resolve.
-        signature = inspect.signature(fn)
-    return frozenset(
-        name
-        for name, param in signature.parameters.items()
-        if HIDDEN_PARAM in getattr(param.annotation, "__metadata__", ())
-    )
 
 
 def register_tool_methods(mcp: Any, instance: Any) -> None:

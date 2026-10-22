@@ -38,3 +38,18 @@ def legacy_errors(function: Callable[..., Any]) -> Callable[..., Any]:
             raise
 
     return invoke
+
+
+def legacy_errors_sync(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Compatibility for existing synchronous validation/projection helpers."""
+
+    @functools.wraps(function)
+    def invoke(*args: Any, **kwargs: Any) -> Any:
+        from ha_mcp.tools.helpers import raise_tool_error
+
+        try:
+            return function(*args, **kwargs)
+        except ToolFailure as exc:
+            raise_tool_error(exc.data)
+
+    return invoke

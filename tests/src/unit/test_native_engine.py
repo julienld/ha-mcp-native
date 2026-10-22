@@ -279,8 +279,25 @@ async def test_identity_rechecked_after_policy_await_before_mutation() -> None:
     assert result.status == "not_started" and writes == []
 
 
+async def test_policy_guard_is_inside_owned_operation_budget() -> None:
+    async def guard(
+        name: str, arguments: dict, context: CallContext, writes: bool
+    ) -> None:
+        await asyncio.Event().wait()
+
+    engine = Engine(Backend(), policy_guard=guard, operation_timeout=0.001)
+    invoked = False
+
+    async def write() -> None:
+        nonlocal invoked
+        invoked = True
+
+    result = await engine.call_owned("imported", write, ACTOR, writes=True)
+    assert result.is_error and result.status == "not_started" and not invoked
+
+
 def test_shared_catalog_imports_neither_ha_nor_remote_clients() -> None:
-    code = "from ha_mcp.runtime.catalog import build_initial_catalog; import sys; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
+    code = "from ha_mcp.runtime.catalog import build_initial_catalog; import sys; assert 'ha_mcp.server' not in sys.modules; assert not any(k.startswith(('homeassistant', 'ha_mcp.client', 'ha_mcp.server.', 'ha_mcp._vendor.fastmcp')) for k in sys.modules)"
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )

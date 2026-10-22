@@ -19,7 +19,9 @@ assert that set is documented in both directions:
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -209,7 +211,28 @@ _PAREN_NOTE_RE = re.compile(r"\([^)]*\)")
 
 
 def _read_module(rel_path: str) -> ast.Module:
-    return ast.parse((SRC_ROOT / rel_path).read_text(encoding="utf-8"))
+    path = SRC_ROOT / rel_path
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    module._source_path = path  # type: ignore[attr-defined]
+    return module
+
+
+@lru_cache(maxsize=1)
+def _shared_resolver() -> Any:
+    scripts = SRC_ROOT.parents[1] / "scripts"
+    modules = []
+    for name in ("extract_tools", "extract_tools_shared"):
+        spec = importlib.util.spec_from_file_location(name, scripts / f"{name}.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules.append(module)
+    extractor, shared = modules
+    return shared.SharedToolExtractor(
+        extractor._import_source,
+        extractor._module_scope,
+        extractor._extract_tool_from_node,
+    )
 
 
 def _find_function(
@@ -221,6 +244,11 @@ def _find_function(
             and node.name == name
         ):
             return node
+    path = getattr(module, "_source_path", None)
+    if path is not None:
+        resolved = _shared_resolver().resolve_function(path, name)
+        if resolved is not None:
+            return resolved
     raise LookupError(f"function {name!r} not found")
 
 

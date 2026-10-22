@@ -253,15 +253,7 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     async def async_step_server(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose remote and network access, then create the server entry.
-
-        A new install starts with the webhook off and the server port bound to
-        loopback (#2427): nothing beyond the Home Assistant machine can reach
-        the server until the administrator chooses a remote-access mode or LAN
-        access here or later in the options. The choice is saved explicitly,
-        so entries created before these defaults keep the behaviour they
-        inherit. The server runs with the administrator token entered here.
-        """
+        """Choose an owner and optional remote access for a native server."""
         try:
             supported = Version(HA_VERSION) >= Version(
                 MIN_EMBEDDED_HOME_ASSISTANT_VERSION
@@ -277,10 +269,7 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                 },
             )
 
-        # A dialog closed without aborting (tab closed mid-setup) stays open
-        # until Home Assistant restarts and must not block a new setup. This
-        # step runs again on every submit, so the configured check below still
-        # stops a second dialog from replacing a finished entry.
+        # Ignore abandoned dialogs, but reject every duplicate submitted entry.
         await self.async_set_unique_id(_SERVER_UNIQUE_ID, raise_on_progress=False)
         self._abort_if_unique_id_configured()
 
@@ -304,9 +293,7 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                     data=data,
                     options={
                         OPT_ENABLE_WEBHOOK: enabled,
-                        # Disabled keeps Home Assistant sign-in queued, so
-                        # enabling the webhook later never lands on the
-                        # secret-URL mode.
+                        # Later enabling the webhook keeps HA sign-in queued.
                         OPT_WEBHOOK_AUTH: remote if enabled else WEBHOOK_AUTH_HA,
                         OPT_RUNTIME_MODE: RUNTIME_NATIVE,
                     },
@@ -509,10 +496,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     OPT_NATIVE_STREAM_SECONDS,
                     default=form_values.get(OPT_NATIVE_STREAM_SECONDS, 900),
                 ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3600)),
-                # Authentication mode first, directly under the connect URLs
-                # shown in the step description (#1875): it is the setting users
-                # most need to find, and legacy mode is what unblocks OAuth-only
-                # clients such as Google Gemini Spark and Copilot CLI.
                 vol.Required(
                     OPT_WEBHOOK_AUTH,
                     default=form_values.get(OPT_WEBHOOK_AUTH, WEBHOOK_AUTH_NONE),
@@ -537,30 +520,15 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 ): _bind_host_selector(),
                 vol.Optional(
                     OPT_PIP_SPEC,
-                    # Pre-fill via suggested_value, NOT a schema default: a
-                    # default equal to the saved value makes the field
-                    # impossible to clear. HA's frontend drops an emptied
-                    # optional field from the submitted payload, so voluptuous
-                    # re-applies the default (the old override) and clearing
-                    # never sticks. suggested_value pre-fills the same value but
-                    # is not re-injected on an empty submit. (Applies to every
-                    # optional text field below.) Only a genuinely saved
-                    # override is suggested; the normalized "no override" state
-                    # renders an EMPTY field — the help text says "Leave empty",
-                    # and pre-filling DEFAULT_PIP_SPEC would show the stable dist
-                    # name even when a HACS pre-release pins ha-mcp-dev.
+                    # Suggested values preserve intentional clearing: frontend
+                    # omissions must not reinsert a stored schema default.
                     description={
                         "suggested_value": suggested_values.get(OPT_PIP_SPEC, "")
                     },
                 ): str,
                 vol.Optional(
                     OPT_SERVER_URL,
-                    # Only a genuinely saved override is suggested (same
-                    # pattern as OPT_PIP_SPEC above). Pre-filling
-                    # DEFAULT_LOOPBACK_URL made every options save store the
-                    # constant as an explicit override, which would pin the
-                    # scheme/port even after issue #1890's SSL/port-aware
-                    # loopback derivation.
+                    # An absent override follows HA's live port and SSL config.
                     description={
                         "suggested_value": suggested_values.get(OPT_SERVER_URL, "")
                     },
@@ -597,8 +565,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                # suggested_value (not default) so these clear properly on an
-                # empty submit — see the OPT_PIP_SPEC note above.
                 vol.Optional(
                     OPT_EXTERNAL_URL,
                     description={
@@ -625,9 +591,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     OPT_REGENERATE_SECRETS,
                     default=False,
                 ): bool,
-                # Legacy OAuth mode (Google Gemini Spark) credential overrides —
-                # same shape as the webhook id/secret-path overrides above.
-                # Empty = auto-generate/keep the current value.
                 vol.Optional(
                     OPT_OAUTH_CLIENT_ID,
                     description={
@@ -650,8 +613,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 **server_credentials.credential_schema(
                     vol, OPT_ADMIN_TOKEN_REPLACEMENT, {}
                 ),
-                # suggested_value, not default: an emptied list must save as
-                # empty rather than fall back (see the OPT_PIP_SPEC note).
                 vol.Optional(
                     OPT_OAUTH_REDIRECT_ALLOWLIST,
                     description={
@@ -665,7 +626,9 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 ),
             }
         )
-        schema = self._runtime_schema(schema, form_values)
+        from .native_config import runtime_schema
+
+        schema = runtime_schema(schema, form_values)
         # The sidebar-panel sentence in the description is only truthful while
         # the panel is registered; drop it (from the CURRENT stored options, not
         # the unsaved form state) when the panel is off so the link cannot point
@@ -699,28 +662,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 "invalid_callbacks": ", ".join(invalid),
                 "max_callbacks": str(MAX_OAUTH_CALLBACKS),
             },
-        )
-
-    @staticmethod
-    def _runtime_schema(schema: vol.Schema, values: Mapping[str, Any]) -> vol.Schema:
-        schema = vol.Schema(dict(sorted(schema.schema.items(), key=lambda item: getattr(item[0], "schema", item[0]) != OPT_WEBHOOK_AUTH)))
-        if values.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY) != RUNTIME_NATIVE:
-            return schema
-        legacy_fields = {
-            OPT_SERVER_PORT,
-            OPT_BIND_HOST,
-            OPT_PIP_SPEC,
-            OPT_SERVER_URL,
-            OPT_ADMIN_TOKEN_REPLACEMENT,
-            server_credentials.ADMIN_USERNAME,
-            server_credentials.ADMIN_PASSWORD,
-        }
-        return vol.Schema(
-            {
-                key: value
-                for key, value in schema.schema.items()
-                if getattr(key, "schema", key) not in legacy_fields
-            }
         )
 
     async def _owner_errors(self, owner: str) -> dict[str, str]:

@@ -16,7 +16,13 @@ import pytest
 from .test_container_param_coercion_complete import _all_registered_tools
 
 _CONTRACTS = Path(__file__).resolve().parents[3] / "docs" / "native-migration"
-_ANNOTATIONS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+_ANNOTATIONS = (
+    "title",
+    "readOnlyHint",
+    "destructiveHint",
+    "idempotentHint",
+    "openWorldHint",
+)
 _DOCUMENTATION = frozenset({"title", "description", "examples", "$comment"})
 _NAME_MAPS = frozenset(
     {"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"}
@@ -122,8 +128,17 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
             (_CONTRACTS / "catalog-baseline.json").read_text(encoding="utf-8")
         )["tools"]
     }
+    extras = json.loads(
+        (_CONTRACTS / "catalog-extras-baseline.json").read_text(encoding="utf-8")
+    )["tools"]
+    baseline.update({tool["name"]: tool for tool in extras})
+    definitions = build_initial_catalog(MagicMock())
+    declared = {definition.name for definition in definitions}
+    assert {tool["name"] for tool in extras} <= declared, (
+        "Native entry lost an always-present server tool"
+    )
     changes = {}
-    for definition in build_initial_catalog(MagicMock()):
+    for definition in definitions:
         old = baseline.get(definition.name)
         if old is None:
             continue

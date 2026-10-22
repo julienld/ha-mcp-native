@@ -140,20 +140,10 @@ class Engine:
     ) -> ToolResult:
         record = self.operations[operation_id]
         try:
-            await self.backend.authorize(context)
-            self._check_policy(name, context, writes)
-            if self.policy_guard is not None:
-                guarded = await self.policy_guard(name, arguments, context, writes)
-                if guarded is not None:
-                    record["status"] = guarded.status or "not_started"
-                    return replace(
-                        guarded, status=record["status"], operation_id=operation_id
-                    )
-                await self.backend.authorize(context)
-                self._check_policy(name, context, writes)
-            record["status"] = "executing"
             async with asyncio.timeout(self.operation_timeout):
-                raw = await invoke()
+                raw = await self._invoke_authorized(
+                    name, arguments, context, writes, record, invoke
+                )
             result = raw if isinstance(raw, ToolResult) else ToolResult(raw)
             status = result.status or ("failed" if result.is_error else "confirmed")
             record["status"] = status
@@ -182,6 +172,26 @@ class Engine:
             return ToolResult(
                 data, is_error=True, status=status, operation_id=operation_id
             )
+
+    async def _invoke_authorized(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: CallContext,
+        writes: bool,
+        record: dict[str, Any],
+        invoke: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        await self.backend.authorize(context)
+        self._check_policy(name, context, writes)
+        if self.policy_guard is not None:
+            guarded = await self.policy_guard(name, arguments, context, writes)
+            if guarded is not None:
+                return replace(guarded, status=guarded.status or "not_started")
+            await self.backend.authorize(context)
+            self._check_policy(name, context, writes)
+        record["status"] = "executing"
+        return await invoke()
 
     @staticmethod
     def _failure_status(record: dict[str, Any], writes: bool) -> str:

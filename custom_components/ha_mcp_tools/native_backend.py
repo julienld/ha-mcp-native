@@ -11,10 +11,13 @@ import voluptuous as vol
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.json import json_bytes
 
-from ha_mcp.runtime.action_constants import _SNAPSHOT_SERVICE_ACTIONS
+from ha_mcp.runtime.service_policy import check_service_policy
+from ha_mcp.runtime.skill_files import read_skill_files
+from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
 from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
+from .native_registry_ops import DIRECT_OPERATIONS as REGISTRY_DIRECT_OPERATIONS
 
 # A capability boundary, not an emulation of HomeAssistantClient. Each row reuses
 # an owned, tested operation behind the existing component transport facade.
@@ -37,13 +40,18 @@ class NativeBackend:
         hass: HomeAssistant,
         *,
         service_policy: Callable[[str, str], None] | None = None,
+        skill_guide_reader: SkillGuideReader | None = None,
+        skill_content_enabled: Callable[[], bool] | None = None,
     ) -> None:
         from .websocket_api import _command_specs
 
         self.hass = hass
         self.service_policy = service_policy
+        self.skill_guide_reader = skill_guide_reader or SkillGuideReader()
+        self.skill_content_enabled = skill_content_enabled or (lambda: True)
         self.loop = asyncio.get_running_loop()
         self._commands: dict[str, tuple[Any, Any, Any]] = {}
+        self._flows: Any = None
         selected = {command for command, _ in COMMAND_OPERATIONS.values()}
         for schema, do, prep in _command_specs():
             command = next(value for key, value in schema.items() if str(key) == "type")
@@ -74,22 +82,51 @@ class NativeBackend:
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
         await self.authorize(context)
+        if {"type", "id", "ha_mcp_context"}.intersection(arguments):
+            raise ToolFailure(
+                "INVALID_ARGUMENTS",
+                "Protected operation envelope field.",
+                status="not_started",
+            )
+        if operation in REGISTRY_DIRECT_OPERATIONS:
+            result = await REGISTRY_DIRECT_OPERATIONS[operation](self.hass, arguments)
+            return json.loads(json_bytes(result))
+        if operation == "skills.guide":
+            return await self.hass.async_add_executor_job(
+                self.skill_guide_reader.read, arguments.get("file", "SKILL.md")
+            )
+        if operation == "skills.files":
+            enabled = self.skill_content_enabled()
+            return await self.hass.async_add_executor_job(
+                lambda: read_skill_files(arguments["references"], enabled=enabled)
+            )
+        if operation in {
+            "config.flow.start",
+            "config.flow.configure",
+            "config.flow.abort",
+        }:
+            from .native_operations.flows import NativeFlows
+
+            if self._flows is None:
+                self._flows = NativeFlows(self.hass, self.authorize)
+            result = await self._flows.execute(operation, arguments, context)
+            return json.loads(json_bytes(result))
         if operation == "instance.timezone":
             return {"timezone": self.hass.config.time_zone, "fetch_failed": False}
         if operation == "services.policy":
             self._check_service_policy(arguments["domain"], arguments["service"])
             return None
+        return await self._execute_command(operation, arguments, context)
+
+    async def _execute_command(
+        self, operation: str, arguments: dict[str, Any], context: CallContext
+    ) -> Any:
         if operation not in COMMAND_OPERATIONS:
             raise UnsupportedOperation(operation)
         command, writes = COMMAND_OPERATIONS[operation]
         if writes and context.read_only:
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
         schema, do, prep = self._commands[command]
-        # Protected envelope fields cannot be supplied through a generic payload.
-        if {"type", "id", "ha_mcp_context"}.intersection(arguments):
-            raise ToolFailure(
-                "INVALID_ARGUMENTS", "Protected operation envelope field."
-            )
         payload = dict(arguments)
         include_changed_states = (
             payload.pop("include_changed_states", False)
@@ -120,11 +157,9 @@ class NativeBackend:
         if self.service_policy is not None:
             self.service_policy(domain, service)
             return
-        if (
-            domain.strip().lower(),
-            service.strip().lower(),
-        ) in _SNAPSHOT_SERVICE_ACTIONS:
-            raise ToolFailure(
-                "CONFIG_VALIDATION_FAILED",
-                "Full Home Assistant snapshot actions are disabled for this native entry.",
-            )
+        check_service_policy(domain, service)
+
+    async def stop(self) -> None:
+        """Called after engine drain; release only resources this backend owns."""
+        if self._flows is not None:
+            await self._flows.stop()

@@ -9,13 +9,17 @@ from typing import Any, get_type_hints
 from pydantic import ConfigDict, TypeAdapter, ValidationError, create_model
 
 from ha_mcp.tool_api import Backend, CallContext, ToolDefinition, ToolFailure
+from ha_mcp.tool_api.parameters import hidden_param_names
 from ha_mcp.tools.tool_hints import read_only_hints, write_hints
 
 from .actions import ServiceCallTools
+from .devices import DeviceDiscoveryTools
+from .entities import EntityDiscoveryTools
 from .exposure import ExposureTools
 from .labels import CategoryDiscoveryTools, LabelDiscoveryTools
 from .registries import AreaDiscoveryTools
 from .services import ServiceDiscoveryTools
+from .skills import SkillGuideTools
 from .states import StateTools
 
 
@@ -26,6 +30,7 @@ def define_tool(
     *,
     annotations: dict[str, Any],
     tags: frozenset[str] = frozenset(),
+    source_module: str | None = None,
 ) -> ToolDefinition:
     """One signature drives validation, schemas and both transport facades."""
     method = getattr(owner, method_name)
@@ -54,10 +59,15 @@ def define_tool(
         bound: Callable[..., Any] = getattr(owner(backend, context), method_name)
         return await bound(**arguments)
 
+    input_schema = _without_schema_titles(model.model_json_schema())
+    for name in hidden_param_names(method):
+        input_schema["properties"].pop(name, None)
+        if name in input_schema.get("required", []):
+            input_schema["required"].remove(name)
     return ToolDefinition(
         method_name,
         inspect.getdoc(method) or "",
-        _without_schema_titles(model.model_json_schema()),
+        input_schema,
         invoke,
         annotations,
         output_schema=_without_schema_titles(
@@ -65,6 +75,7 @@ def define_tool(
         ),
         validate=validate,
         tags=tags,
+        source_module=source_module,
     )
 
 
@@ -95,6 +106,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             StateTools,
             "ha_get_state",
+            source_module="tools_search",
             annotations=read_only_hints("Get Entity State", open_world=False),
             tags=frozenset({"Search & Discovery"}),
         ),
@@ -102,6 +114,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             ServiceDiscoveryTools,
             "ha_list_services",
+            source_module="tools_services",
             annotations=read_only_hints("List Available Services", open_world=False),
             tags=frozenset({"Service & Device Control"}),
         ),
@@ -109,6 +122,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             AreaDiscoveryTools,
             "ha_list_floors_areas",
+            source_module="tools_areas",
             annotations=read_only_hints("List Floors and Areas", open_world=False),
             tags=frozenset({"Areas & Floors"}),
         ),
@@ -116,6 +130,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             ExposureTools,
             "ha_get_entity_exposure",
+            source_module="tools_voice_assistant",
             annotations=read_only_hints("Get Entity Exposure", open_world=False),
             tags=frozenset({"Entity Registry"}),
         ),
@@ -123,6 +138,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             ServiceCallTools,
             "ha_call_service",
+            source_module="tools_service",
             annotations=write_hints(
                 "Call Service", destructive=True, idempotent=False, open_world=False
             ),
@@ -132,6 +148,7 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             LabelDiscoveryTools,
             "ha_config_get_label",
+            source_module="tools_labels",
             annotations=read_only_hints("Get Label", open_world=False),
             tags=frozenset({"Labels & Categories"}),
         ),
@@ -139,7 +156,36 @@ def build_initial_catalog(backend: Backend) -> list[ToolDefinition]:
             backend,
             CategoryDiscoveryTools,
             "ha_config_get_category",
+            source_module="tools_categories",
             annotations=read_only_hints("Get Category", open_world=False),
             tags=frozenset({"Labels & Categories"}),
+        ),
+        define_tool(
+            backend,
+            DeviceDiscoveryTools,
+            "ha_get_device",
+            source_module="tools_registry",
+            annotations=read_only_hints(
+                "Get Device (incl. Zigbee/ZHA/Z2M, Z-Wave and Matter)", open_world=False
+            ),
+            tags=frozenset({"Device Registry", "Zigbee", "Z-Wave", "Matter"}),
+        ),
+        define_tool(
+            backend,
+            EntityDiscoveryTools,
+            "ha_get_entity",
+            source_module="tools_entities",
+            annotations=read_only_hints("Get Entity", open_world=False),
+            tags=frozenset({"Entity Registry"}),
+        ),
+        define_tool(
+            backend,
+            SkillGuideTools,
+            "ha_get_skill_guide",
+            source_module="server",
+            annotations=read_only_hints(
+                "Get Home Assistant Best Practices Skill Guide", open_world=False
+            ),
+            tags=frozenset({"System"}),
         ),
     ]

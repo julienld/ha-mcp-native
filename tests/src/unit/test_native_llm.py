@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import voluptuous as vol
 
 from ._embedded_stubs import install
 
@@ -18,6 +18,23 @@ from custom_components.ha_mcp_tools import native_llm, native_llm_import  # noqa
 from custom_components.ha_mcp_tools.const import DOMAIN, OPT_NATIVE_IMPORT_APIS  # noqa: E402
 from ha_mcp.runtime import Engine  # noqa: E402
 from ha_mcp.tool_api import CallContext, ToolResult  # noqa: E402
+
+
+@pytest.fixture
+def schema_libraries():
+    """Peers install global fake modules; this test needs the actual codecs."""
+    prefixes = ("voluptuous", "voluptuous_openapi")
+    saved = {name: module for name, module in sys.modules.items()
+             if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)}
+    for name in saved:
+        sys.modules.pop(name, None)
+    try:
+        yield importlib.import_module("voluptuous"), importlib.import_module("voluptuous_openapi")
+    finally:
+        for name in list(sys.modules):
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved)
 
 
 def runtime() -> SimpleNamespace:
@@ -58,16 +75,15 @@ async def test_export_rechecks_exposure_after_conversation_discovery(
 
 
 def test_import_serializes_original_voluptuous_schema_and_custom_serializer(
-    monkeypatch: pytest.MonkeyPatch,
+    schema_libraries,
 ) -> None:
-    monkeypatch.delitem(sys.modules, "voluptuous_openapi", raising=False)
-    from voluptuous_openapi import UNSUPPORTED
+    vol, openapi = schema_libraries
 
     marker = object()
     tool = SimpleNamespace(parameters=vol.Schema({vol.Required("kind"): marker}))
     instance = SimpleNamespace(
         custom_serializer=lambda value: (
-            {"type": "string", "enum": ["kept"]} if value is marker else UNSUPPORTED
+            {"type": "string", "enum": ["kept"]} if value is marker else openapi.UNSUPPORTED
         )
     )
     schema = native_llm_import._schema(instance, tool)
@@ -82,8 +98,9 @@ async def test_import_refuses_unselected_and_own_exported_api() -> None:
 
 
 async def test_import_uses_owner_validator_and_preserves_error_result(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, schema_libraries,
 ) -> None:
+    vol, _openapi = schema_libraries
     manager = runtime()
     validator = vol.Schema({vol.Required("number"): vol.Coerce(int)})
     tool = SimpleNamespace(
