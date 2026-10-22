@@ -202,7 +202,7 @@ async def create_entry(checks: Checks, owner: str) -> None:
     await checks.ready()
 
 
-async def exercise_helpers(checks: Checks) -> None:
+async def exercise_helpers(checks: Checks) -> dict:
     guide = await checks.call("ha_get_skill_guide")
     acknowledgment = re.search(r"Acknowledgment key: ([^\s]+)", guide["content"])
     assert acknowledgment, "The real skill guide must provide the write receipt"
@@ -250,6 +250,86 @@ async def exercise_helpers(checks: Checks) -> None:
     )
     assert flow["success"] and flow["entry_id"] and flow["entity_ids"], flow
     checks.passed("native_helper_config_flow_on_real_Core")
+    return common
+
+
+async def exercise_storage_families(checks: Checks, common: dict) -> None:
+    configurations = {
+        "input_button": {},
+        "input_select": {"options": ["one", "two"]},
+        "input_number": {"min": 0, "max": 10, "initial": 1},
+        "input_text": {"initial": "native"},
+        "input_datetime": {
+            "has_date": True,
+            "has_time": True,
+            "initial": "2026-10-22 01:02:00",
+        },
+        "counter": {"initial": 0},
+        "timer": {"duration": "00:05:00"},
+        "schedule": {"monday": [{"from": "08:00:00", "to": "09:00:00"}]},
+        "zone": {"latitude": 1, "longitude": 1, "radius": 100},
+        "person": {},
+        "tag": {"tag_id": "native-contract-tag"},
+    }
+    failures = []
+    for helper_type, config in configurations.items():
+        try:
+            created = await checks.call(
+                "ha_config_set_helper",
+                {
+                    **common,
+                    "helper_type": helper_type,
+                    "name": f"Native {helper_type}",
+                    "config": config,
+                },
+            )
+            assert created["success"] and created["data"]["id"], created
+            updated = await checks.call(
+                "ha_config_set_helper",
+                {
+                    **common,
+                    "helper_type": helper_type,
+                    "helper_id": created["data"]["id"],
+                    "name": f"Native {helper_type} updated",
+                },
+            )
+            assert updated["success"], updated
+            checks.passed(f"native_{helper_type}_storage_create_update")
+        except (AssertionError, httpx.HTTPError) as error:
+            failures.append({"helper_type": helper_type, "failure": str(error)[:2000]})
+    assert not failures, failures
+
+
+async def exercise_external_clients(checks: Checks, user_id: str) -> None:
+    source = (ROOT / "tests/native/legacy_client_probe.py").read_text(encoding="utf-8")
+    # This child is an actual external client. The HA process itself retains
+    # the import and loopback guards throughout these network requests.
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "docker",
+            "exec",
+            "-i",
+            CONTAINER,
+            "python",
+            "-c",
+            source + "\nasyncio.run(probe())\n",
+        ],
+        input=json.dumps(
+            {
+                "url": BASE + checks.path,
+                "base_url": BASE,
+                "token": checks.credentials["alpha"]["access_token"],
+                "user_id": user_id,
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    checks.passed("unchanged_Core_SDK1_client_calls_modern_native_endpoint")
+    checks.passed("shared_tool_bodies_use_real_remote_REST_and_WebSocket")
 
 
 async def exercise(checks: Checks) -> dict:
@@ -268,7 +348,8 @@ async def exercise(checks: Checks) -> dict:
     services = await checks.call("ha_list_services", {"domain": "input_boolean"})
     assert "input_boolean" in json.dumps(services), services
     checks.passed("shared_state_and_service_tools_on_Core")
-    await exercise_helpers(checks)
+    receipt = await exercise_helpers(checks)
+    await exercise_storage_families(checks, receipt)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -351,7 +432,9 @@ async def main() -> None:
         "homeassistant:\n  name: Native migration CI\n  latitude: 0\n  longitude: 0\n"
         "  elevation: 0\n  unit_system: metric\n  time_zone: UTC\n  auth_providers:\n"
         "    - type: homeassistant\nhttp:\ninput_boolean:\n  native_light:\n"
-        "    name: Native Light\nnative_fixture:\n",
+        "    name: Native Light\ninput_button:\ninput_select:\ninput_number:\n"
+        "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
+        "person:\ntag:\nnative_fixture:\n",
         encoding="utf-8",
     )
     docker(
@@ -380,6 +463,8 @@ async def main() -> None:
             checks = Checks(client, credentials)
             checks.passed("real_HA_authorization_code_flow")
             await create_entry(checks, identities["alpha"]["user_id"])
+            await checks.control("guard", {})
+            await exercise_external_clients(checks, identities["alpha"]["user_id"])
             evidence = await exercise(checks)
             # Do not persist generated identities or access/refresh tokens.
             evidence.pop("entry_id", None)

@@ -44,6 +44,12 @@ class EventBus:
 
 @pytest.fixture
 def native(monkeypatch: pytest.MonkeyPatch) -> Any:
+    # Sibling modules install independent HA stubs during collection. Native
+    # imports and the existing Core command owners must use the same registry.
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers"], "entity_registry", wsapi.er, raising=False
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.entity_registry", wsapi.er)
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.helpers.collection",
@@ -63,6 +69,10 @@ def native(monkeypatch: pytest.MonkeyPatch) -> Any:
     )
     module = importlib.import_module("custom_components.ha_mcp_tools.native_backend")
     monkeypatch.setattr(module, "json_bytes", lambda value: json.dumps(value).encode())
+    mutations = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.helper_mutations"
+    )
+    monkeypatch.setattr(mutations, "json_bytes", module.json_bytes)
     monkeypatch.setattr(module, "Context", SimpleNamespace)
     monkeypatch.setattr(module, "vol", _REAL_VOL)
     monkeypatch.setattr(wsapi, "vol", _REAL_VOL)
