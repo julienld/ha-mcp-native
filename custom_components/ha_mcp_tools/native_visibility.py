@@ -93,6 +93,16 @@ def hidden_from_core(hass: Any, config: VisibilityConfig) -> set[str]:
     return hidden
 
 
+def _native_unscannable_reason(name: str, arguments: dict[str, Any]) -> str | None:
+    if name == "ha_manage_app":
+        return "App operations can read or act on hidden entities without inspectable Core targets, including opaque HTTP GET APIs."
+    if name == "ha_manage_hacs" and arguments.get("action") in {"download", "remove"}:
+        return "Installing or removing integration code cannot be constrained to visible entities."
+    if name == "ha_get_camera_image":
+        return "Camera pixels cannot be filtered for hidden entities under visibility enforcement."
+    return None
+
+
 class NativeVisibility:
     def __init__(self, manager: Any) -> None:
         self.manager = manager
@@ -150,11 +160,8 @@ class NativeVisibility:
             return
         if not config.enforce:
             return
-        if name == "ha_get_camera_image":
-            self._deny(
-                name,
-                "Camera pixels cannot be filtered for hidden entities under visibility enforcement.",
-            )
+        if native_reason := _native_unscannable_reason(name, arguments):
+            self._deny(name, native_reason)
         try:
             matcher = await self._matcher(config)
         except VisibilityDataUnavailable:

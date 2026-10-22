@@ -331,6 +331,24 @@ digest is still compared. Native history and UI restore share the same guards,
 including deleted-file recreation. POSIX and HAOS path fixtures remain active
 on Linux; their Windows skips do not qualify a physical HAOS installation.
 
+Native HACS reads its published repository cache without refreshing GitHub,
+clearing the new flag or persisting metadata from an information request.
+Freshness and cached README availability are explicit. Use the existing
+`update_information` action for an admitted refresh. Public arguments and
+safety annotations remain unchanged; the shared prose describes this native
+read behavior and the historical remote endpoint's possible metadata writes.
+
+Mutations call the original HACS owners with installed validation and final
+actor, credential, visibility, owner, repository and method checks. Installing
+or removing code is refused under active hide-enforce rules. HACS 2.0.5
+(`c0dfd8b44297c3673c21973e2539375a53687a9c`) self-update/removal changes files
+through its owner without restarting or reloading this running integration.
+The response distinguishes files on disk, pending restart and unverified active
+runtime version. Unqualified future self-modification protocols are refused
+before dispatch. Core Container proves honest absence for both tools and all
+actions; authenticated HACS/GitHub installation remains unqualified. Existing
+patched legacy fixtures are not evidence of an unmodified upstream installation.
+
 Native Updates uses the published UpdateEntity owners, original update services
 and IssueRegistry callbacks. List/get preserve presentation and expose complete
 provider attributes; release notes come from the actual provider, with the shared

@@ -48,6 +48,8 @@ def test_composed_bulk_keeps_schemas_tags_and_annotations(native: object) -> Non
         "ha_delete_file",
         "ha_config_get_yaml",
         "ha_config_set_yaml",
+        "ha_get_hacs_info",
+        "ha_manage_hacs",
         "ha_restart",
         "ha_reload_core",
         "ha_manage_theme",

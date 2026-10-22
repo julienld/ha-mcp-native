@@ -32,6 +32,7 @@ from entity_checks import exercise_entities
 from event_checks import exercise_events
 from file_checks import exercise_files_yaml
 from group_checks import exercise_groups
+from hacs_checks import exercise_hacs_absence
 from health_checks import exercise_health
 from history_checks import exercise_history
 from interop_checks import exercise_llm
@@ -420,6 +421,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_radios(checks)
     await exercise_files_yaml(checks, BASE)
     await exercise_screenshots(checks, BASE)
+    await exercise_hacs_absence(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)

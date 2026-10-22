@@ -79,6 +79,38 @@ async def test_hidden_argument_is_concealed_before_approval_and_execution(
     manager.hass.bus.async_fire.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("ha_manage_app", {"slug": "fixture", "path": "/read", "method": "GET"}),
+        ("ha_manage_app", {"slug": "fixture", "action": "start"}),
+        ("ha_manage_hacs", {"action": "download", "repository": "fixture/example"}),
+        ("ha_manage_hacs", {"action": "remove", "repository": "fixture/example"}),
+    ],
+)
+async def test_opaque_native_app_and_hacs_writes_stop_before_execution(
+    tmp_path, monkeypatch, name, arguments
+) -> None:
+    manager, engine, handler = runtime(tmp_path, monkeypatch, name, {})
+    result = await engine.call(name, arguments, CallContext("alice"))
+    assert result.is_error and result.status == "not_started", result
+    assert result.data["error"]["code"] == "ENTITY_VISIBILITY_ENFORCED"
+    handler.assert_not_awaited()
+    assert not manager.approval_gate.queue.list_pending()
+
+
+@pytest.mark.parametrize("action", ["add_repository", "update_information"])
+async def test_native_hacs_metadata_remains_available_under_visibility(
+    tmp_path, monkeypatch, action
+) -> None:
+    _manager, engine, handler = runtime(tmp_path, monkeypatch, "ha_manage_hacs", {})
+    result = await engine.call(
+        "ha_manage_hacs", {"action": action}, CallContext("alice")
+    )
+    assert not result.is_error
+    handler.assert_awaited_once()
+
+
 async def test_visible_state_scrubs_related_hidden_data_with_warning(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -16,6 +16,7 @@ from .native_entity_tools import entity_removal_definition, entity_write_definit
 from .native_event_tools import event_definition
 from .native_filesystem_tools import filesystem_definitions
 from .native_group_tools import build_group_tools
+from .native_hacs_tools import hacs_definitions
 from .native_health_tools import health_definition
 from .native_history_tools import history_definition
 from .native_label_tools import build_label_tools
@@ -51,6 +52,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         event_definition(manager),
         *filesystem_definitions(manager),
         *build_group_tools(manager),
+        *hacs_definitions(manager),
         camera_definition(manager),
         overview_definition(manager),
         pipeline_definition(manager),
