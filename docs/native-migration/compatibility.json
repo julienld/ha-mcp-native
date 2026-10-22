@@ -97,6 +97,16 @@
     "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
     "public_contract": "original schemas and safety annotations remain unchanged"
   },
+  "native_updates": {
+    "owner": "published UpdateEntity/EntityComponent, original Core update services, and IssueRegistry.async_ignore",
+    "reads": "list/get retain public presentation and add complete provider attributes; provider release notes are read directly and public GitHub enrichment remains best effort",
+    "classification": "actual Supervisor Core/OS/Supervisor entity classes remain protected from category batches even after entity renames",
+    "self_affecting": "Core/OS installs are scheduled and revalidated before a clean-context handoff to Core; remaining batch targets are not dispatched and the reply does not confirm installation completion",
+    "uncertainty": "post-dispatch exceptions, provider cancellation and unverifiable skipped-version readback are outcome_unknown; no replay and no remaining-target dispatch",
+    "update_source": "no PyPI sidecar status is presented as the native HACS component's update authority",
+    "qualification": "unit owners and cold import are exercised; the Container fixture uses real UpdateEntity and Repairs APIs, while actual Supervisor/OS updates are not qualified",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged; prose discloses native scheduling and optional self-update information"
+  },
   "native_pipelines": {
     "owner": "published Core Assist pipeline collection and conversation manager/agent",
     "process": "text conversation with the selected agent, not a complete STT/TTS run",

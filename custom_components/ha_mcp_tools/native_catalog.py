@@ -27,6 +27,7 @@ from .native_search_tools import search_definition
 from .native_system_tools import system_definitions
 from .native_theme_tools import theme_definition
 from .native_trace_tools import trace_definition
+from .native_update_tools import update_definition
 
 
 def build_native_catalog(manager: Any) -> list[ToolDefinition]:
@@ -52,6 +53,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         health_definition(manager),
         *system_definitions(manager),
         theme_definition(manager),
+        update_definition(manager),
         *build_calendar_tools(manager),
         *build_resource_tools(manager),
         *build_dashboard_tools(manager),

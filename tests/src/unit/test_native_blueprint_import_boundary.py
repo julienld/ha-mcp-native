@@ -30,8 +30,12 @@ from custom_components.ha_mcp_tools.native_operations.blueprint_restore import N
 from ha_mcp.runtime.pipeline_tools import PipelineTools
 from ha_mcp.runtime.pipeline_values import validate_sentence
 from custom_components.ha_mcp_tools.native_pipeline_tools import pipeline_definition
+from ha_mcp.runtime.update_tools import UpdateToolsFacade
+from ha_mcp.runtime.update_plans import update_targets
+from custom_components.ha_mcp_tools.native_update_tools import update_definition
 assert BlueprintTools and blueprint_definition and NativeBlueprintRestore
 assert PipelineTools and pipeline_definition and validate_sentence
+assert UpdateToolsFacade and update_definition and update_targets('skip', 'update.fixture', None) == (['update.fixture'], [])
 assert parse_blueprint_body('value: !input selected') == {'value': {'__input__': 'selected'}}
 """
     result = subprocess.run(

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextvars import Context as TaskContext
 from dataclasses import replace
+from functools import partial
 from typing import Any, Literal
 
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
@@ -30,10 +31,13 @@ class NativeSystemLifecycle:
 
     def schedule(
         self,
-        action: Literal["restart", "entry_reload"],
+        action: Literal["restart", "entry_reload", "update_install"],
         actor: CallContext,
         *,
         entry: Any = None,
+        update: Any = None,
+        backup: bool = False,
+        update_service: Any = None,
     ) -> None:
         check_mutation_admission(actor)
         if self.closed:
@@ -54,14 +58,23 @@ class NativeSystemLifecycle:
         # credential validator and scoped actor remain live until dispatch.
         actor = replace(actor, progress=None)
         task = asyncio.create_task(
-            self._deliver(action, actor, entry, self._policy_key()),
+            self._deliver(
+                action, actor, entry, self._policy_key(), update, backup, update_service
+            ),
             name=f"ha-mcp-deferred-{action}",
         )
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
 
     async def _deliver(
-        self, action: str, actor: CallContext, entry: Any, policy_key: str | None
+        self,
+        action: str,
+        actor: CallContext,
+        entry: Any,
+        policy_key: str | None,
+        update: Any = None,
+        backup: bool = False,
+        update_service: Any = None,
     ) -> None:
         try:
             # This is a response-flush allowance, not a promise of delivery or
@@ -69,6 +82,13 @@ class NativeSystemLifecycle:
             await asyncio.sleep(self.reply_delay)
             await self.manager.refresh_policy()
             await admit_registry_write(actor, self.manager.backend.authorize)
+            if action == "update_install":
+                from .updates import NativeUpdates
+
+                await NativeUpdates(self.manager, actor)._visible_target(
+                    update.entity_id
+                )
+                await admit_registry_write(actor, self.manager.backend.authorize)
             if self.closed or not self.manager.accepting:
                 raise ToolFailure(
                     "INTEGRATION_STOPPING", "The integration is stopping."
@@ -87,28 +107,25 @@ class NativeSystemLifecycle:
                     "CONFIG_CONFLICT", "The config entry owner changed before reload."
                 )
             check_mutation_admission(actor)
+            if action == "update_install":
+                from .update_entities import check_update_target, stopping_update
+
+                check_update_target(hass, update)
+                if (
+                    not stopping_update(hass, update)
+                    or update_service is None
+                    or hass.services.async_services_for_domain("update").get("install")
+                    is not update_service
+                ):
+                    raise ToolFailure(
+                        "CONFIG_CONFLICT", "The self-affecting update owner changed"
+                    )
             # Core will unload this manager. From this point the request belongs
             # to Core, so its unload must never wait on the task that requested it.
             task = asyncio.current_task()
             if task is not None:
                 self.pending.discard(task)
-            clean = TaskContext()
-            if action == "entry_reload":
-                clean.run(hass.config_entries.async_schedule_reload, entry.entry_id)
-            else:
-                from homeassistant.core import Context
-
-                request = hass.services.async_call(
-                    "homeassistant",
-                    "restart",
-                    {},
-                    blocking=False,
-                    context=Context(user_id=actor.user_id),
-                )
-                owner_task = clean.run(
-                    hass.async_create_task, request, "ha-mcp requested Core restart"
-                )
-                owner_task.add_done_callback(_completed_handoff)
+            self._handoff(action, actor, entry, update, backup)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - the replied caller cannot receive a deferred failure
@@ -117,6 +134,30 @@ class NativeSystemLifecycle:
                 action,
                 getattr(error, "code", type(error).__name__),
             )
+
+    def _handoff(
+        self, action: str, actor: CallContext, entry: Any, update: Any, backup: bool
+    ) -> None:
+        hass = self.manager.hass
+        clean = TaskContext()
+        if action == "entry_reload":
+            clean.run(hass.config_entries.async_schedule_reload, entry.entry_id)
+        else:
+            from homeassistant.core import Context
+
+            request = hass.services.async_call(
+                "update" if action == "update_install" else "homeassistant",
+                "install" if action == "update_install" else "restart",
+                {"entity_id": update.entity_id, "backup": backup}
+                if action == "update_install"
+                else {},
+                blocking=False,
+                context=Context(user_id=actor.user_id),
+            )
+            owner_task = clean.run(
+                hass.async_create_task, request, f"ha-mcp requested {action}"
+            )
+            owner_task.add_done_callback(partial(_completed_handoff, action=action))
 
     async def stop(self) -> None:
         self.closed = True
@@ -128,11 +169,12 @@ class NativeSystemLifecycle:
             await await_owned_io(asyncio.gather(*tasks, return_exceptions=True))
 
 
-def _completed_handoff(task: asyncio.Task[Any]) -> None:
+def _completed_handoff(task: asyncio.Task[Any], *, action: str) -> None:
     if task.cancelled():
         return
     if error := task.exception():
         _LOGGER.warning(
-            "Core did not accept the deferred restart request (%s).",
+            "Core did not accept the deferred %s request (%s).",
+            action,
             type(error).__name__,
         )

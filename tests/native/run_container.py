@@ -42,6 +42,7 @@ from resource_checks import exercise_resources
 from search_checks import exercise_search
 from system_checks import exercise_system_actions, exercise_system_self_reload
 from theme_checks import exercise_themes
+from update_checks import exercise_updates
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tests/native/.ha-test/config"
@@ -412,6 +413,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_energy(checks)
     await exercise_system_actions(checks)
     await exercise_pipelines(checks)
+    await exercise_updates(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)

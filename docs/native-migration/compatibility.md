@@ -287,6 +287,22 @@ substitutes the caller or creates a token. Container covers real theme defaults
 and absent-renderer refusal; a real Supervisor/Puppet engine account remains
 outside this qualification.
 
+Native Updates uses the published UpdateEntity owners, original update services
+and IssueRegistry callbacks. List/get preserve presentation and expose complete
+provider attributes; release notes come from the actual provider, with the shared
+best-effort public GitHub enrichment. PyPI's sidecar release is not presented as
+the native HACS component's update authority. Actual Core, OS and Supervisor
+entity classes remain excluded from category batches after renaming.
+
+Core/OS installs are scheduled, then revalidate the actor, policy, visibility and
+target before Core takes ownership in a clean task context. Their reply does not
+confirm installation completion, and later batch targets are not dispatched.
+Other operations retain known per-item results; a post-dispatch failure or an
+unverified skipped-version readback is unknown and is never replayed. The new
+Container fixture exercises real UpdateEntity services and Repairs callbacks;
+it does not qualify a Supervisor or OS update. Public schemas and safety hints
+remain unchanged, with the native scheduling limit stated in the shared prose.
+
 Native restart and self-reload responses report a scheduled request, with
 `restarted=false` or `reloaded=false`. Before handoff, the pending request
 rechecks its actor, credential, unchanged policy and target. Core then owns the

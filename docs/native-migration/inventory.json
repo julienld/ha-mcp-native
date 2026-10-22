@@ -27,12 +27,13 @@
     "custom_components/ha_mcp_tools/native_energy_tools.py",
     "custom_components/ha_mcp_tools/native_system_tools.py",
     "custom_components/ha_mcp_tools/native_theme_tools.py",
-    "custom_components/ha_mcp_tools/native_pipeline_tools.py"
+    "custom_components/ha_mcp_tools/native_pipeline_tools.py",
+    "custom_components/ha_mcp_tools/native_update_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 68,
+    "native_catalog_declarations": 69,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -3398,8 +3399,8 @@
         "native response contracts"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_updates.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/update_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3410,68 +3411,43 @@
       ],
       "client_call_candidates": [
         {
-          "line": 167,
-          "call": "http_client.get",
-          "wire_literals": []
-        },
-        {
-          "line": 241,
+          "line": 88,
           "call": "client._request",
           "wire_literals": []
         },
         {
-          "line": 477,
+          "line": 105,
           "call": "self._client.get_states",
           "wire_literals": []
         },
         {
-          "line": 766,
+          "line": 253,
           "call": "self._client.get_states",
           "wire_literals": []
         },
         {
-          "line": 857,
+          "line": 326,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "repairs/list_issues"
           ]
         },
         {
-          "line": 173,
-          "call": "http_client.get",
-          "wire_literals": []
-        },
-        {
-          "line": 325,
-          "call": "http_client.get",
-          "wire_literals": []
-        },
-        {
-          "line": 377,
-          "call": "http_client.get",
-          "wire_literals": []
-        },
-        {
-          "line": 436,
-          "call": "http_client.get",
-          "wire_literals": []
-        },
-        {
-          "line": 644,
+          "line": 188,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "update/release_notes"
           ]
         },
         {
-          "line": 914,
+          "line": 365,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "repairs/ignore_issue"
           ]
         },
         {
-          "line": 791,
+          "line": 278,
           "call": "self._client.call_service",
           "wire_literals": []
         }
