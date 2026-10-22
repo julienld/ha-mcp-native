@@ -1,0 +1,32 @@
+{
+    "domain": "ha_mcp_tools",
+    "name": "HA-MCP Custom Component",
+    "after_dependencies": [
+        "backup",
+        "cloud",
+        "energy",
+        "frontend",
+        "http",
+        "logbook",
+        "lovelace",
+        "network",
+        "recorder"
+    ],
+    "codeowners": [
+        "@homeassistant-ai"
+    ],
+    "config_flow": true,
+    "dependencies": [
+        "webhook"
+    ],
+    "documentation": "https://github.com/julienld/ha-mcp-native",
+    "iot_class": "local_push",
+    "issue_tracker": "https://github.com/julienld/ha-mcp-native/issues",
+    "requirements": [
+        "mcp>=1.24.0",
+        "ruamel.yaml>=0.18.0",
+        "voluptuous-openapi>=0.4.1",
+        "ha-mcp @ https://github.com/julienld/ha-mcp-native/releases/download/9.0.0.dev2/ha_mcp-9.0.0.dev2-py3-none-any.whl#sha256=038dad877ea87e0e976b7556d8c55af712b88849cb5652ca26198dfb36dd34de"
+    ],
+    "version": "9.0.0.dev2"
+}

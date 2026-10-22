@@ -1,0 +1,651 @@
+"""Expose the in-process server's toolset as a Home Assistant LLM API (#1745).
+
+While the in-process server entry is up, the ha-mcp toolset is registered as
+one or two LLM APIs (``homeassistant.helpers.llm``). Any Home Assistant
+conversation agent — OpenAI, Google, Ollama, Anthropic, or any other — can
+then select it in its "Control Home Assistant" option, and the user chats
+with the toolset through the surfaces Home Assistant already has: the Assist
+chat UI, the companion apps, and voice satellites. No separate chat frontend
+is needed.
+
+Two exposure modes (the ``llm_api_exposure`` entry option picks which are
+registered; default is tool-search only):
+
+* **tool search** — the agent gets a tiny catalog: the server's pinned tools
+  mirrored directly, plus two meta-tools synthesized here: ``ha_search_tools``
+  (find tools by task, then fetch one's full schema by name; see
+  :mod:`llm_api_search`) and ``ha_call_tool`` (execute a discovered tool). This
+  keeps per-turn context small — the shape context-limited models need.
+* **full** — every exposed tool is mirrored directly into the agent's tool
+  list, one schema each.
+
+**Per-tool exposure is decided by the server, not here.** The server stamps
+every ``tools/list`` entry with ``_meta.ha_mcp = {llm_api_exposed, pinned}``
+(see ``src/ha_mcp/llm_exposure.py``): user toggles from the settings UI, with
+deny-by-default for beta/developer/restart-reload-backup tools. Both modes
+filter on the stamp, and the tool-search ``ha_call_tool`` forwarder re-checks
+it at call time — a hidden tool is invisible (absent from lists and search
+results) and a hallucinated call to one gets a plain unknown-tool error, the
+same answer a nonexistent tool gets, so nothing leaks. Globally-disabled
+tools never appear in ``tools/list`` at all and the server rejects calling
+them by name, and every forwarded call traverses the server's policy /
+read-only middleware exactly like any MCP client's call.
+
+This legacy adapter reaches the server's worker thread and loopback listener
+through real MCP. It shares the side-effect-free schema projection with the
+native adapter but never constructs the standalone runtime in HA. It uses
+loopback streamable HTTP with Home Assistant's shared ``mcp`` SDK (the manifest
+requires ``mcp>=1.24.0``, so 1.x or 2.x), never ha-mcp's vendored copy. Every SDK import here
+is lazy and the first one runs on the executor.
+
+The tool list is fetched fresh on every ``async_get_api_instance`` call (once
+per conversation turn): exposure toggles and runtime-registered custom tools
+apply on the agent's next message, and two loopback round-trips per turn are
+noise next to the LLM call itself. Tool calls likewise open a short-lived
+stateless session each — the in-process server serves ``stateless_http=True``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import logging
+import sys
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
+
+import voluptuous as vol
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
+
+from ha_mcp.tool_api.llm_projection import (
+    _EXCLUSIVE_BOUNDS as _EXCLUSIVE_BOUNDS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _INSTANCE_VALUES as _INSTANCE_VALUES,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _OPAQUE_KEYWORDS as _OPAQUE_KEYWORDS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _SCHEMA_MAPS as _SCHEMA_MAPS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _is_opaque_key as _is_opaque_key,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _to_inclusive_bounds as _to_inclusive_bounds,
+)
+from ha_mcp.tool_api.llm_projection import (
+    normalise_schema as _project_normalise_schema,
+)
+
+from .const import (
+    DATA_LLM_API_UNSUB,
+    DEFAULT_LLM_API_EXPOSURE,
+    DOMAIN,
+    EXPOSURE_BOTH,
+    EXPOSURE_FULL,
+    EXPOSURE_TOOL_SEARCH,
+    OPT_LLM_API_EXPOSURE,
+)
+from .llm_api_search import CALL_TOOL_NAME as _CALL_TOOL_NAME
+from .llm_api_search import SEARCH_TOOL_NAME as _SEARCH_TOOL_NAME
+from .llm_api_search import HaMcpSearchTool as HaMcpSearchTool
+from .llm_projection import (
+    _FALLBACK_API_PROMPT as _FALLBACK_API_PROMPT,
+)
+from .llm_projection import (
+    _TOOL_SEARCH_PROMPT as _TOOL_SEARCH_PROMPT,
+)
+from .llm_projection import (
+    CALL_TOOL_DESCRIPTION,
+    CALL_TOOL_PARAMETERS,
+    build_full_tools,
+    build_search_tools,
+    convert_parameters,
+)
+from .llm_projection import (
+    _schema_converter as _schema_converter,
+)
+from .llm_projection import (
+    _tool_input_schema as _tool_input_schema,
+)
+from .llm_projection import (
+    async_unregister_llm_api as async_unregister_llm_api,
+)
+from .llm_projection import (
+    convert_to_voluptuous as convert_to_voluptuous,
+)
+from .llm_tool_exposure import partition_tools
+from .llm_tool_metadata import declare_metadata, tool_hints, tool_result, tool_title
+
+if TYPE_CHECKING:
+    import httpx
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.util.json import JsonObjectType
+    from mcp import types as mcp_types
+    from mcp.client.session import ClientSession
+
+_LOGGER = logging.getLogger(__name__)
+
+# Listing tools is two loopback round-trips (initialize + tools/list); a slow
+# answer means the server thread is wedged, not that the network is slow.
+_LIST_TOOLS_TIMEOUT_SECONDS = 10.0
+
+# Tool calls run real work — WebSocket-verified device control, dashboard
+# screenshots, config writes that poll for completion — well beyond the 10s a
+# remote-server integration would allow. The conversation agent shows a spinner
+# for the duration, so err generous rather than kill a legitimate slow tool.
+_CALL_TOOL_TIMEOUT_SECONDS = 300.0
+
+
+def _normalise_schema(schema: Any, tool_name: str) -> Any:
+    return _project_normalise_schema(schema, tool_name, logger=_LOGGER)
+
+
+def _transport_error_leaves() -> tuple[type[BaseException], ...]:
+    """Return the non-group exception classes a loopback exchange can raise.
+
+    OSError covers a refused/dropped loopback connect; TimeoutError comes
+    from our asyncio.timeout budget. HTTP-client errors and the protocol-level
+    MCP error can also escape a session call UNWRAPPED (HA core's mcp
+    integration catches both the same way); SDK 1.x raises ``httpx`` /
+    ``McpError``, 2.x raises ``httpx2`` / ``MCPError``. Read from ``sys.modules``:
+    the SDK already imported whichever it raised from, and this runs on the
+    event loop, where an import is a blocking call.
+    """
+    errors: list[type[BaseException]] = [TimeoutError, OSError]
+    for module_name, attribute in (
+        ("httpx", "HTTPError"),
+        ("httpx2", "HTTPError"),
+        ("mcp", "McpError"),
+        ("mcp", "MCPError"),
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        error_class = getattr(module, attribute, None)
+        if isinstance(error_class, type) and error_class not in errors:
+            errors.append(error_class)
+    return tuple(errors)
+
+
+def _transport_errors() -> tuple[type[BaseException], ...]:
+    """Return the ``except`` target for one loopback MCP exchange.
+
+    Evaluated at exception time (an ``except`` expression is), so whichever
+    HTTP/MCP module raised is already in ``sys.modules`` for
+    :func:`_transport_error_leaves` to find. Includes ExceptionGroup because
+    the SDK's anyio task groups wrap in-session failures — but a caught group
+    must still pass
+    :func:`_is_transport_failure` before being mapped to a friendly error,
+    or a genuine bug that happened inside the task group would be relabeled
+    as a transport failure (review finding).
+    """
+    return (*_transport_error_leaves(), ExceptionGroup)
+
+
+def _is_transport_failure(err: BaseException) -> bool:
+    """Return True when ``err`` is purely a transport failure.
+
+    A group counts only when EVERY leaf (nested groups included) is a
+    transport error: a group carrying any non-transport member is a genuine
+    bug that must propagate with its loud traceback instead of being
+    remapped to a "could not reach the server" message.
+    """
+    if isinstance(err, ExceptionGroup):
+        return all(_is_transport_failure(exc) for exc in err.exceptions)
+    return isinstance(err, _transport_error_leaves())
+
+
+def _import_mcp_sdk() -> None:
+    """Import lazy LLM dependencies (blocking; run on the executor).
+
+    Raises ImportError when the MCP SDK or Core's schema converter is not
+    importable — the caller decides whether that skips registration or
+    surfaces as a conversation error.
+    """
+    importlib.import_module("mcp.client.session")
+    importlib.import_module("mcp.client.streamable_http")
+    _schema_converter()
+
+
+async def async_probe_mcp_sdk(hass: HomeAssistant) -> bool:
+    """Return True when lazy LLM dependencies import (first import off-loop)."""
+    try:
+        await hass.async_add_executor_job(_import_mcp_sdk)
+    except ImportError as err:
+        _LOGGER.warning(
+            "A required LLM dependency is not importable (%s); the "
+            "conversation-agent LLM API will not be available",
+            err,
+        )
+        return False
+    return True
+
+
+def _loopback_httpx_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """``httpx_client_factory`` for the pre-rename SDK's ``streamablehttp_client``.
+
+    That deprecated entry point takes no ``http_client`` — it always builds
+    its own via this factory — but the factory itself IS overridable, so the
+    same ``verify=False`` / ``trust_env=False`` posture as the canonical path
+    in :func:`_mcp_session` still applies: this fallback is loopback-only
+    too, so a real SSL context is pure waste and this call must never be
+    diverted through an environment proxy (which would also leak the URL's
+    embedded ``secret_path`` to it).
+
+    ``timeout`` mirrors ``create_mcp_http_client`` (the factory this
+    substitutes for): a ``None`` here means "no timeout was supplied", not
+    "disable timeouts" — the real ``streamablehttp_client`` caller always
+    passes an explicit ``httpx.Timeout``, but a bare ``None`` reaching
+    ``httpx.AsyncClient`` directly disables every timeout outright (review
+    finding), which is the wrong zero-argument default for a fallback aimed
+    at unknown old environments.
+
+    The substitute value is inlined rather than imported from
+    ``mcp.shared._httpx_utils``: this factory only ever runs on SDKs old
+    enough to lack ``streamable_http_client`` (the canonical name this
+    module tries first), and ``MCP_DEFAULT_TIMEOUT`` /
+    ``MCP_DEFAULT_SSE_READ_TIMEOUT`` don't exist before mcp 1.24 either — an
+    import would raise on every SDK version this fallback actually serves
+    (round-2 review finding: the first attempt at this fix broke the exact
+    path it was meant to harden). ``create_mcp_http_client``'s own ``None``
+    default on those older SDKs is this same flat ``httpx.Timeout(30.0)``,
+    with no separate read timeout (the ``read=300`` shape is itself a 1.24+
+    addition) — matched here rather than guessed at.
+    """
+    import httpx
+
+    if timeout is None:
+        timeout = httpx.Timeout(30.0)
+
+    return httpx.AsyncClient(
+        headers=headers, timeout=timeout, auth=auth, verify=False, trust_env=False
+    )
+
+
+@asynccontextmanager
+async def _mcp_session(
+    url: str,
+) -> AsyncIterator[tuple[ClientSession, mcp_types.InitializeResult]]:
+    """Open an initialized MCP session against the loopback server.
+
+    Imports resolve from ``sys.modules`` — :func:`async_probe_mcp_sdk` did the
+    real (blocking) import on the executor before the API was registered.
+
+    Builds a throwaway httpx client scoped to this one session rather than
+    reusing Home Assistant's shared one (``helpers.httpx_client.
+    get_async_client`` — the prior approach): the SDK applies NO timeout of
+    its own when a caller-provided client is passed, so whatever timeout
+    THAT client happens to carry becomes the real wire-level ceiling. HA's
+    shared client is built with no explicit ``timeout=``, so it silently
+    carries httpx's own hardcoded 5-second default — capping every tool call
+    at 5 seconds of read-idle no matter how generous
+    ``_CALL_TOOL_TIMEOUT_SECONDS`` / ``_LIST_TOOLS_TIMEOUT_SECONDS`` looked
+    (live-found investigating a ~60s Assist-pipeline hang: a real tool doing
+    real work never got anywhere near its own asyncio budget).
+
+    ``verify=False`` is not a security relaxation: ``url`` is always
+    ``http://127.0.0.1:<port>...`` (see ``async_register_llm_api``) — a
+    plain-HTTP loopback call that never negotiates TLS — so building a real
+    SSL context would be pure waste. It also keeps this loop-safe the same
+    way the shared client did: an SSL context built with ``verify=True``
+    loads the system CA bundle SYNCHRONOUSLY (live-found — HA's
+    blocking-call monitor flagged this exact line when the SDK built its own
+    default client), and skipping verification skips that load entirely.
+
+    ``trust_env=False`` for the same "this is loopback, not the network"
+    reason: httpx defaults to reading ``HTTP_PROXY``/``NO_PROXY`` from the
+    environment, and ``127.0.0.1`` is not exempt unless ``NO_PROXY``
+    explicitly lists it. Under an ``HTTP_PROXY`` that doesn't, this call
+    would leave the loopback listener entirely and go out through the
+    configured proxy instead — which also hands the proxy ``url``'s
+    embedded ``secret_path`` (the private endpoint credential). Disabling
+    env trust removes both failure modes; nothing here should ever consult
+    a proxy.
+
+    The client is entered on the exit stack so it closes with the rest of
+    the session.
+    """
+    from mcp.client.session import ClientSession
+
+    sdk_transport = importlib.import_module("mcp.client.streamable_http")
+
+    async with AsyncExitStack() as stack:
+        streamable_http_client = getattr(sdk_transport, "streamable_http_client", None)
+        if streamable_http_client is None:
+            # Pre-1.24 SDK (a third-party pin forcing the shared mcp below the
+            # manifest's floor): same call shape, deprecated name,
+            # and no http_client kwarg — but it does accept a factory for the
+            # client it builds internally, so _loopback_httpx_client_factory
+            # keeps this fallback on the same verify=False/trust_env=False
+            # posture as the canonical path below.
+            transport = sdk_transport.streamablehttp_client(
+                url=url, httpx_client_factory=_loopback_httpx_client_factory
+            )
+        else:
+            # SDK 1.x takes an httpx client, 2.x an httpx2 one: use the library
+            # the transport module itself imported.
+            http_lib = getattr(sdk_transport, "httpx2", None) or getattr(
+                sdk_transport, "httpx", None
+            )
+            if http_lib is None:
+                http_lib = importlib.import_module("httpx")
+            http_client = await stack.enter_async_context(
+                http_lib.AsyncClient(
+                    verify=False,
+                    trust_env=False,
+                    timeout=http_lib.Timeout(_CALL_TOOL_TIMEOUT_SECONDS),
+                )
+            )
+            transport = streamable_http_client(url=url, http_client=http_client)
+
+        # 1.x yields (read, write, get_session_id); 2.x yields (read, write).
+        streams = await stack.enter_async_context(transport)
+        read_stream, write_stream = streams[0], streams[1]
+        session = await stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        init_result = await session.initialize()
+        yield session, init_result
+
+
+class HaMcpTool(llm.Tool):
+    """One ha-mcp tool, called over loopback MCP."""
+
+    def __init__(
+        self,
+        name: str,
+        description: str | None,
+        parameters: vol.Schema,
+        server_url: str,
+        *,
+        title: str | None = None,
+        hints: dict[str, Any] | None = None,
+    ) -> None:
+        """Store the converted schema, the server's metadata and the endpoint."""
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self._server_url = server_url
+        declare_metadata(self, title=title, hints=hints)
+
+    async def async_call(
+        self,
+        hass: HomeAssistant,
+        tool_input: llm.ToolInput,
+        llm_context: llm.LLMContext,
+    ) -> Any:
+        """Call the tool on the in-process server and return its result."""
+        dumped = await _forward_tool_call(
+            hass, self._server_url, self.name, tool_input.tool_args
+        )
+        return tool_result(dumped, error=dumped.get("isError") is True)
+
+
+async def _forward_tool_call(
+    hass: HomeAssistant, server_url: str, name: str, arguments: dict[str, Any]
+) -> JsonObjectType:
+    """Forward one tool call over loopback and dump the result for the agent."""
+    try:
+        async with (
+            asyncio.timeout(_CALL_TOOL_TIMEOUT_SECONDS),
+            _mcp_session(server_url) as (session, _init),
+        ):
+            result = await session.call_tool(name, arguments)
+    except _transport_errors() as err:
+        if not _is_transport_failure(err):
+            raise
+        raise HomeAssistantError(
+            f"Error calling the HA-MCP tool {name}: {err}"
+        ) from err
+    # Full CallToolResult (content blocks, structuredContent, isError) —
+    # the same shape HA core's mcp integration hands to agents; ha-mcp
+    # signals tool failure via isError + structured error JSON, which the
+    # agent reads and reacts to like any tool output. Dumped by alias (2.x
+    # fields are snake_case) with ``meta`` kept at its 1.x key, so both SDK
+    # lines hand agents the same keys.
+    dumped = result.model_dump(exclude_unset=True, exclude_none=True, by_alias=True)
+    return cast("JsonObjectType", _meta_as_field_name(dumped))
+
+
+def _meta_as_field_name(dumped: dict[str, Any]) -> dict[str, Any]:
+    """Rename ``_meta`` to ``meta`` on the SDK models only, never in tool payloads."""
+    models: list[Any] = [dumped]
+    for block in dumped.get("content", []):
+        models += [block, block.get("resource") if isinstance(block, dict) else None]
+    for model in models:
+        if isinstance(model, dict) and "_meta" in model:
+            model["meta"] = model.pop("_meta")
+    return dumped
+
+
+class HaMcpCallTool(llm.Tool):
+    """Meta-tool: execute a tool discovered via search (tool-search mode).
+
+    The exposure re-check at call time is the enforcement half of the
+    tool-search mode: hiding a tool from search results alone would not stop
+    a model that guesses a name. A non-exposed name gets the same
+    unknown-tool answer a nonexistent name gets — existence never leaks.
+    """
+
+    name = _CALL_TOOL_NAME
+    description = CALL_TOOL_DESCRIPTION
+    parameters = CALL_TOOL_PARAMETERS
+
+    def __init__(self, server_url: str, exposed_names: set[str]) -> None:
+        """Hold the loopback endpoint and the exposed-name allowlist."""
+        self._server_url = server_url
+        self._exposed_names = exposed_names
+        # Dispatches any exposed tool, so no hints: Core's least-safe defaults.
+        declare_metadata(self, title="Call HA-MCP Tool", hints=None)
+
+    async def async_call(
+        self,
+        hass: HomeAssistant,
+        tool_input: llm.ToolInput,
+        llm_context: llm.LLMContext,
+    ) -> JsonObjectType:
+        """Forward the call when the target is exposed; unknown-tool otherwise."""
+        name = str(tool_input.tool_args.get("name", ""))
+        arguments = tool_input.tool_args.get("arguments") or {}
+        if name not in self._exposed_names:
+            return tool_result(
+                {
+                    "error": f"Unknown tool '{name}'.",
+                    "suggestion": (
+                        f"Use {_SEARCH_TOOL_NAME} to discover available tools."
+                    ),
+                },
+                error=True,
+            )
+        dumped = await _forward_tool_call(hass, self._server_url, name, arguments)
+        return tool_result(dumped, error=dumped.get("isError") is True)
+
+
+@dataclass(kw_only=True)
+class HaMcpLlmApi(llm.API):
+    """The in-process ha-mcp server's toolset as a Home Assistant LLM API."""
+
+    server_url: str
+    # Valid instance modes are only tool_search and full — EXPOSURE_BOTH is
+    # an option value that _apis_for_mode expands into two instances and must
+    # never reach here. The default is the compact/safe shape, matching the
+    # option default (review finding: defaulting to full made an omitted
+    # mode maximally exposed).
+    mode: str = EXPOSURE_TOOL_SEARCH
+
+    async def async_get_api_instance(
+        self, llm_context: llm.LLMContext
+    ) -> llm.APIInstance:
+        """Fetch the current tool list and return an API instance.
+
+        Fetched fresh each conversation turn (see the module docstring); the
+        server's own initialize ``instructions`` become the API prompt, so the
+        agent gets the same guidance every MCP client gets.
+        """
+        try:
+            async with (
+                asyncio.timeout(_LIST_TOOLS_TIMEOUT_SECONDS),
+                _mcp_session(self.server_url) as (
+                    session,
+                    init_result,
+                ),
+            ):
+                list_result = await session.list_tools()
+        except _transport_errors() as err:
+            if not _is_transport_failure(err):
+                raise
+            raise HomeAssistantError(
+                f"Could not reach the in-process HA-MCP server: {err}"
+            ) from err
+
+        exposed, pinned, stamped = partition_tools(list_result.tools)
+        # Never mirror or search a server-side tool that shares a synthesized
+        # meta-tool's name (the server's own tool-search mode registers an
+        # ha_search_tools) — one name, one behavior.
+        exposed = [
+            t for t in exposed if t.name not in (_SEARCH_TOOL_NAME, _CALL_TOOL_NAME)
+        ]
+        if not stamped:
+            _LOGGER.warning(
+                "The running server does not stamp LLM-API exposure metadata "
+                "(older ha-mcp package); applying the component's built-in "
+                "conservative deny-list instead. Update the server package "
+                "for per-tool control from the settings UI."
+            )
+
+        prompt = init_result.instructions or _FALLBACK_API_PROMPT
+        # full is the explicit opt-in; anything else — including an unknown
+        # value — falls through to the compact/safe tool-search shape.
+        if self.mode == EXPOSURE_FULL:
+            tools = self._build_full_tools(exposed)
+        else:
+            tools = self._build_tool_search_tools(exposed, pinned)
+            prompt += _TOOL_SEARCH_PROMPT
+
+        return llm.APIInstance(self, prompt, llm_context, tools)
+
+    def _convert_parameters(self, tool: Any, schema: Any) -> vol.Schema | None:
+        return cast(
+            vol.Schema | None,
+            convert_parameters(tool, schema, converter=convert_to_voluptuous),
+        )
+
+    def _mirror(self, tool: Any, parameters: vol.Schema) -> HaMcpTool:
+        """Mirror one server tool with its title and safety hints."""
+        return HaMcpTool(
+            tool.name,
+            tool.description,
+            parameters,
+            self.server_url,
+            title=tool_title(tool),
+            hints=tool_hints(tool),
+        )
+
+    def _build_full_tools(self, exposed: list[Any]) -> list[llm.Tool]:
+        return build_full_tools(
+            exposed, self._mirror, self._convert_parameters, normalize=_normalise_schema
+        )
+
+    def _build_tool_search_tools(
+        self, exposed: list[Any], pinned: set[str]
+    ) -> list[llm.Tool]:
+        return build_search_tools(
+            exposed,
+            pinned,
+            self._mirror,
+            self._convert_parameters,
+            lambda names: HaMcpCallTool(self.server_url, names),
+            normalize=_normalise_schema,
+        )
+
+
+def _apis_for_mode(
+    hass: HomeAssistant, entry: ConfigEntry, server_url: str, exposure: str
+) -> list[HaMcpLlmApi]:
+    """Build the API registration set for the configured exposure mode."""
+    full = HaMcpLlmApi(
+        hass=hass,
+        id=f"{DOMAIN}-{entry.entry_id}",
+        name=entry.title,
+        server_url=server_url,
+        mode=EXPOSURE_FULL,
+    )
+    search = HaMcpLlmApi(
+        hass=hass,
+        id=f"{DOMAIN}-{entry.entry_id}-toolsearch",
+        name=f"{entry.title} (tool search)",
+        server_url=server_url,
+        mode=EXPOSURE_TOOL_SEARCH,
+    )
+    if exposure == EXPOSURE_FULL:
+        return [full]
+    if exposure == EXPOSURE_BOTH:
+        return [full, search]
+    # Default and explicit tool_search both land here; an unknown stored
+    # value degrades to the default rather than failing bring-up.
+    return [search]
+
+
+async def async_register_llm_api(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    port: int,
+    secret_path: str,
+) -> None:
+    """Register the toolset as LLM API(s) per the exposure option (advisory).
+
+    Called from the bring-up success path. Never raises — and that has to be
+    literal, not aspirational: any exception escaping here lands in the
+    bring-up's outer ``except Exception``, which tears the already-running
+    server down and files a "start" repair issue for what is a cosmetic
+    failure (review finding). Hence the broad containment: whatever goes
+    wrong is logged and the feature is simply absent until the next (re)load.
+    Cancellation (a BaseException) still propagates.
+    """
+    try:
+        if not await async_probe_mcp_sdk(hass):
+            return
+
+        # Re-registration guard: a bring-up after a teardown that could not
+        # run (or a duplicate bring-up) must replace the stale registration,
+        # not fail on the duplicate id.
+        async_unregister_llm_api(hass)
+
+        exposure = str(
+            entry.options.get(OPT_LLM_API_EXPOSURE, DEFAULT_LLM_API_EXPOSURE)
+        )
+        server_url = f"http://127.0.0.1:{port}{secret_path}"
+        unsubs = [
+            llm.async_register_api(hass, api)
+            for api in _apis_for_mode(hass, entry, server_url, exposure)
+        ]
+        hass.data.setdefault(DOMAIN, {})[DATA_LLM_API_UNSUB] = unsubs
+    except Exception:
+        _LOGGER.warning(
+            "Could not register the HA-MCP LLM API; conversation agents will "
+            "not see the toolset until the entry is reloaded",
+            exc_info=True,
+        )
+        return
+    # The embedded e2e (test_llm_api_registered_inside_ha) and the in-HA
+    # probe tests (tests/src/e2e/workflows/embedded/test_llm_api_in_ha.py)
+    # assert on this
+    # message to prove the registration ran inside a real HA — keep the
+    # "Registered the HA-MCP toolset as LLM API" prefix stable.
+    _LOGGER.info(
+        "Registered the HA-MCP toolset as LLM API (%s mode) — select it in a "
+        "conversation agent's settings to chat with it (text or voice)",
+        exposure,
+    )

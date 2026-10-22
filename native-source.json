@@ -1,0 +1,10 @@
+{
+  "source_revision": "7402a72e1595029a29f09b0a299ac462e1b57159",
+  "source_url": "https://github.com/julienld/ha-mcp-native/tree/7402a72e1595029a29f09b0a299ac462e1b57159",
+  "release_tag": "9.0.0.dev2",
+  "library_version": "9.0.0.dev2",
+  "component_version": "9.0.0.dev2",
+  "component_protocol_version": "9.0.0",
+  "dependency": "ha-mcp @ https://github.com/julienld/ha-mcp-native/releases/download/9.0.0.dev2/ha_mcp-9.0.0.dev2-py3-none-any.whl#sha256=038dad877ea87e0e976b7556d8c55af712b88849cb5652ca26198dfb36dd34de",
+  "component_zip_sha256": "75ec68f1a028454e11efa4585f379e26452100f86baf7f7f6a06bfd14309d256"
+}
