@@ -111,6 +111,27 @@ def test_read_only_and_approval_master_take_effect_without_reload(
     assert not policy.enabled("write", writes=True)
 
 
+@pytest.mark.parametrize("surface", ["feature", "renderer"])
+def test_panel_can_configure_native_dashboard_rendering(tmp_path, monkeypatch, surface):
+    from custom_components.ha_mcp_tools.native_server_policy import setting_value
+
+    monkeypatch.delenv("HAMCP_ENABLE_DASHBOARD_SCREENSHOT", raising=False)
+    monkeypatch.delenv("HAMCP_DASHBOARD_SCREENSHOT_ENGINE_URL", raising=False)
+    ui = settings(tmp_path)
+    if surface == "feature":
+        ui._save_features({"flags": {"enable_dashboard_screenshot": True}})
+        assert load_policy(tmp_path).flag("enable_dashboard_screenshot")
+    else:
+        target = "http://renderer.test:10000"
+        ui._save_advanced({"dashboard_screenshot_engine_url": target})
+        assert (
+            setting_value(
+                load_policy(tmp_path).flags, "dashboard_screenshot_engine_url"
+            )
+            == target
+        )
+
+
 def test_search_limit_uses_numeric_feature_contract_and_reloads(tmp_path, monkeypatch):
     monkeypatch.delenv("TOOL_SEARCH_MAX_RESULTS", raising=False)
     ui = settings(tmp_path)

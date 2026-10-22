@@ -29,6 +29,7 @@ _SUPPORTED_FLAGS = (
     "redact_secrets",
     "enable_beta_features",
     "enable_code_mode",
+    "enable_dashboard_screenshot",
     "enable_filesystem_tools",
     "enable_yaml_config_editing",
     "enable_yaml_edit_confirm",
@@ -55,6 +56,7 @@ _ADVANCED = {
     "code_mode_max_invocations": "CODE_MODE_MAX_INVOCATIONS",
     "code_mode_saved_tools_path": "CODE_MODE_SAVED_TOOLS_PATH",
     "extra_yaml_write_keys": "HA_MCP_EXTRA_YAML_KEYS",
+    "dashboard_screenshot_engine_url": "HAMCP_DASHBOARD_SCREENSHOT_ENGINE_URL",
 }
 
 
