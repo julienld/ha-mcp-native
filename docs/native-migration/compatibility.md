@@ -349,6 +349,28 @@ before dispatch. Core Container proves honest absence for both tools and all
 actions; authenticated HACS/GitHub installation remains unqualified. Existing
 patched legacy fixtures are not evidence of an unmodified upstream installation.
 
+The rich LLM projection is separate from FastMCP and the legacy loopback API.
+`ha_mcp.tool_api.llm_projection` derives descriptions, normalized schemas and
+rich result envelopes from the existing Engine definitions and results. It
+imports neither MCP nor Home Assistant. The component's `llm_projection.py`
+adapts those values to Core using catalogue and invocation callbacks. Native
+Assist retains full/search modes, API IDs, pinned discovery, native notes,
+safety metadata and result envelopes without reading a FastMCP provider or
+serializing through an MCP result model. This separation is a candidate for
+future Core work; no upstream contribution or acceptance is claimed.
+
+Assist tool exposure is a live Engine admission guard, including nested
+`call_tool` operations. Imported Core APIs recheck the actor, credential,
+selection, registered owner and tool capabilities after asynchronous instance
+resolution, immediately before the callback. Refusals before dispatch remain
+not-started; exceptions after a callback has begun remain unknown outcomes.
+
+In native custom scripts, `api_get`, `api_post` and `ws_send` retain their
+saved-script ABI names but return `UNSUPPORTED_OPERATION` before Home Assistant
+I/O. Saved source is preserved. Use `call_tool(name, args)` to invoke Engine
+with the current actor, tool policy and visibility checks; no REST/WebSocket
+emulation or semantic-map fallback is provided.
+
 Native Updates uses the published UpdateEntity owners, original update services
 and IssueRegistry callbacks. List/get preserve presentation and expose complete
 provider attributes; release notes come from the actual provider, with the shared

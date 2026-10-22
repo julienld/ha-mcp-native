@@ -216,6 +216,7 @@ class NativeServerManager:
         self.system_lifecycle: Any = None
         self.backend: Any = None
         self.mcp: Any = None
+        self.instructions = ""
         self.app: Any = None
         self.lifespan_state: dict[str, Any] = {}
         self.accepting = False
@@ -440,9 +441,10 @@ class NativeServerManager:
                 else policy.enabled(name)
             )
         }
-        self.mcp.instructions = await self.settings_ui._io(
+        self.instructions = await self.settings_ui._io(
             build_instructions, policy, self.engine.enabled_tools
         )
+        self.mcp.instructions = self.instructions
 
     def service_policy(self, domain: str, service: str) -> None:
         from ha_mcp.runtime.service_policy import check_service_policy

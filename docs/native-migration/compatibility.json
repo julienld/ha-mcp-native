@@ -188,7 +188,7 @@
     {"surface": "direct server_port/secret_path URL", "native_compatibility": "requires client URL migration when HA listens on another port; cannot retain exact URL with HA as the sole HTTP listener"},
     {"surface": "enable_webhook=False", "native_compatibility": "must not silently enable public webhook; preserve legacy runtime or migrate to an explicitly local/authenticated HA route"},
     {"surface": "ha_call_service.ws_command", "native_compatibility": "bounded semantic map only; unknown operations fail before side effects; remote backend retains transport capability"},
-    {"surface": "ha_manage_custom_tool api_get/api_post/ws_send", "native_compatibility": "bounded semantic map only; preserve saved code; call_tool is the portable route"},
+    {"surface": "ha_manage_custom_tool api_get/api_post/ws_send", "native_compatibility": "callable saved-script ABI names return UNSUPPORTED_OPERATION before Home Assistant I/O; saved source is preserved; call_tool invokes the native Engine with current actor, tool policy and visibility. No REST/WebSocket emulation or semantic-map fallback is provided."},
     {"surface": "caller attribution", "native_compatibility": "Core Context identifies the native actor rather than necessarily the historical server account; explicit authorization remains required"}
   ]
 }

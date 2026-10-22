@@ -51,6 +51,9 @@ class CallContext:
     progress: Callable[..., Awaitable[None]] | None = field(
         default=None, repr=False, compare=False
     )
+    tool_guard: Callable[[str], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)

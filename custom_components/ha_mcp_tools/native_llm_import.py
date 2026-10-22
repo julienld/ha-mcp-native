@@ -98,7 +98,8 @@ async def call_imported(
     actor: CallContext,
 ) -> Any:
     """Revalidate owner, availability and original schema immediately before use."""
-    from ha_mcp.tool_api import ToolResult
+    from ha_mcp.runtime.mutation_guard import current_admission
+    from ha_mcp.tool_api import ToolFailure, ToolResult
 
     await manager.backend.authorize(actor)
     if (visibility := getattr(manager, "visibility", None)) is not None:
@@ -116,20 +117,55 @@ async def call_imported(
     if advertised is None:
         raise ValueError("Unknown LLM tool")
     owner = getattr(advertised, "integration", None)
+    api_owner = instance.api
     writes = _writes(advertised)
 
     async def invoke() -> ToolResult:
-        actual = await resolve_api(manager, api_id, actor)
-        tool = next((tool for tool in actual.tools if tool.name == tool_name), None)
-        if (
-            tool is None
-            or getattr(tool, "integration", None) != owner
-            or _writes(tool) != writes
-        ):
-            raise PermissionError("LLM tool owner or capabilities changed")
-        # APIInstance historically validated parameters, but current Core does
-        # not. Calling the original validator supports both without a copy.
-        validated = tool.parameters(dict(arguments))
+        try:
+            actual = await resolve_api(manager, api_id, actor)
+            tool = next((tool for tool in actual.tools if tool.name == tool_name), None)
+            if (
+                actual.api is not api_owner
+                or tool is None
+                or getattr(tool, "integration", None) != owner
+                or _writes(tool) != writes
+            ):
+                raise PermissionError("LLM tool owner or capabilities changed")
+            # APIInstance historically validated parameters, but current Core does
+            # not. Calling the original validator supports both without a copy.
+            validated = tool.parameters(dict(arguments))
+            await manager.backend.authorize(actor)
+            if admission := current_admission.get():
+                admission.check_policy()
+            if (
+                api_id not in selected_apis(manager)
+                or api_id in _IMPORT_STACK.get()
+                or actual.api is not api_owner
+                or next(
+                    (
+                        candidate
+                        for candidate in actual.tools
+                        if candidate.name == tool_name
+                    ),
+                    None,
+                )
+                is not tool
+                or getattr(tool, "integration", None) != owner
+                or _writes(tool) != writes
+                or not any(
+                    registered is api_owner
+                    for registered in llm.async_get_apis(manager.hass)
+                )
+            ):
+                raise PermissionError("LLM API selection or owner changed")
+        except ToolFailure as error:
+            raise ToolFailure(
+                error.code, str(error), data=error.data, status="not_started"
+            ) from error
+        except PermissionError as error:
+            raise ToolFailure(
+                "AUTH_FORBIDDEN", str(error), status="not_started"
+            ) from error
         stack = _IMPORT_STACK.set((*_IMPORT_STACK.get(), api_id))
         try:
             result = await actual.async_call_tool(

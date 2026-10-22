@@ -50,6 +50,8 @@ def tool_hints(tool: Any) -> dict[str, Any] | None:
     annotations = getattr(tool, "annotations", None)
     if annotations is None:
         return None
+    if isinstance(annotations, dict):
+        return dict(annotations)
     return cast(
         "dict[str, Any]", annotations.model_dump(by_alias=True, exclude_none=True)
     )

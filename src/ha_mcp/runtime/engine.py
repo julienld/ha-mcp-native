@@ -86,6 +86,8 @@ class Engine:
                 raise ToolFailure("TOOL_DISABLED", f"Tool {name!r} is not enabled.")
         if writes and (self.read_only or context.read_only):
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
+        if context.tool_guard is not None:
+            context.tool_guard(name)
 
     async def call(
         self, name: str, arguments: dict[str, Any], context: CallContext

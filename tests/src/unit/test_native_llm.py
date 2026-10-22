@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import sys
@@ -17,7 +18,7 @@ install()
 from custom_components.ha_mcp_tools import native_llm, native_llm_import  # noqa: E402
 from custom_components.ha_mcp_tools.const import DOMAIN, OPT_NATIVE_IMPORT_APIS  # noqa: E402
 from ha_mcp.runtime import Engine  # noqa: E402
-from ha_mcp.tool_api import CallContext, ToolResult  # noqa: E402
+from ha_mcp.tool_api import CallContext, ToolDefinition, ToolResult  # noqa: E402
 
 
 @pytest.fixture
@@ -165,6 +166,7 @@ async def test_import_uses_owner_validator_and_preserves_error_result(
         annotations=SimpleNamespace(read_only=True),
     )
     instance = SimpleNamespace(
+        api=SimpleNamespace(id="assist"),
         tools=[tool],
         async_call_tool=AsyncMock(
             return_value=SimpleNamespace(data={"value": 4}, error=True)
@@ -174,6 +176,12 @@ async def test_import_uses_owner_validator_and_preserves_error_result(
         native_llm_import, "resolve_api", AsyncMock(return_value=instance)
     )
     monkeypatch.setattr(native_llm_import.llm, "ToolInput", SimpleNamespace)
+    monkeypatch.setattr(
+        native_llm_import.llm,
+        "async_get_apis",
+        lambda _hass: [instance.api],
+        raising=False,
+    )
     monkeypatch.setattr(
         native_llm_import, "json_bytes", lambda value: json.dumps(value).encode()
     )
@@ -199,11 +207,12 @@ async def test_import_rechecks_owner_inside_owned_execution(
         integration="replacement",
         annotations=SimpleNamespace(read_only=False),
     )
-    second = SimpleNamespace(tools=[swapped], async_call_tool=AsyncMock())
+    api = SimpleNamespace(id="assist")
+    second = SimpleNamespace(api=api, tools=[swapped], async_call_tool=AsyncMock())
     monkeypatch.setattr(
         native_llm_import,
         "resolve_api",
-        AsyncMock(side_effect=[SimpleNamespace(tools=[tool]), second]),
+        AsyncMock(side_effect=[SimpleNamespace(api=api, tools=[tool]), second]),
     )
     result = await native_llm_import.call_imported(
         manager, "assist/native", {}, CallContext("alice")
@@ -222,3 +231,105 @@ async def test_import_cannot_recurse_into_same_api(
             await native_llm_import.resolve_api(manager, "assist", CallContext("alice"))
     finally:
         native_llm_import._IMPORT_STACK.reset(stack)
+
+
+async def test_import_failure_after_dispatch_preserves_unknown_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime()
+    instance = SimpleNamespace(
+        api=SimpleNamespace(id="assist"),
+        tools=[
+            SimpleNamespace(
+                name="write",
+                integration="fixture",
+                parameters=dict,
+                annotations=SimpleNamespace(read_only=False),
+            )
+        ],
+        async_call_tool=AsyncMock(side_effect=RuntimeError("Failed after effect")),
+    )
+    monkeypatch.setattr(
+        native_llm_import, "resolve_api", AsyncMock(return_value=instance)
+    )
+    monkeypatch.setattr(native_llm_import.llm, "ToolInput", SimpleNamespace)
+    monkeypatch.setattr(
+        native_llm_import.llm,
+        "async_get_apis",
+        lambda _hass: [instance.api],
+        raising=False,
+    )
+    result = await native_llm_import.call_imported(
+        manager, "assist/write", {}, CallContext("alice")
+    )
+    instance.async_call_tool.assert_awaited_once()
+    assert result.is_error and result.status == "outcome_unknown"
+
+
+@pytest.mark.parametrize("suspension", ["authorization", "approval"])
+async def test_assist_exposure_removed_during_admission_cannot_execute(
+    monkeypatch: pytest.MonkeyPatch, suspension: str
+) -> None:
+    manager = runtime()
+    manager.policy = SimpleNamespace(llm_overrides={})
+    handler = AsyncMock(return_value={"changed": True})
+    manager.engine.register(ToolDefinition("write", "Write", {}, handler))
+    monkeypatch.setattr(
+        native_llm,
+        "exposed_catalog",
+        AsyncMock(return_value=([SimpleNamespace(name="write")], set())),
+    )
+    suspended, resume = asyncio.Event(), asyncio.Event()
+    authorizations = 0
+
+    async def authorize(_actor: CallContext) -> None:
+        nonlocal authorizations
+        authorizations += 1
+        if suspension == "authorization" and authorizations == 2:
+            suspended.set()
+            await resume.wait()
+
+    async def approve(*_args: object) -> None:
+        if suspension == "approval":
+            suspended.set()
+            await resume.wait()
+
+    manager.backend.authorize = authorize
+    manager.engine.policy_guard = approve
+    task = asyncio.create_task(
+        native_llm.call_exposed(manager, "write", {}, context("alice"))
+    )
+    await asyncio.wait_for(suspended.wait(), 1)
+    manager.policy.llm_overrides["write"] = False
+    resume.set()
+    result = await asyncio.wait_for(task, 1)
+    handler.assert_not_awaited()
+    data = result if isinstance(result, dict) else result.data
+    assert data["isError"]
+
+
+async def test_assist_nested_calls_recheck_child_exposure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime()
+    manager.policy = SimpleNamespace(llm_overrides={})
+    child = AsyncMock(return_value={"changed": True})
+
+    async def outer(_arguments: dict, actor: CallContext) -> ToolResult:
+        manager.policy.llm_overrides["child"] = False
+        return await manager.engine.call("child", {}, actor)
+
+    manager.engine.register(ToolDefinition("outer", "Outer", {}, outer))
+    manager.engine.register(ToolDefinition("child", "Child", {}, child))
+    monkeypatch.setattr(
+        native_llm,
+        "exposed_catalog",
+        AsyncMock(
+            return_value=(
+                [SimpleNamespace(name="outer"), SimpleNamespace(name="child")],
+                set(),
+            )
+        ),
+    )
+    await native_llm.call_exposed(manager, "outer", {}, context("alice"))
+    child.assert_not_awaited()

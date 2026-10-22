@@ -31,9 +31,9 @@ tools never appear in ``tools/list`` at all and the server rejects calling
 them by name, and every forwarded call traverses the server's policy /
 read-only middleware exactly like any MCP client's call.
 
-The server runs on its own worker thread behind a loopback HTTP listener, and
-``ha_mcp`` must never be imported in the HA main process (see
-:mod:`embedded_server`), so this module talks real MCP to the server over
+This legacy adapter reaches the server's worker thread and loopback listener
+through real MCP. It shares the side-effect-free schema projection with the
+native adapter but never constructs the standalone runtime in HA. It uses
 loopback streamable HTTP with Home Assistant's shared ``mcp`` SDK (the manifest
 requires ``mcp>=1.24.0``, so 1.x or 2.x), never ha-mcp's vendored copy. Every SDK import here
 is lazy and the first one runs on the executor.
@@ -48,22 +48,40 @@ stateless session each — the in-process server serves ``stateless_http=True``.
 from __future__ import annotations
 
 import asyncio
-import copy
 import importlib
 import logging
-import math
 import sys
-from collections import Counter
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field
-from functools import cache
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
+
+from ha_mcp.tool_api.llm_projection import (
+    _EXCLUSIVE_BOUNDS as _EXCLUSIVE_BOUNDS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _INSTANCE_VALUES as _INSTANCE_VALUES,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _OPAQUE_KEYWORDS as _OPAQUE_KEYWORDS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _SCHEMA_MAPS as _SCHEMA_MAPS,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _is_opaque_key as _is_opaque_key,
+)
+from ha_mcp.tool_api.llm_projection import (
+    _to_inclusive_bounds as _to_inclusive_bounds,
+)
+from ha_mcp.tool_api.llm_projection import (
+    normalise_schema as _project_normalise_schema,
+)
 
 from .const import (
     DATA_LLM_API_UNSUB,
@@ -76,8 +94,33 @@ from .const import (
 )
 from .llm_api_search import CALL_TOOL_NAME as _CALL_TOOL_NAME
 from .llm_api_search import SEARCH_TOOL_NAME as _SEARCH_TOOL_NAME
-from .llm_api_search import HaMcpSearchTool
-from .llm_tool_exposure import META_PARAMS_KEY, _tool_meta_namespace, partition_tools
+from .llm_api_search import HaMcpSearchTool as HaMcpSearchTool
+from .llm_projection import (
+    _FALLBACK_API_PROMPT as _FALLBACK_API_PROMPT,
+)
+from .llm_projection import (
+    _TOOL_SEARCH_PROMPT as _TOOL_SEARCH_PROMPT,
+)
+from .llm_projection import (
+    CALL_TOOL_DESCRIPTION,
+    CALL_TOOL_PARAMETERS,
+    build_full_tools,
+    build_search_tools,
+    convert_parameters,
+)
+from .llm_projection import (
+    _schema_converter as _schema_converter,
+)
+from .llm_projection import (
+    _tool_input_schema as _tool_input_schema,
+)
+from .llm_projection import (
+    async_unregister_llm_api as async_unregister_llm_api,
+)
+from .llm_projection import (
+    convert_to_voluptuous as convert_to_voluptuous,
+)
+from .llm_tool_exposure import partition_tools
 from .llm_tool_metadata import declare_metadata, tool_hints, tool_result, tool_title
 
 if TYPE_CHECKING:
@@ -100,261 +143,8 @@ _LIST_TOOLS_TIMEOUT_SECONDS = 10.0
 _CALL_TOOL_TIMEOUT_SECONDS = 300.0
 
 
-@cache
-def _schema_converter() -> Callable[[Any], Any]:
-    """Resolve the Core-provided schema converter once, off the event loop."""
-    try:
-        legacy = importlib.import_module("voluptuous_openapi")
-    except ModuleNotFoundError as err:
-        if err.name != "voluptuous_openapi":
-            raise
-        probatio = importlib.import_module("probatio")
-        _LOGGER.warning(
-            "voluptuous-openapi is not importable; converting tool schemas "
-            "with probatio instead. The manifest declares it, so this is "
-            "Home Assistant running with skip_pip, or a deps tree that lost "
-            "the package after setup. A requirement that genuinely failed to "
-            "install never reaches this line -- Home Assistant reports that "
-            "itself and abandons the integration before importing it. "
-            "Probatio's OpenAPI codec cannot express the node it builds for "
-            "an integer, so a numeric parameter can reach the conversation "
-            "agent as a string, an empty schema or a plain number."
-        )
-        return cast(Callable[[Any], Any], probatio.from_openapi)
-    return cast(Callable[[Any], Any], legacy.convert_to_voluptuous)
-
-
-def convert_to_voluptuous(schema: Any) -> vol.Schema:
-    """Convert an OpenAPI schema on stable and Probatio-based HA Core."""
-    return cast(vol.Schema, _schema_converter()(schema))
-
-
-# Keywords whose value is a mapping keyed by author-chosen names — property
-# names, definition names, regexes — rather than by JSON Schema keywords. A key
-# spelled like a bound is one of those names and must not be rewritten.
-_SCHEMA_MAPS: frozenset[str] = frozenset(
-    {
-        "properties",
-        "patternProperties",
-        "$defs",
-        "definitions",
-        "dependentSchemas",
-        "dependentRequired",
-        # Draft-7's predecessor of the two above; still emitted by some servers.
-        "dependencies",
-    }
-)
-# Keywords whose value is instance data rather than a subschema. A key spelled
-# like a bound inside one of these is a value in someone's default, not a bound.
-# ``example`` is OpenAPI's singular spelling of ``examples``.
-_INSTANCE_VALUES: frozenset[str] = frozenset(
-    {"default", "const", "enum", "examples", "example"}
-)
-# Keywords whose value is neither a subschema nor a map of subschemas.
-# OpenAPI's ``discriminator`` holds a ``propertyName`` and a ``mapping`` of
-# author-chosen tags to ``$ref`` strings; a tag spelled like a bound is one of
-# those names, and its ``$ref`` value would read as a non-numeric bound and be
-# dropped, corrupting a valid discriminated union. OpenAPI ``x-`` specification
-# extensions carry arbitrary vendor objects the same way and are matched by
-# prefix in ``_is_opaque_key``.
-_OPAQUE_KEYWORDS: frozenset[str] = frozenset({"discriminator"})
-
-
-def _is_opaque_key(key: str) -> bool:
-    """True for a keyword whose value must be copied through untouched."""
-    return key in _OPAQUE_KEYWORDS or key.startswith("x-")
-
-
-# Each exclusive keyword, the inclusive twin it folds into, the picker that
-# keeps the tighter of the two when both are present, and the step to the
-# nearest integer the bound still admits.
-_EXCLUSIVE_BOUNDS: tuple[
-    tuple[str, str, Callable[[Any, Any], Any], Callable[[Any], int]], ...
-] = (
-    ("exclusiveMinimum", "minimum", max, lambda bound: math.floor(bound) + 1),
-    ("exclusiveMaximum", "maximum", min, lambda bound: math.ceil(bound) - 1),
-)
-
-
-@dataclass
-class _Rewrite:
-    """What one schema normalisation changed, so a caller can log it once.
-
-    The walk is recursive and knows no tool name; collecting here lets the
-    entry point say what happened to which tool in a single line, rather than
-    once per node or not at all.
-    """
-
-    folded: list[str] = field(default_factory=list)
-    dropped: list[str] = field(default_factory=list)
-
-
-def _to_inclusive_bounds(schema: Any, rewrite: _Rewrite | None = None) -> Any:
-    """Return the schema with every exclusive numeric bound made inclusive.
-
-    Home Assistant re-emits the converted schema through Probatio's OpenAPI
-    codec, which defaults to OpenAPI 3.0 and writes an exclusive bound the
-    Draft-4 way: ``minimum`` beside ``exclusiveMinimum: true``. The Anthropic
-    API validates ``input_schema`` as JSON Schema draft 2020-12, where
-    ``exclusiveMinimum`` must be a number, and rejects the entire request — so
-    one such bound anywhere in the mirrored toolset fails every conversation
-    turn, not just calls to the tool carrying it.
-
-    On an integer-only node the fold is exact -- ``exclusiveMinimum: 1``
-    becomes ``minimum: 2``, the smallest integer the bound admits. Elsewhere
-    the advertised edge widens by one representable point; the server still
-    enforces the real bound when the call arrives, so nothing becomes callable
-    that was not callable before. A boolean is the Draft-4 flag rather than a
-    bound and is dropped outright.
-
-    Normalising here rather than only at the source covers the server versions
-    this component does not control: the ha-mcp package installs and updates
-    independently of the component, and an explicit pip-spec pins it outright.
-    """
-    if isinstance(schema, list):
-        return [_to_inclusive_bounds(item, rewrite) for item in schema]
-    if not isinstance(schema, dict):
-        return schema
-
-    result: dict[str, Any] = {}
-    for key, value in schema.items():
-        if key in _INSTANCE_VALUES or _is_opaque_key(key):
-            # Copied, not aliased: the result is handed to Core and kept in
-            # the search catalog, and neither may reach back into the MCP
-            # result object this schema came from.
-            result[key] = copy.deepcopy(value)
-        elif key in _SCHEMA_MAPS and isinstance(value, dict):
-            result[key] = {
-                name: _to_inclusive_bounds(sub, rewrite) for name, sub in value.items()
-            }
-        else:
-            result[key] = _to_inclusive_bounds(value, rewrite)
-
-    _fold_bounds(result, rewrite)
-    return result
-
-
-def _is_number(value: Any) -> bool:
-    """True for a JSON number. bool is an int subclass and is not one."""
-    return not isinstance(value, bool) and isinstance(value, int | float)
-
-
-def _admits_integers_only(node: dict[str, Any]) -> bool:
-    """True when the node's declared type accepts integers and nothing wider.
-
-    A union that also admits ``number`` is not tightened: the excluded edge is
-    still reachable there as a fraction.
-    """
-    declared = node.get("type")
-    if isinstance(declared, str):
-        return declared == "integer"
-    if isinstance(declared, list):
-        return "integer" in declared and "number" not in declared
-    return False
-
-
-def _fold_bounds(node: dict[str, Any], rewrite: _Rewrite | None = None) -> None:
-    """Fold each exclusive keyword into its inclusive twin, in place."""
-    for exclusive, inclusive, tighter, to_integer in _EXCLUSIVE_BOUNDS:
-        if exclusive not in node:
-            continue
-        bound = node.pop(exclusive)
-        if not _is_number(bound):
-            # Nothing non-numeric is a readable bound in a subschema slot, and
-            # the slot is all this can be: the name maps, the instance-value
-            # keywords and the opaque ones above keep foreign data out of
-            # reach. Probatio refuses a string, a list and the Draft-4 boolean
-            # outright -- costing the whole tool -- and silently retypes a null
-            # number param to a string one. Dropping the key repairs all four.
-            if rewrite is not None:
-                rewrite.dropped.append(exclusive)
-            continue
-        # On an integer-only node the exact inclusive equivalent exists, so
-        # take it: folding ``exclusiveMinimum: 1`` to ``minimum: 1`` would
-        # advertise a value the server rejects.
-        if _admits_integers_only(node):
-            bound = to_integer(bound)
-        # ``tighter`` when the schema already carried an inclusive bound, so
-        # that bound is never loosened to the exclusive one.
-        current = node.get(inclusive)
-        node[inclusive] = tighter(current, bound) if _is_number(current) else bound
-        if rewrite is not None:
-            rewrite.folded.append(exclusive)
-
-
-def _tally(keywords: list[str]) -> str:
-    """Render the rewritten keywords with a count, so two nodes read as two.
-
-    One line per tool keeps the log readable, but a bare set of keyword names
-    would make a schema with several malformed bounds indistinguishable from
-    one carrying a single bad node -- and the count is the only hint left that
-    more than one place needs fixing.
-    """
-    return ", ".join(
-        keyword if seen == 1 else f"{keyword} x{seen}"
-        for keyword, seen in sorted(Counter(keywords).items())
-    )
-
-
 def _normalise_schema(schema: Any, tool_name: str) -> Any:
-    """Normalise one tool's schema and report, once, what that changed.
-
-    Both publication paths reach the model: the mirrored parameters Core
-    converts, and the tool-search catalog, which is returned verbatim and
-    passes no converter at all. Both call this, so a tool is normalised once
-    per turn and logged once per turn whichever path published it.
-    """
-    rewrite = _Rewrite()
-    result = _to_inclusive_bounds(schema, rewrite)
-    if rewrite.dropped:
-        _LOGGER.warning(
-            "Dropped %s from %s's schema: the value is not a number, so it is "
-            "either the Draft-4 boolean flag or malformed, and Home "
-            "Assistant's codec answers such a node by refusing the tool or by "
-            "retyping the parameter. The server should advertise the bound as "
-            "a number, the only form draft 2020-12 permits.",
-            _tally(rewrite.dropped),
-            tool_name,
-        )
-    if rewrite.folded:
-        _LOGGER.debug(
-            "Rewrote %s in %s's schema to the inclusive twin so Home Assistant "
-            "does not re-emit it in the Draft-4 form. On a non-integer bound "
-            "the advertised edge is now one representable point wider than the "
-            "server enforces, so a model passing that edge gets a rejection "
-            "that is otherwise unattributable from any log.",
-            _tally(rewrite.folded),
-            tool_name,
-        )
-    return result
-
-
-# Used when the server's initialize result carries no instructions (it always
-# should — ha-mcp ships server-level instructions — but never render an empty
-# prompt if a build does not).
-_FALLBACK_API_PROMPT = (
-    "The following tools are provided by the HA-MCP server running inside "
-    "Home Assistant. They give full control over this Home Assistant "
-    "instance: entities, automations, scripts, dashboards, helpers, and "
-    "configuration."
-)
-
-_TOOL_SEARCH_PROMPT = (
-    "\n\n## Tool Discovery\n"
-    "This assistant uses search-based tool discovery: most tools are NOT "
-    "listed directly.\n"
-    f"1. Call {_SEARCH_TOOL_NAME}(query=...) to find tools for the task; "
-    "results are compact: each tool's name, one-line description, and params.\n"
-    f"2. Call {_SEARCH_TOOL_NAME}(tools=[...]) for the full description and "
-    "input schema of the tool you will call — required before calling: the "
-    "compact hit omits usage guidance, nested fields, defaults, and parameter "
-    "descriptions.\n"
-    f"3. Execute it with {_CALL_TOOL_NAME}(name=..., arguments={{...}}) — "
-    "discovered tools are NOT directly callable here.\n"
-    "4. The few tools listed directly can be called as usual.\n"
-    "Search once per task, not per call — tool names stay valid all "
-    "conversation."
-)
+    return _project_normalise_schema(schema, tool_name, logger=_LOGGER)
 
 
 def _transport_error_leaves() -> tuple[type[BaseException], ...]:
@@ -639,14 +429,6 @@ def _meta_as_field_name(dumped: dict[str, Any]) -> dict[str, Any]:
     return dumped
 
 
-def _tool_input_schema(tool: Any) -> Any:
-    """``input_schema`` on SDK 2.x, ``inputSchema`` on 1.x."""
-    schema = getattr(tool, "input_schema", None)
-    if schema is None:
-        schema = getattr(tool, "inputSchema", None)
-    return schema
-
-
 class HaMcpCallTool(llm.Tool):
     """Meta-tool: execute a tool discovered via search (tool-search mode).
 
@@ -657,17 +439,8 @@ class HaMcpCallTool(llm.Tool):
     """
 
     name = _CALL_TOOL_NAME
-    description = (
-        "Execute a Home Assistant MCP tool by name with a dictionary of "
-        f"arguments. Discover tools and their schemas with {_SEARCH_TOOL_NAME} "
-        "first."
-    )
-    parameters = vol.Schema(
-        {
-            vol.Required("name"): str,
-            vol.Optional("arguments", default=dict): dict,
-        }
-    )
+    description = CALL_TOOL_DESCRIPTION
+    parameters = CALL_TOOL_PARAMETERS
 
     def __init__(self, server_url: str, exposed_names: set[str]) -> None:
         """Hold the loopback endpoint and the exposed-name allowlist."""
@@ -763,22 +536,7 @@ class HaMcpLlmApi(llm.API):
         return llm.APIInstance(self, prompt, llm_context, tools)
 
     def _convert_parameters(self, tool: Any, schema: Any) -> vol.Schema | None:
-        """Convert one tool's normalised schema, or None (logged) when it fails.
-
-        The schema is normalised by the caller rather than here, so that a tool
-        the catalog also lists is rewritten and logged once rather than twice.
-        """
-        try:
-            return convert_to_voluptuous(schema)
-        except Exception:
-            # One unconvertible schema must not take down the whole
-            # toolset for the conversation — skip that tool, loudly.
-            _LOGGER.warning(
-                "Skipping tool %s: could not convert its input schema",
-                tool.name,
-                exc_info=True,
-            )
-            return None
+        return convert_parameters(tool, schema, converter=convert_to_voluptuous)
 
     def _mirror(self, tool: Any, parameters: vol.Schema) -> HaMcpTool:
         """Mirror one server tool with its title and safety hints."""
@@ -792,59 +550,21 @@ class HaMcpLlmApi(llm.API):
         )
 
     def _build_full_tools(self, exposed: list[Any]) -> list[llm.Tool]:
-        """Mirror every exposed tool directly (full-catalog mode)."""
-        tools: list[llm.Tool] = []
-        for tool in exposed:
-            schema = _normalise_schema(_tool_input_schema(tool), tool.name)
-            parameters = self._convert_parameters(tool, schema)
-            if parameters is None:
-                continue
-            tools.append(self._mirror(tool, parameters))
-        return tools
+        return build_full_tools(
+            exposed, self._mirror, self._convert_parameters, normalize=_normalise_schema
+        )
 
     def _build_tool_search_tools(
         self, exposed: list[Any], pinned: set[str]
     ) -> list[llm.Tool]:
-        """Build the compact catalog: mirrored pinned tools + meta-tools."""
-        tools: list[llm.Tool] = []
-        exposed_names: set[str] = set()
-        mirrored: set[str] = set()
-        catalog: list[dict[str, Any]] = []
-        for tool in exposed:
-            exposed_names.add(tool.name)
-            # One normalisation feeds both surfaces, so a search result never
-            # shows a bound the mirrored tool does not advertise. Sharing the
-            # object rests on the converter not writing into its input. Both
-            # backends this component can reach were read for that: every
-            # write in voluptuous-openapi 0.4.1's convert_to_voluptuous and in
-            # probatio 0.11.4's JSON-Schema codec lands in a dict the
-            # converter built itself, and instrumenting probatio's inputs
-            # recorded no mutating call at all. A
-            # converter that wrote back would corrupt the catalog entry, so
-            # re-check this before pointing the component at a third one.
-            schema = _normalise_schema(_tool_input_schema(tool), tool.name)
-            entry = {
-                "name": tool.name,
-                "description": tool.description or "",
-                "input_schema": schema,
-            }
-            # The server renders the compact params line (#2633); a server
-            # that predates the stamp leaves the hit without one.
-            params = (_tool_meta_namespace(tool) or {}).get(META_PARAMS_KEY)
-            if isinstance(params, str):
-                entry["params"] = params
-            catalog.append(entry)
-            if tool.name in pinned:
-                parameters = self._convert_parameters(tool, schema)
-                if parameters is not None:
-                    tools.append(self._mirror(tool, parameters))
-                    mirrored.add(tool.name)
-        # Only a tool actually mirrored is in the agent's list; a pinned one
-        # whose schema failed to convert stays a full search entry, reachable
-        # through ha_call_tool.
-        tools.append(HaMcpSearchTool(catalog, mirrored))
-        tools.append(HaMcpCallTool(self.server_url, exposed_names))
-        return tools
+        return build_search_tools(
+            exposed,
+            pinned,
+            self._mirror,
+            self._convert_parameters,
+            lambda names: HaMcpCallTool(self.server_url, names),
+            normalize=_normalise_schema,
+        )
 
 
 def _apis_for_mode(
@@ -926,12 +646,3 @@ async def async_register_llm_api(
         "conversation agent's settings to chat with it (text or voice)",
         exposure,
     )
-
-
-def async_unregister_llm_api(hass: HomeAssistant) -> None:
-    """Unregister the LLM API(s) if registered (idempotent, teardown-safe)."""
-    unsubs = hass.data.get(DOMAIN, {}).pop(DATA_LLM_API_UNSUB, None)
-    if not unsubs:
-        return
-    for unsub in unsubs:
-        unsub()
