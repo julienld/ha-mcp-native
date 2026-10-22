@@ -74,10 +74,16 @@ def system_actions_probe(hass: HomeAssistant) -> dict[str, Any]:
     data = hass.data["native_fixture"].get("system_actions", {})
     manager = hass.data.get("ha_mcp_tools", {}).get("manager")
     entry = hass.config_entries.async_get_entry(data.get("entry_id", ""))
+    lifecycle = (
+        hass.data["native_fixture"]
+        .get("entry_lifecycle", {})
+        .get(data.get("entry_id", ""), {})
+    )
     return {
         "manager_identity": id(manager) if manager is not None else None,
         "manager_entry_id": manager.entry.entry_id if manager is not None else None,
         "entry_state": entry.state.value if entry is not None else None,
+        "entry_lifecycle": dict(lifecycle),
         "records": list(data.get("records", [])),
         "pending": len(manager.system_lifecycle.pending)
         if manager is not None and manager.system_lifecycle is not None

@@ -21,12 +21,17 @@ async def exercise_system_actions(checks: Any) -> None:
     assert state.get("data", state)["attributes"]["friendly_name"] == proposed, state
     checks.passed("native_reload_script_applies_fresh_persisted_Core_configuration")
 
+    before = await checks.control("system_actions")
     result = await checks.call("ha_reload_core", {"entry_id": seed["entry_id"]})
     assert result["reloaded"] and not result["require_restart"], result
     probe = await checks.control("system_actions")
     assert probe["entry_state"] == "loaded", probe
-    assert any(row["removed"] for row in probe["records"]), probe
-    assert any(row["added"] for row in probe["records"]), probe
+    assert (
+        probe["entry_lifecycle"]["unload"] == before["entry_lifecycle"]["unload"] + 1
+    ), probe
+    assert (
+        probe["entry_lifecycle"]["setup"] == before["entry_lifecycle"]["setup"] + 1
+    ), probe
     checks.passed("native_reload_config_entry_uses_real_unload_and_setup")
 
     refused = await checks.rpc(

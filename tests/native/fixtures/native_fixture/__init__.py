@@ -397,11 +397,27 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     hass.data[DOMAIN]["device_id"] = device.id
     hass.data[DOMAIN]["sensor_entry_id"] = entry.entry_id
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
+    lifecycle = (
+        hass.data[DOMAIN]
+        .setdefault("entry_lifecycle", {})
+        .setdefault(entry.entry_id, {"setup": 0, "unload": 0})
+    )
+    lifecycle["setup"] += 1
     return True
 
 
 async def async_unload_entry(hass: Any, entry: Any) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, [Platform.SENSOR]
+    )
+    if unloaded:
+        lifecycle = (
+            hass.data[DOMAIN]
+            .setdefault("entry_lifecycle", {})
+            .setdefault(entry.entry_id, {"setup": 0, "unload": 0})
+        )
+        lifecycle["unload"] += 1
+    return unloaded
 
 
 async def async_remove_config_entry_device(hass: Any, entry: Any, device: Any) -> bool:
