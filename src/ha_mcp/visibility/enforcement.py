@@ -478,6 +478,12 @@ def _unscannable_reason(name: str, args: dict[str, Any]) -> str | None:
         return _SCREENSHOT_REASON.format(name=name)
     if name == _CUSTOM_TOOL and (args.get("code") or args.get("run_saved")):
         return _SANDBOX_REASON.format(name=name)
+    if name == "ha_manage_pipeline" and args.get("action") == "process":
+        return (
+            "Conversation processing can read or act on hidden entities without "
+            "naming them in its input or response. It is unavailable while entity "
+            "visibility enforcement has active hiding rules."
+        )
     return None
 
 

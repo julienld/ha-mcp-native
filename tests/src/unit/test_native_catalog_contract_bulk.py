@@ -39,6 +39,7 @@ def test_composed_bulk_keeps_schemas_tags_and_annotations(native: object) -> Non
         "ha_manage_blueprints",
         "ha_search",
         "ha_manage_energy_prefs",
+        "ha_manage_pipeline",
         "ha_restart",
         "ha_reload_core",
         "ha_manage_theme",

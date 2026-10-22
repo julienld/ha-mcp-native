@@ -21,6 +21,7 @@ from .native_label_tools import build_label_tools
 from .native_log_tools import logs_definition
 from .native_operations.templates import template_definition
 from .native_overview_tools import overview_definition
+from .native_pipeline_tools import pipeline_definition
 from .native_resource_tools import build_resource_tools
 from .native_search_tools import search_definition
 from .native_system_tools import system_definitions
@@ -46,6 +47,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *build_group_tools(manager),
         camera_definition(manager),
         overview_definition(manager),
+        pipeline_definition(manager),
         search_definition(manager),
         health_definition(manager),
         *system_definitions(manager),

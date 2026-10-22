@@ -143,25 +143,14 @@ class FixtureView(HomeAssistantView):
     async def _observation(
         self, request: web.Request, operation: str
     ) -> web.Response | None:
-        if operation == "system_actions":
-            from .system_actions import system_actions_probe
-
-            return web.json_response(system_actions_probe(self.hass))
-        if operation == "themes":
-            from .themes import theme_probe
-
-            return web.json_response(theme_probe(self.hass))
+        observed = self._configuration_observation(request, operation)
+        if observed is not None:
+            return observed
         if operation == "energy_probe":
             from homeassistant.components.energy.data import async_get_manager
 
             owner = await async_get_manager(self.hass)
             return web.json_response({"data": owner.data})
-        if operation == "group_probe":
-            from .groups import describe_group
-
-            data = describe_group(self.hass)
-            data["request_user_id"] = request["hass_user"].id
-            return web.json_response(data)
         if operation == "dashboard_probe":
             from .dashboards import dashboard_probe
 
@@ -193,6 +182,29 @@ class FixtureView(HomeAssistantView):
             )
         return None
 
+    def _configuration_observation(
+        self, request: web.Request, operation: str
+    ) -> web.Response | None:
+        if operation == "pipeline_probe":
+            from .pipeline_support import pipeline_probe
+
+            return web.json_response(pipeline_probe(self.hass))
+        if operation == "system_actions":
+            from .system_actions import system_actions_probe
+
+            return web.json_response(system_actions_probe(self.hass))
+        if operation == "themes":
+            from .themes import theme_probe
+
+            return web.json_response(theme_probe(self.hass))
+        if operation == "group_probe":
+            from .groups import describe_group
+
+            data = describe_group(self.hass)
+            data["request_user_id"] = request["hass_user"].id
+            return web.json_response(data)
+        return None
+
     async def post(self, request, operation):
         user = request["hass_user"]
         if not user.is_admin:
@@ -201,6 +213,12 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
+        elif operation == "pipeline_cleanup":
+            from .pipeline_support import cleanup_pipeline
+
+            await cleanup_pipeline(
+                self.hass, body["pipeline_id"], body["preferred_pipeline"]
+            )
         elif operation == "stage_system_script":
             from .system_actions import stage_system_script
 
@@ -213,6 +231,7 @@ class FixtureView(HomeAssistantView):
             "seed_default_dashboard",
             "seed_bulk",
             "seed_system_actions",
+            "pipeline_seed",
         }:
             return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
@@ -241,34 +260,38 @@ class FixtureView(HomeAssistantView):
         elif operation == "reload":
             await self.hass.config_entries.async_reload(manager.entry.entry_id)
         elif operation == "llm":
-            context = llm.LLMContext(
-                platform=DOMAIN,
-                context=Context()
-                if body.get("anonymous")
-                else Context(user_id=user.id),
-                language="en",
-                assistant="conversation",
-                device_id=None,
-            )
-            try:
-                api = await llm.async_get_api(
-                    self.hass, f"ha_mcp_tools-{manager.entry.entry_id}", context
-                )
-                result = await api.async_call_tool(
-                    llm.ToolInput(
-                        tool_name=body["tool_name"], tool_args=body.get("arguments", {})
-                    )
-                )
-            except PermissionError:
-                return web.json_response(
-                    {"error": "admin_identity_required"}, status=403
-                )
-            return web.json_response({"data": result.data, "error": result.error})
+            return await self._llm(user, manager, body)
         else:
             return web.json_response({"error": "unknown_operation"}, status=404)
         return web.json_response({"ok": True})
 
+    async def _llm(self, user: Any, manager: Any, body: dict[str, Any]) -> web.Response:
+        context = llm.LLMContext(
+            platform=DOMAIN,
+            context=Context() if body.get("anonymous") else Context(user_id=user.id),
+            language="en",
+            assistant="conversation",
+            device_id=None,
+        )
+        try:
+            api = await llm.async_get_api(
+                self.hass, f"ha_mcp_tools-{manager.entry.entry_id}", context
+            )
+            result = await api.async_call_tool(
+                llm.ToolInput(
+                    tool_name=body["tool_name"], tool_args=body.get("arguments", {})
+                )
+            )
+        except PermissionError:
+            return web.json_response({"error": "admin_identity_required"}, status=403)
+        return web.json_response({"data": result.data, "error": result.error})
+
     async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "pipeline_seed":
+            from .pipeline_support import seed_pipeline_fixture
+
+            seed_pipeline_fixture(self.hass)
+            return {}
         if operation == "seed_system_actions":
             from .system_actions import seed_system_actions
 

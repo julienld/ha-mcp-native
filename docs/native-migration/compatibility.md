@@ -265,6 +265,18 @@ write against simultaneous external file edits. Avoid editing a blueprint
 through another interface while it is being written or restored. Public schemas
 and hints remain unchanged; list, get and substitute are admitted as reads.
 
+Native Assist pipelines use the published Core collection and text-conversation
+owner, preserving public arguments and safety hints. `process` is a text call
+to the selected conversation agent, not a full STT/TTS pipeline run. The
+configuration lock is released before conversation dispatch so an agent can
+call configuration tools through the LLM API; the worker retains its admission
+and owner checks. Conversation processing is refused under entity-visibility
+enforcement with hiding rules, because natural-language actions and responses
+cannot be filtered by entity identifiers. Listing and simple decluttering retain
+their existing behavior. The historical literal `preferred` is not a Core ID
+alias; examples use the ID returned by listing. An intent failure can follow
+effects and never promises that the command did nothing.
+
 Native themes read the actual Frontend library and use its original service
 validator and actor Context to change defaults. Engine-profile reads require an
 already loaded Core UserStore; cold or pending storage is explicitly unavailable

@@ -26,12 +26,13 @@
     "custom_components/ha_mcp_tools/native_search_tools.py",
     "custom_components/ha_mcp_tools/native_energy_tools.py",
     "custom_components/ha_mcp_tools/native_system_tools.py",
-    "custom_components/ha_mcp_tools/native_theme_tools.py"
+    "custom_components/ha_mcp_tools/native_theme_tools.py",
+    "custom_components/ha_mcp_tools/native_pipeline_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 67,
+    "native_catalog_declarations": 68,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -3261,8 +3262,8 @@
         "anonymous Assist identity policy"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_assist_pipeline.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/pipeline_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3273,12 +3274,12 @@
       ],
       "client_call_candidates": [
         {
-          "line": 95,
+          "line": 52,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 443,
+          "line": 263,
           "call": "self._client._request",
           "wire_literals": []
         }

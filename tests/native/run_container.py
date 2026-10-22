@@ -36,6 +36,7 @@ from history_checks import exercise_history
 from interop_checks import exercise_llm
 from log_checks import exercise_logs
 from overview_checks import exercise_overview
+from pipeline_checks import exercise_pipelines
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
 from search_checks import exercise_search
@@ -410,6 +411,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_history(checks)
     await exercise_energy(checks)
     await exercise_system_actions(checks)
+    await exercise_pipelines(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)
@@ -504,7 +506,7 @@ async def main() -> None:
         "lovelace:\n  mode: storage\n  dashboards:\n    native-yaml-search:\n"
         "      mode: yaml\n      title: Native YAML Search\n      show_in_sidebar: false\n"
         "      filename: native-search-dashboard.yaml\n"
-        "recorder:\n  commit_interval: 1\nhistory:\nenergy:\n"
+        "recorder:\n  commit_interval: 1\nhistory:\nenergy:\nconversation:\nassist_pipeline:\n"
         "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\n"
         "frontend:\n  themes:\n    native_fixture_blue:\n      primary-color: '#2255aa'\n"
         "    native_fixture_night:\n      primary-color: '#112244'\nnative_fixture:\n"

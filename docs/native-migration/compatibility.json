@@ -97,6 +97,15 @@
     "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
     "public_contract": "original schemas and safety annotations remain unchanged"
   },
+  "native_pipelines": {
+    "owner": "published Core Assist pipeline collection and conversation manager/agent",
+    "process": "text conversation with the selected agent, not a complete STT/TTS run",
+    "locking": "release configuration mutex before conversation; retain admission/pins inside the owned worker so an agent can call configuration tools without waiting on its caller's mutex",
+    "visibility": "refuse opaque process while hiding rules are enforced; listing and decluttering retain their behavior",
+    "preferred": "use the listed Core pipeline ID; the historical preferred literal was never a Core alias",
+    "intent_failure": "actions may already have occurred; inspect before repeating",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
   "native_themes": {
     "owner": "actual Core Frontend library/services and engine user's UserStore",
     "read": "cached loaded store only; never trigger storage initialization or cancel its shared Future",
