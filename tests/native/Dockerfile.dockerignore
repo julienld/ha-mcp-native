@@ -1,0 +1,9 @@
+*
+!dist/
+!dist/native/
+!dist/native/*.whl
+!dist/native/ha_mcp_tools.zip
+!tests/
+!tests/native/
+!tests/native/fixtures/
+!tests/native/fixtures/**
