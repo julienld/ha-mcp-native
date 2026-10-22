@@ -87,7 +87,7 @@ def load(unicode_version: str = "auto") -> CellTable:
 
     version_path_component = version.replace(".", "-")
     module_name = f".unicode{version_path_component}"
-    module = import_module(module_name, "rich._unicode_data")
+    module = import_module(module_name, "ha_mcp._vendor.rich._unicode_data")
     if TYPE_CHECKING:
         assert isinstance(module.cell_table, CellTable)
     return module.cell_table

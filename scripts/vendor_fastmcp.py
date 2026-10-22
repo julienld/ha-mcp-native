@@ -224,6 +224,13 @@ def patch_package(
     A vendored copy has no distribution metadata, so version lookups become the
     pinned versions, and name-based package lookups point at the vendored path.
     """
+    if package == "rich" and relative == "_unicode_data/__init__.py":
+        original = 'import_module(module_name, "rich._unicode_data")'
+        if source.count(original) != 1:
+            raise SystemExit("rich unicode table loader changed shape")
+        source = source.replace(
+            original, 'import_module(module_name, "ha_mcp._vendor.rich._unicode_data")'
+        )
     if package == "fastmcp" and relative == "__init__.py":
         old = (
             'try:\n    __version__ = _version("fastmcp-slim")\n'

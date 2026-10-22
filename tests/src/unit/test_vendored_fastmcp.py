@@ -97,6 +97,31 @@ def test_private_mcp_logging_does_not_replace_home_assistant_rich():
     assert sys.modules["rich"].__file__ == shared_origin
 
 
+def test_private_rich_unicode_render_never_loads_shared_rich():
+    probe = """
+import importlib.abc
+import io
+import sys
+
+class BlockSharedRich(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "rich" or fullname.startswith("rich."):
+            raise ImportError("shared Rich is owned by Home Assistant")
+sys.meta_path.insert(0, BlockSharedRich())
+from ha_mcp._vendor.rich.console import Console
+stream = io.StringIO()
+console = Console(file=stream, force_terminal=True)
+console.print("Préparation · 測試 🏠")
+assert "測試" in stream.getvalue()
+assert any(name.startswith("ha_mcp._vendor.rich._unicode_data.unicode") for name in sys.modules)
+assert not any(name == "rich" or name.startswith("rich.") for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _first_party_files() -> list[Path]:
     roots = (
         _REPO_ROOT / "src" / "ha_mcp",
