@@ -806,7 +806,7 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 - `ha_bulk_control` — Manage explicit operations or one deterministic structural bulk action.
 - `ha_call_event` — Execute a custom event on the Home Assistant event bus.
 - `ha_call_service` — Call any Home Assistant service or one-shot WebSocket command: the catch-all escape hatch.
-- `ha_get_operation_status` — Get the status of one or more device operations with real-time WebSocket verification.
+- `ha_get_operation_status` — Get the status of one or more device operations with real-time Home Assistant state verification.
 - `ha_list_services` — List available Home Assistant services with optional pagination and detail control.
 
 ### System

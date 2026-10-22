@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
-import yaml  # type: ignore[import-untyped]
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from ..blueprint_files import _read_blueprint_file as _read_blueprint_file
 from .assist import _async_get_entity_settings, _is_unknown_entity_error
 from .registry import (
     _all_device_entries,
@@ -85,97 +84,6 @@ async def _blueprint_get_prep(
     path = msg["path"]
     read = await hass.async_add_executor_job(_read_blueprint_file, hass, domain, path)
     return {"body": read.body, "text": read.text}
-
-
-class _BlueprintFile(NamedTuple):
-    """One blueprint file read once: its raw ``text`` and its parsed ``body``.
-
-    ``text`` is ``None`` when the file could not be read at all; ``body`` is
-    additionally ``None`` when it read but did not parse into a mapping.
-    """
-
-    text: str | None
-    body: dict[str, Any] | None
-
-
-_UNREADABLE_BLUEPRINT = _BlueprintFile(None, None)
-
-
-def _read_blueprint_file(hass: HomeAssistant, domain: str, path: str) -> _BlueprintFile:
-    """Resolve + jail + read + parse one blueprint YAML file, reading it once.
-
-    Blueprint files live under ``<config>/blueprints/<domain>/``. The requested
-    ``path`` is joined under that root and resolved symlink-safe (mirrors the
-    file-tool jail's ``_resolves_within`` — resolve the RAW input, following
-    symlinks, THEN check containment, so ``<root>/<symlink>/..`` cannot escape). A
-    path escaping the root — via ``..``, an absolute path, or a symlink — yields
-    an empty result (rejected, never opened), as does a missing file, a non-file
-    target, or a read error. A file that reads but does not parse into a mapping
-    keeps its ``text`` and drops its ``body``, so the caller can still round-trip
-    the exact bytes it holds.
-
-    Parsed with :class:`_BlueprintLoader`: ``!input`` markers are preserved and
-    every other custom tag (``!secret`` / ``!include`` / …) is neutralized to
-    ``None``, so no resolved secret plaintext can ever enter the returned body
-    (defense in depth — blueprints use ``!input``, not ``!secret``).
-    """
-    config = getattr(hass, "config", None)
-    path_fn = getattr(config, "path", None)
-    if not callable(path_fn):
-        return _UNREADABLE_BLUEPRINT
-    try:
-        base = Path(path_fn("blueprints", domain))
-        candidate = Path(path) if path.startswith("/") else base / path
-        real = candidate.resolve()
-        base_real = base.resolve()
-    except (OSError, ValueError):
-        return _UNREADABLE_BLUEPRINT
-    if not (real == base_real or real.is_relative_to(base_real)):
-        return _UNREADABLE_BLUEPRINT
-    try:
-        text = real.read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return _UNREADABLE_BLUEPRINT
-    try:
-        # Instance form (not yaml.load) mirrors the component's existing
-        # _PackagesDirLoader usage; _BlueprintLoader is a SafeLoader subclass,
-        # so no !!python/object can construct arbitrary types.
-        loader = _BlueprintLoader(text)
-        try:
-            parsed = loader.get_single_data()
-        finally:
-            loader.dispose()
-    except (ValueError, yaml.YAMLError):
-        return _BlueprintFile(text, None)
-    return _BlueprintFile(text, parsed if isinstance(parsed, dict) else None)
-
-
-def _construct_blueprint_input(loader: Any, node: Any) -> dict[str, str]:
-    """Represent ``!input <name>`` as ``{"__input__": <name>}``.
-
-    A JSON-safe, unambiguous marker of a blueprint input substitution point (the
-    body is a display artifact, not a runnable config), so a consumer can see
-    which fields an input fills without the tag crashing a plain safe-load.
-    """
-    return {"__input__": str(getattr(node, "value", ""))}
-
-
-def _drop_blueprint_tag(loader: Any, tag_suffix: Any, node: Any) -> None:
-    """Neutralize every non-``!input`` custom tag to ``None`` (never resolve it).
-
-    ``!secret`` must never resolve to plaintext; ``!include`` / ``!env_var`` /
-    unknown tags are irrelevant to a read-only body view. Mirrors the component's
-    ``_ignore_unknown_tag`` pattern in ``__init__.py``.
-    """
-    return None
-
-
-class _BlueprintLoader(yaml.SafeLoader):
-    """SafeLoader for blueprint files: keep ``!input``, neutralize all other tags."""
-
-
-_BlueprintLoader.add_constructor("!input", _construct_blueprint_input)
-_BlueprintLoader.add_multi_constructor("!", _drop_blueprint_tag)
 
 
 # =============================================================================

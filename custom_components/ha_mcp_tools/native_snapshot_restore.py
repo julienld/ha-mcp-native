@@ -57,9 +57,23 @@ class NativeRestoreOperations:
     resource_owner: Any = field(default=None, init=False)
     state_owner: Any = field(default=None, init=False)
     dashboard_owner: Any = field(default=None, init=False)
+    group_owner: Any = field(default=None, init=False)
+    blueprint_owner: Any = field(default=None, init=False)
 
     async def needs_safety(self) -> bool:
         domain = self.data["domain"]
+        if domain in {"blueprint_automation", "blueprint_script"}:
+            self.blueprint_owner = self.snapshots.domains.blueprint_restore(
+                self.data, self.actor
+            )
+            self.before = await self.blueprint_owner.current()
+            return self.before is not None
+        if domain == "group":
+            self.group_owner = self.snapshots.domains.group_restore(
+                self.data, self.actor
+            )
+            self.before = await self.group_owner.current()
+            return self.before is not None
         if domain == "dashboard":
             self.dashboard_owner = self.snapshots.domains.dashboard_restore(
                 self.data, self.actor
@@ -182,10 +196,19 @@ class NativeRestoreOperations:
 
     async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
         self.snapshots._require_restore_access(self.actor)
-        if self.data["domain"] in {"dashboard", "calendar_event"}:
+        if self.data["domain"] in {
+            "dashboard",
+            "calendar_event",
+            "group",
+            "blueprint_automation",
+            "blueprint_script",
+        }:
             owner = {
                 "dashboard": self.dashboard_owner,
                 "calendar_event": self.calendar_owner,
+                "group": self.group_owner,
+                "blueprint_automation": self.blueprint_owner,
+                "blueprint_script": self.blueprint_owner,
             }[self.data["domain"]]
             assert owner is not None
             return await owner.apply(self.before)
@@ -325,6 +348,8 @@ class NativeRestoreOperations:
 
     def completed(self, result: Any) -> dict[str, Any]:
         extra = {}
+        if self.data["domain"] == "group" and isinstance(result, dict):
+            extra.update({"runtime_only": True, "warnings": result.get("warnings", [])})
         if self.data["domain"] == "entity" and isinstance(result, dict):
             extra.update(
                 {"temporary_state_only": True, "warnings": result.get("warnings", [])}

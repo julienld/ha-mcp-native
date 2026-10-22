@@ -73,8 +73,14 @@ class NativeSnapshotDomains:
         domain = data["domain"]
         if domain == "calendar_event":
             return await self.calendar_restore(data, actor).current()
-        if domain == "dashboard":
-            return await self.dashboard_restore(data, actor).comparison()
+        if domain in {"dashboard", "group", "blueprint_automation", "blueprint_script"}:
+            restore = {
+                "dashboard": self.dashboard_restore,
+                "group": self.group_restore,
+                "blueprint_automation": self.blueprint_restore,
+                "blueprint_script": self.blueprint_restore,
+            }[domain]
+            return await restore(data, actor).comparison()
         if domain == "dashboard_resource":
             return await self._resource_current(data, actor)
         if domain in {"automation", "script", "scene"}:
@@ -192,6 +198,33 @@ class NativeSnapshotDomains:
             ),
         )
         return NativeCalendarRestore(service, data["entity_id"], data["config"])
+
+    def group_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
+        from .native_operations.group_restore import NativeGroupRestore
+        from .native_operations.groups import NativeGroups
+
+        return NativeGroupRestore(
+            NativeGroups(
+                self.manager.hass, actor, authorize=self.manager.backend.authorize
+            ),
+            data["entity_id"],
+            data["config"],
+        )
+
+    def blueprint_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
+        from .native_operations.blueprint_owner import BlueprintOwner
+        from .native_operations.blueprint_restore import NativeBlueprintRestore
+
+        return NativeBlueprintRestore(
+            BlueprintOwner(
+                self.manager.hass,
+                actor,
+                data["domain"].removeprefix("blueprint_"),
+                authorize=self.manager.backend.authorize,
+            ),
+            data["entity_id"],
+            data["config"],
+        )
 
     def dashboard_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
         from .native_operations.dashboard_restore import NativeDashboardRestore

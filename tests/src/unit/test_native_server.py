@@ -165,16 +165,22 @@ async def test_cancelled_stop_waiter_does_not_cancel_cleanup() -> None:
 
 
 async def test_failed_drain_can_be_retried_without_losing_owned_engine() -> None:
+    from custom_components.ha_mcp_tools.native_operations.device_operations import (
+        NativeDeviceOperations,
+    )
+
     runtime = manager()
+    runtime.device_operations = NativeDeviceOperations()
     runtime._supervisor = None
     runtime.engine.stop = AsyncMock(
         side_effect=[RuntimeError("owned work remains"), None]
     )
     with pytest.raises(RuntimeError, match="owned work remains"):
         await runtime.async_stop()
-    assert not runtime._stopped
+    assert not runtime._stopped and not runtime.device_operations.closed
     await runtime.async_stop()
     assert runtime._stopped and runtime.engine.stop.await_count == 2
+    assert runtime.device_operations.closed
 
 
 def test_strict_bps_uses_shared_ack_protocol_and_strips_key() -> None:

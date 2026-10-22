@@ -246,6 +246,30 @@ in read-only mode. Mutation admission is rechecked before every actual flow.
 An unexpected failure after a Core flow callback is an unknown outcome, never a
 retry instruction. Parallel probes drain before the invocation returns.
 
+Native Blueprint snapshots retain the installed YAML text. Saving or restoring
+through Core normalizes that YAML and may remove comments, as the legacy path
+does. File preflight checks are optimistic: Core provides no atomic compare and
+write against simultaneous external file edits. Avoid editing a blueprint
+through another interface while it is being written or restored. Public schemas
+and hints remain unchanged; list, get and substitute are admitted as reads.
+
+Native bulk control retains the public parameters and safety annotations.
+Its `device-*` operation IDs belong to the invoking user, client and manager;
+they are distinct from Engine invocation IDs. Repeated targets run sequentially,
+with their own before-image and confirmation, and a warning explains the overlap.
+An after-effect failure preserves partial results and an unknown outcome, while
+the queue stops before dispatching remaining targets. Selector previews with
+`dry_run=true` are admitted as reads.
+
+Native service groups use Core's original Group owners and retain the public
+parameters and safety annotations. Listing reports the owner's actual `all`
+mode. Snapshots restore the name, members, icon and mode; a missing mode in an
+older snapshot preserves the existing mode, or Core's default during recreation,
+with a warning. Restoring a null icon clears it through Core's original setter.
+These groups are runtime configuration: YAML and startup configuration remain
+authoritative after reload or restart. Snapshot restoration reports that limit
+instead of claiming persistent YAML changes.
+
 For each promised tool behavior, compare native and remote execution on a real,
 isolated Home Assistant. Exercise normal results, missing resources, future
 Core fields, actual validators, invalid inputs that reach Core, read-only and

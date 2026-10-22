@@ -20,6 +20,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ServiceCallTools(ActionParameters, ActionProjection, BackendTools):
+    # Only the legacy adapter can return None from its capability probe; it
+    # supplies these historical transport hooks for that never-dispatched path.
+    _validate_entity_before_wait: Any
+    _call_raw_service: Any
+    _verify_state_change: Any
+
     def _require_write_access(self) -> None:
         if self.context.read_only:
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
@@ -60,7 +66,7 @@ class ServiceCallTools(ActionParameters, ActionProjection, BackendTools):
         verbose: bool,
         fields: list[str] | None,
         attribute_keys: list[str] | None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         result = await self.backend.execute(
             "services.call_observe",
             {

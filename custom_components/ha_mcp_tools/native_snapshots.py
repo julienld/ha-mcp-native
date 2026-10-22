@@ -225,6 +225,56 @@ class NativeSnapshots:
         )
         return await self._capture_value("dashboard", identifier, config, source)
 
+    async def group_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        from .native_operations.group_restore import NativeGroupRestore
+        from .native_operations.groups import NativeGroups
+
+        source = payload.get("source_tool")
+        if payload.get("domain") != "group" or source not in {
+            "ha_config_set_group",
+            "ha_config_remove_group",
+        }:
+            raise ValueError("Unsupported native group snapshot source")
+        if not self.manager.policy.flag("enable_auto_backup"):
+            return None
+        config, identifier = payload["current_config"], payload["backup_id"]
+        NativeGroupRestore(
+            NativeGroups(
+                self.manager.hass, context, authorize=self.manager.backend.authorize
+            ),
+            identifier,
+            config,
+        )
+        return await self._capture_value("group", identifier, config, source)
+
+    async def blueprint_backup(
+        self, payload: dict[str, Any], context: CallContext
+    ) -> dict[str, Any] | None:
+        """Keep the installed text, never the current upstream download."""
+        from ha_mcp.runtime.blueprint_values import normalize_blueprint_path
+
+        domain, source = payload.get("domain"), payload.get("source_tool")
+        if (
+            domain not in {"blueprint_automation", "blueprint_script"}
+            or source != "ha_manage_blueprints"
+        ):
+            raise ValueError("Unsupported native blueprint snapshot source")
+        if not self.manager.policy.flag("enable_auto_backup"):
+            return None
+        path, text = payload["path"], payload["current_yaml"]
+        if (
+            not isinstance(path, str)
+            or not path
+            or normalize_blueprint_path(path) != path
+            or not isinstance(text, str)
+        ):
+            raise ValueError(
+                "Blueprint capture must name its installed YAML path and text"
+            )
+        return await self._capture_value(domain, path, text, source)
+
     async def resource_backup(
         self, payload: dict[str, Any], context: CallContext
     ) -> dict[str, Any] | None:
@@ -400,6 +450,9 @@ class NativeSnapshots:
                 "device",
                 "dashboard_resource",
                 "dashboard",
+                "group",
+                "blueprint_automation",
+                "blueprint_script",
                 "entity_registry",
                 "entity_exposure",
             }:

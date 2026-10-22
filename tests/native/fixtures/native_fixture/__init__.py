@@ -94,35 +94,9 @@ class FixtureView(HomeAssistantView):
     async def get(self, request, operation):
         if not request["hass_user"].is_admin:
             return web.json_response({"error": "admin_required"}, status=403)
-        if operation == "dashboard_probe":
-            from .dashboards import dashboard_probe
-
-            return web.json_response(await dashboard_probe(self.hass))
-        if operation == "event":
-            return web.json_response(
-                {
-                    "events": self.hass.data[DOMAIN]["events"],
-                    "request_user_id": request["hass_user"].id,
-                }
-            )
-        if operation == "camera":
-            from .camera import describe_camera
-
-            return web.json_response(describe_camera(self.hass))
-        if operation == "device":
-            data = self.hass.data[DOMAIN]
-            return web.json_response(
-                {
-                    "device_id": data.get("device_id"),
-                    "device_removals": data.get("device_removals", 0),
-                }
-            )
-        if operation == "entity":
-            from .sensor import describe_sensor
-
-            return web.json_response(
-                describe_sensor(self.hass, self.hass.data[DOMAIN]["sensor_entry_id"])
-            )
+        observed = await self._observation(request, operation)
+        if observed is not None:
+            return observed
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         connections = await self.hass.async_add_executor_job(
             lambda: psutil.Process().net_connections(kind="inet")
@@ -166,6 +140,46 @@ class FixtureView(HomeAssistantView):
             }
         )
 
+    async def _observation(
+        self, request: web.Request, operation: str
+    ) -> web.Response | None:
+        if operation == "group_probe":
+            from .groups import describe_group
+
+            data = describe_group(self.hass)
+            data["request_user_id"] = request["hass_user"].id
+            return web.json_response(data)
+        if operation == "dashboard_probe":
+            from .dashboards import dashboard_probe
+
+            return web.json_response(await dashboard_probe(self.hass))
+        if operation == "event":
+            return web.json_response(
+                {
+                    "events": self.hass.data[DOMAIN]["events"],
+                    "request_user_id": request["hass_user"].id,
+                }
+            )
+        if operation == "camera":
+            from .camera import describe_camera
+
+            return web.json_response(describe_camera(self.hass))
+        if operation == "device":
+            data = self.hass.data[DOMAIN]
+            return web.json_response(
+                {
+                    "device_id": data.get("device_id"),
+                    "device_removals": data.get("device_removals", 0),
+                }
+            )
+        if operation == "entity":
+            from .sensor import describe_sensor
+
+            return web.json_response(
+                describe_sensor(self.hass, self.hass.data[DOMAIN]["sensor_entry_id"])
+            )
+        return None
+
     async def post(self, request, operation):
         user = request["hass_user"]
         if not user.is_admin:
@@ -174,7 +188,7 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
-        elif operation in {"seed_history", "seed_logs", "seed_entity_history", "seed_health", "seed_default_dashboard"}:
+        elif operation in {"seed_history", "seed_logs", "seed_entity_history", "seed_health", "seed_default_dashboard", "seed_bulk"}:
             return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
             from homeassistant.components.lovelace.const import LOVELACE_DATA
@@ -230,6 +244,10 @@ class FixtureView(HomeAssistantView):
         return web.json_response({"ok": True})
 
     async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "seed_bulk":
+            from .bulk import seed_bulk
+
+            return await seed_bulk(self.hass)
         if operation == "seed_default_dashboard":
             from .dashboards import seed_default_dashboard
 

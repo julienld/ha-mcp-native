@@ -66,6 +66,8 @@ def _prewarm() -> bool:
         "card_descriptions",
         "native_screenshots",
         "native_operations.dashboard_restore",
+        "native_operations.blueprint_restore",
+        "native_operations.device_operations",
     ):
         importlib.import_module(f"{__package__}.{module}")
     for module in (
@@ -76,6 +78,13 @@ def _prewarm() -> bool:
         "snapshot_flow_restore",
     ):
         importlib.import_module(f"ha_mcp.runtime.{module}")
+    for module in (
+        "homeassistant.components.blueprint.models",
+        "homeassistant.components.blueprint.importer",
+        "homeassistant.components.automation",
+        "homeassistant.components.script",
+    ):
+        importlib.import_module(module)
     from io import StringIO
 
     from ha_mcp._vendor.fastmcp.server.dependencies import is_docket_available
@@ -195,6 +204,7 @@ class NativeServerManager:
         self.entry = entry
         self.path = f"/api/webhook/{entry.data[DATA_WEBHOOK_ID]}"
         self.engine: Any = None
+        self.device_operations: Any = None
         self.backend: Any = None
         self.mcp: Any = None
         self.app: Any = None
@@ -245,6 +255,7 @@ class NativeServerManager:
         from .native_backend import NativeBackend
         from .native_catalog import build_native_catalog
         from .native_code import NativeCode
+        from .native_operations.device_operations import NativeDeviceOperations
         from .native_settings import NativeSettings
         from .native_snapshots import NativeSnapshots
         from .native_visibility import NativeVisibility
@@ -270,6 +281,7 @@ class NativeServerManager:
         )
         self.visibility = NativeVisibility(self)
         self.approval_gate = NativeApprovalGate(self)
+        self.device_operations = NativeDeviceOperations()
         self.engine = Engine(
             self.backend,
             tools=build_native_catalog(self),
@@ -509,6 +521,8 @@ class NativeServerManager:
     async def _drain_owned_resources(self) -> None:
         if self.engine is not None:
             await self.engine.stop()
+        if (device_operations := getattr(self, "device_operations", None)) is not None:
+            device_operations.close()
         if self.approval_gate is not None:
             await self.approval_gate.stop()
         if (

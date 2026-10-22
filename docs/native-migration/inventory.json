@@ -15,16 +15,19 @@
     "custom_components/ha_mcp_tools/native_log_tools.py",
     "custom_components/ha_mcp_tools/native_entity_tools.py",
     "custom_components/ha_mcp_tools/native_event_tools.py",
+    "custom_components/ha_mcp_tools/native_group_tools.py",
     "custom_components/ha_mcp_tools/native_camera_tools.py",
     "custom_components/ha_mcp_tools/native_overview_tools.py",
     "custom_components/ha_mcp_tools/native_health_tools.py",
     "custom_components/ha_mcp_tools/native_dashboard_tools.py",
-    "custom_components/ha_mcp_tools/native_calendar_tools.py"
+    "custom_components/ha_mcp_tools/native_calendar_tools.py",
+    "custom_components/ha_mcp_tools/native_bulk_tools.py",
+    "custom_components/ha_mcp_tools/native_blueprint_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 56,
+    "native_catalog_declarations": 62,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -64,8 +67,8 @@
         "arbitrary ws_command exception"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_service.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/bulk_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -75,22 +78,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 380,
+          "line": 161,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1288,
+          "line": 869,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 947,
+          "line": 527,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1110,
+          "line": 690,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -123,22 +126,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 380,
+          "line": 161,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1288,
+          "line": 869,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 947,
+          "line": 527,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1110,
+          "line": 690,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -175,22 +178,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 380,
+          "line": 161,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1288,
+          "line": 869,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 947,
+          "line": 527,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1110,
+          "line": 690,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -824,26 +827,26 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_groups.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/group_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 173,
+          "line": 56,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 92,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 41,
           "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 351,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 479,
-          "call": "self._client.call_service",
           "wire_literals": []
         }
       ]
@@ -1073,26 +1076,26 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_groups.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/group_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 173,
+          "line": 56,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 92,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 41,
           "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 351,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 479,
-          "call": "self._client.call_service",
           "wire_literals": []
         }
       ]
@@ -1535,26 +1538,26 @@
         "created entity readback"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_groups.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/group_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 173,
+          "line": 56,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 92,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 41,
           "call": "self._client.get_states",
-          "wire_literals": []
-        },
-        {
-          "line": 351,
-          "call": "self._client.call_service",
-          "wire_literals": []
-        },
-        {
-          "line": 479,
-          "call": "self._client.call_service",
           "wire_literals": []
         }
       ]
@@ -2508,8 +2511,8 @@
         "arbitrary ws_command exception"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_service.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/bulk_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2519,22 +2522,22 @@
       ],
       "client_call_candidates": [
         {
-          "line": 380,
+          "line": 161,
           "call": "client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1288,
+          "line": 869,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 947,
+          "line": 527,
           "call": "self._client.send_websocket_message",
           "wire_literals": []
         },
         {
-          "line": 1110,
+          "line": 690,
           "call": "get_websocket_client",
           "wire_literals": []
         }
@@ -3088,8 +3091,8 @@
         "reload and completion"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_blueprints.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/blueprint_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3100,21 +3103,21 @@
       ],
       "client_call_candidates": [
         {
-          "line": 381,
+          "line": 179,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "blueprint/list"
           ]
         },
         {
-          "line": 513,
+          "line": 288,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "blueprint/delete"
           ]
         },
         {
-          "line": 628,
+          "line": 403,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "search/related"
@@ -4704,42 +4707,42 @@
       "functions": [
         {
           "name": "_do_blueprint_get",
-          "line": 40,
+          "line": 39,
           "async": false
         },
         {
           "name": "_blueprint_get_prep",
-          "line": 73,
+          "line": 72,
           "async": true
         },
         {
           "name": "_do_device_get",
-          "line": 184,
+          "line": 92,
           "async": false
         },
         {
           "name": "_do_device_list",
-          "line": 231,
+          "line": 139,
           "async": false
         },
         {
           "name": "_do_entity_enrich",
-          "line": 295,
+          "line": 203,
           "async": false
         },
         {
           "name": "_do_exposure",
-          "line": 325,
+          "line": 233,
           "async": false
         },
         {
           "name": "_do_registry_lookup",
-          "line": 481,
+          "line": 389,
           "async": false
         },
         {
           "name": "_do_entity_lookup",
-          "line": 554,
+          "line": 462,
           "async": false
         }
       ],

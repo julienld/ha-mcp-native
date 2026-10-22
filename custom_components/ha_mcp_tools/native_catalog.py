@@ -5,12 +5,15 @@ from typing import Any
 from ha_mcp.runtime.catalog import build_initial_catalog
 from ha_mcp.tool_api import ToolDefinition
 
+from .native_blueprint_tools import blueprint_definition
+from .native_bulk_tools import bulk_definitions
 from .native_calendar_tools import build_calendar_tools
 from .native_camera_tools import camera_definition
 from .native_dashboard_tools import build_dashboard_tools
 from .native_device_tools import build_device_tools
 from .native_entity_tools import entity_removal_definition, entity_write_definition
 from .native_event_tools import event_definition
+from .native_group_tools import build_group_tools
 from .native_health_tools import health_definition
 from .native_history_tools import history_definition
 from .native_label_tools import build_label_tools
@@ -31,15 +34,18 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
         *bridge,
         *build_label_tools(manager),
         *build_device_tools(manager),
+        *bulk_definitions(manager),
         entity_removal_definition(manager),
         entity_write_definition(manager),
         event_definition(manager),
+        *build_group_tools(manager),
         camera_definition(manager),
         overview_definition(manager),
         health_definition(manager),
         *build_calendar_tools(manager),
         *build_resource_tools(manager),
         *build_dashboard_tools(manager),
+        blueprint_definition(manager),
         template_definition(manager.backend),
         trace_definition(manager),
         history_definition(manager),

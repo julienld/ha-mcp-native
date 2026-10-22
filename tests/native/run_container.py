@@ -15,6 +15,9 @@ import time
 from pathlib import Path
 
 import httpx
+from blueprint_checks import exercise_blueprints
+from blueprint_source import blueprint_source
+from bulk_checks import exercise_bulk
 from calendar_checks import exercise_calendars
 from camera_checks import exercise_camera
 from configuration_checks import (
@@ -26,6 +29,7 @@ from dashboard_checks import exercise_dashboard_card_types, exercise_dashboards
 from device_checks import exercise_devices
 from entity_checks import exercise_entities
 from event_checks import exercise_events
+from group_checks import exercise_groups
 from health_checks import exercise_health
 from history_checks import exercise_history
 from interop_checks import exercise_llm
@@ -377,6 +381,33 @@ async def exercise_standard_proxy(checks: Checks) -> None:
     )
 
 
+async def exercise_domain_tools(checks: Checks) -> None:
+    receipt = await exercise_helpers(checks)
+    await exercise_storage_families(checks, receipt)
+    await exercise_configuration(checks, receipt, BASE)
+    await exercise_registries(checks, BASE)
+    await exercise_flow_helpers(checks, receipt)
+    await exercise_todo(checks, BASE)
+    await exercise_calendars(checks, BASE)
+    await exercise_devices(checks, BASE)
+    await exercise_entities(checks, BASE)
+    await exercise_bulk(checks)
+    await exercise_groups(checks, BASE, receipt)
+    container = json.loads(docker("inspect", CONTAINER).stdout)[0]
+    gateway = container["NetworkSettings"]["Networks"]["bridge"]["Gateway"]
+    with blueprint_source(gateway) as source_url:
+        await exercise_blueprints(checks, BASE, source_url)
+    await exercise_events(checks)
+    await exercise_camera(checks)
+    await exercise_dashboards(checks, BASE)
+    await exercise_resources(checks, BASE)
+    await exercise_dashboard_card_types(checks)
+    await exercise_history(checks)
+    await exercise_logs(checks)
+    await exercise_health(checks)
+    await exercise_overview(checks, BASE)
+
+
 async def exercise(checks: Checks) -> dict:
     probe = await checks.ready()
     assert probe["manager_type"] == "NativeServerManager", probe
@@ -393,24 +424,7 @@ async def exercise(checks: Checks) -> dict:
     services = await checks.call("ha_list_services", {"domain": "input_boolean"})
     assert "input_boolean" in json.dumps(services), services
     checks.passed("shared_state_and_service_tools_on_Core")
-    receipt = await exercise_helpers(checks)
-    await exercise_storage_families(checks, receipt)
-    await exercise_configuration(checks, receipt, BASE)
-    await exercise_registries(checks, BASE)
-    await exercise_flow_helpers(checks, receipt)
-    await exercise_todo(checks, BASE)
-    await exercise_calendars(checks, BASE)
-    await exercise_devices(checks, BASE)
-    await exercise_entities(checks, BASE)
-    await exercise_events(checks)
-    await exercise_camera(checks)
-    await exercise_dashboards(checks, BASE)
-    await exercise_resources(checks, BASE)
-    await exercise_dashboard_card_types(checks)
-    await exercise_history(checks)
-    await exercise_logs(checks)
-    await exercise_health(checks)
-    await exercise_overview(checks, BASE)
+    await exercise_domain_tools(checks)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -472,7 +486,7 @@ async def main() -> None:
         "    - type: homeassistant\nhttp:\ninput_boolean:\n  native_light:\n"
         "    name: Native Light\ninput_button:\ninput_select:\ninput_number:\n"
         "input_text:\ninput_datetime:\ncounter:\ntimer:\nschedule:\nzone:\n"
-        "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
+        "person:\ntag:\ngroup: {}\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
         "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\nhistory:\n"
         "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nfrontend:\nnative_fixture:\n"

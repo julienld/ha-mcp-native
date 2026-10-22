@@ -97,6 +97,28 @@
     "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
     "public_contract": "original schemas and safety annotations remain unchanged"
   },
+  "native_bulk_operations": {
+    "operation_ids": "device-* IDs are scoped to the invoking user, client and manager; Engine invocation IDs remain distinct",
+    "repeated_target": "serialized per target with its own before-image, confirmation and overlap warning",
+    "after_effect_failure": "partial results and outcome_unknown are preserved; remaining queued targets are not dispatched",
+    "dry_run": "selector preview is read-only according to arguments",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_groups": {
+    "owner": "original Core Group, installed service validators and EntityComponent",
+    "snapshot_fields": ["object_id", "name", "entities", "icon", "all"],
+    "older_snapshot_mode": "preserve the current mode, or Core default during recreation, with an explicit warning",
+    "nullable_icon": "restore null through the original Core setter",
+    "persistence": "runtime only; YAML and startup configuration remain authoritative after reload or restart",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_blueprints": {
+    "snapshots": "installed raw YAML text",
+    "restoration": "Core Blueprint.yaml() normalizes YAML and may remove comments, as in the legacy path",
+    "external_file_writers": "optimistic preflight only; Core has no atomic compare-and-write against simultaneous external edits",
+    "reads": "list, get and substitute are classified as reads by arguments",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
     {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},
