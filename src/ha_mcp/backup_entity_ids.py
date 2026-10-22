@@ -12,6 +12,7 @@ from ._vendor.websockets.exceptions import WebSocketException
 from .runtime.snapshot_entity_restore import (
     _recreated_unique_id as _recreated_unique_id,
 )
+from .utils.registry_update_lock import registry_update_lock
 
 
 def _manager() -> Any:
@@ -66,7 +67,7 @@ async def restore_registry_icon(
                 f"The registry icon {registry_icon} was not restored: "
                 f"{platform} {item_id} has no entity."
             ]
-        async with bm.registry_update_lock("entity", entity["entity_id"]):
+        async with registry_update_lock("entity", entity["entity_id"]):
             await bm._ws_send(
                 client,
                 {
