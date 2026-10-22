@@ -5,10 +5,8 @@ A Model Context Protocol server that provides complete control over Home Assista
 through REST API and WebSocket integration.
 """
 
-# Must be imported before anything that reaches fastmcp (``.auth`` below does),
-# because fastmcp configures rich logging at import time and dies on a rich
-# older than 13.9.4. Importing this module applies the shim. See #2186.
-from . import _rich_compat as _rich_compat
+# MCP logging uses its own private Rich copy; importing this library must not
+# patch Home Assistant's shared RichHandler.
 from ._version import get_version
 
 __version__ = get_version()

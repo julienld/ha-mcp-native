@@ -9,3 +9,4 @@ websockets==17.2
 fastmcp-slim==4.1.0
 mcp==2.3.0
 mcp-types==2.3.0
+rich==15.0.0

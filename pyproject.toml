@@ -53,6 +53,9 @@ dependencies = [
     "pywin32>=311; sys_platform == 'win32'",
     "pyyaml>=6.0,<7.0",
     "rich>=13.9.4",
+    # Runtime requirements of the private Rich copy used by MCP logging.
+    "markdown-it-py>=2.2.0",
+    "pygments>=2.13.0,<3.0.0",
     "sse-starlette>=3.0.0",
     "starlette>=1.0.1",
     "typing-extensions>=4.13.0",

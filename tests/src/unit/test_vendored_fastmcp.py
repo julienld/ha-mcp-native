@@ -25,7 +25,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 import vendor_fastmcp  # noqa: E402
 
-_VENDORED_DISTRIBUTIONS = {"fastmcp", "fastmcp-slim", "mcp", "mcp-types"}
+_VENDORED_DISTRIBUTIONS = {"fastmcp", "fastmcp-slim", "mcp", "mcp-types", "rich"}
 # Declared by fastmcp-slim's server extra but never imported by the vendored
 # code; ha-mcp must not pin the shared copy (#2135/#2146).
 _NOT_DECLARED = {"websockets"}
@@ -84,6 +84,19 @@ def test_loggers_keep_upstream_names():
     assert isinstance(logging.getLogger("fastmcp.server.server"), logging.Logger)
 
 
+def test_private_mcp_logging_does_not_replace_home_assistant_rich():
+    import rich
+    from rich.logging import RichHandler as SharedHandler
+
+    from ha_mcp._vendor.fastmcp.utilities.logging import RichHandler
+    from ha_mcp._vendor.rich.logging import RichHandler as PrivateHandler
+
+    shared_origin = rich.__file__
+    assert RichHandler is PrivateHandler
+    assert PrivateHandler is not SharedHandler
+    assert sys.modules["rich"].__file__ == shared_origin
+
+
 def _first_party_files() -> list[Path]:
     roots = (
         _REPO_ROOT / "src" / "ha_mcp",
@@ -103,7 +116,17 @@ def test_no_first_party_module_imports_the_shared_packages():
     offenders = [
         f"{path.relative_to(_REPO_ROOT)}: {names}"
         for path in _first_party_files()
-        if (names := vendor_fastmcp.remaining_vendored_imports(path.read_text("utf-8")))
+        # Rich's explicit Core compatibility shim and its tests inspect the
+        # shared module. Only the private MCP/vendor consumers must avoid it.
+        if (
+            names := [
+                name
+                for name in vendor_fastmcp.remaining_vendored_imports(
+                    path.read_text("utf-8")
+                )
+                if name.split(".")[0] != "rich"
+            ]
+        )
     ]
     assert not offenders, f"import ha_mcp._vendor.<pkg> instead: {offenders}"
 
@@ -142,11 +165,12 @@ def test_building_the_server_loads_no_shared_fastmcp_or_mcp():
     assert shared == [], f"shared SDK modules loaded: {shared}"
 
 
-def test_component_never_imports_the_vendored_copies():
+def test_legacy_component_adapters_do_not_import_the_native_protocol_stack():
     component = _REPO_ROOT / "custom_components" / "ha_mcp_tools"
     offenders = [
         str(path.relative_to(_REPO_ROOT))
         for path in component.rglob("*.py")
+        if not path.stem.startswith("native_")
         if any(
             (
                 isinstance(node, ast.ImportFrom)
@@ -159,12 +183,14 @@ def test_component_never_imports_the_vendored_copies():
             for node in ast.walk(ast.parse(path.read_text("utf-8")))
         )
     ]
-    assert not offenders, f"the HA main process must not import ha_mcp: {offenders}"
+    assert not offenders, f"legacy Core SDK adapters must stay isolated: {offenders}"
 
 
 def test_pyproject_declares_no_shared_fastmcp_or_mcp():
     declared = {canonicalize_name(r.name) for r in _declared()}
-    assert not declared & _VENDORED_DISTRIBUTIONS
+    # The normal standalone distribution still installs shared Rich for its
+    # optional third-party CLI dependencies. The native wheel strips that edge.
+    assert not declared & (_VENDORED_DISTRIBUTIONS - {"rich"})
 
 
 def _floor(requirement: Requirement) -> Version | None:

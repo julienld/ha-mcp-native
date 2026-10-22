@@ -77,6 +77,9 @@ class FixtureView(HomeAssistantView):
                 for name in ("homeassistant", "mcp", "ha-mcp", "pydantic")
             }
         )
+        dependencies = await self.hass.async_add_executor_job(
+            lambda: json.loads(Path("/opt/native-dependencies.json").read_text())
+        )
         return web.json_response(
             {
                 "ready": bool(manager and manager.is_running),
@@ -85,6 +88,7 @@ class FixtureView(HomeAssistantView):
                 "entry_data_keys": sorted(manager.entry.data) if manager else [],
                 "path": getattr(manager, "path", None),
                 "versions": versions,
+                "dependencies": dependencies,
                 "listeners": sorted(
                     {c.laddr.port for c in connections if c.status == "LISTEN"}
                 ),

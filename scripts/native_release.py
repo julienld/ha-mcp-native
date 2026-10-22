@@ -80,6 +80,41 @@ def stamp_library(project: Path, version: str) -> None:
     project.write_text(source, encoding="utf-8", newline="\n")
 
 
+def select_native_dependencies(project: Path) -> None:
+    """Keep CLI-only dependencies out of Home Assistant's shared environment."""
+    source = project.read_text(encoding="utf-8")
+    metadata = tomllib.loads(source)
+    excluded_names = {"rich", "cyclopts", "pyperclip", "watchfiles", "pywin32"}
+    native, standalone = [], []
+    for requirement in metadata["project"]["dependencies"]:
+        name = re.match(r"[A-Za-z0-9_.-]+", requirement)
+        assert name is not None
+        target = (
+            standalone
+            if name[0].lower().replace("_", "-") in excluded_names
+            else native
+        )
+        target.append(requirement)
+    replacement = (
+        "dependencies = [\n"
+        + "".join(f"    {json.dumps(requirement)},\n" for requirement in native)
+        + "]"
+    )
+    source, count = re.subn(
+        r"(?ms)^dependencies = \[.*?^\]", lambda _: replacement, source, count=1
+    )
+    if count != 1 or "[project.optional-dependencies]" in source:
+        raise ValueError("Native dependency profile needs an explicit update")
+    source = source.replace(
+        "[project.scripts]",
+        "[project.optional-dependencies]\nstandalone = "
+        + json.dumps(standalone)
+        + "\n\n[project.scripts]",
+        1,
+    )
+    project.write_text(source, encoding="utf-8", newline="\n")
+
+
 def stamp_component(
     component: Path, version: str, dependency: str, github: str
 ) -> None:
@@ -127,6 +162,7 @@ def build(repository: Path, output: Path, version: str, tag: str, github: str) -
         staging = Path(temporary)
         gitlinks = stage_revision(repository, staging, revision)
         stamp_library(staging / "pyproject.toml", version)
+        select_native_dependencies(staging / "pyproject.toml")
         subprocess.run(
             ["uv", "build", "--wheel", "--out-dir", str(output)],
             cwd=staging,
@@ -148,6 +184,7 @@ def build(repository: Path, output: Path, version: str, tag: str, github: str) -
         "revision": revision,
         "tag": tag,
         "library_version": version,
+        "dependency_profile": "native (standalone launchers are optional)",
         "component_version": component_version,
         "dependency": dependency,
         "submodules": gitlinks,

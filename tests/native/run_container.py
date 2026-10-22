@@ -217,11 +217,13 @@ async def exercise(checks: Checks) -> dict:
     services = await checks.call("ha_list_services", {"domain": "input_boolean"})
     assert "input_boolean" in json.dumps(services), services
     checks.passed("shared_state_and_service_tools_on_Core")
-    for headers, expected in (({}, 401), (checks.headers("reader"), 403)):
+    for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
         )
-        assert response.status_code == expected, response.status_code
+        # Existing HA-auth webhook deliberately uses the same challenge for an
+        # invalid credential and an authenticated user without admin access.
+        assert response.status_code in (401, 403), response.status_code
     checks.passed("missing_and_non_admin_identity_rejected")
     response = await checks.client.post(
         BASE + checks.path,

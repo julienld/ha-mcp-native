@@ -48,6 +48,9 @@ class VendoredPackage:
 
 
 PACKAGES = (
+    # Rich is private too: Home Assistant's Sure Petcare library pins Rich 10,
+    # while the modern MCP logging stack needs a newer handler implementation.
+    VendoredPackage("rich", "rich"),
     VendoredPackage(
         "fastmcp-slim",
         "fastmcp",
@@ -69,7 +72,7 @@ _LOGGER_NAME_RE = re.compile(
     r"\b(getLogger|get_logger)\(\s*(name\s*=\s*)?__name__\s*\)"
 )
 _METADATA_VERSION_RE = re.compile(
-    r"""importlib\.metadata\.version\(\s*["'](fastmcp|fastmcp-slim|mcp|mcp-types)["']\s*\)"""
+    r"""importlib\.metadata\.version\(\s*["'](fastmcp|fastmcp-slim|mcp|mcp-types|rich)["']\s*\)"""
 )
 # Lookups by package name that the rewrite cannot redirect; any left after
 # patching fail the sync.
