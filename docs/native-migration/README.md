@@ -5,6 +5,37 @@ This directory records the public contracts of upstream revision
 It contains upstream code metadata only, never a real Home Assistant configuration
 or credentials.
 
+## Complete Core checkpoint
+
+On 22 October 2026, source revision
+[`23c6094c5`](https://github.com/julienld/ha-mcp-native/commit/23c6094c54253ee78a97970821f69c47b491533e)
+passed [the complete native workflow](https://github.com/julienld/ha-mcp-native/actions/runs/39859887952):
+17,570 unit tests passed, 132 were skipped, and 148 distinct checks passed on
+Home Assistant Container 2026.10.2. Later changes need their own qualification;
+this is an immutable checkpoint, not a claim about an untested branch head.
+
+The Container checks include direct MCP and its standard proxy, Assist export,
+Core LLM API import, OAuth grant translation and revocation, native tool
+families, real local backup archives, entry reload, legacy/native switching,
+and a complete Core process restart. After restart the original entry, MCP URL,
+actor token and both LLM directions remain usable. The final process has only
+the HA listener on 8123, no server thread, remote client import, loopback attempt
+or remaining Engine task. Shared Rich, MCP, Pydantic, httpx and cryptography
+versions remain unchanged, with no new dependency conflicts.
+
+The static catalogue declares 86 historical tools; the conditional Code tool
+completes the original 87. The skill guide and native API bridge add their own
+surfaces. Declaration and schema preservation do not establish every provider's
+runtime behavior. The Container cannot qualify physical radios, HAOS/Supervisor,
+a real screenshot renderer, authenticated HACS, third-party clients or a full
+installation restore. Public release delivery also requires a separate test of
+Core's installer against the actual wheel URL; the unpublished-candidate lane
+uses the byte-identical wheel locally. See the
+[compatibility limits](compatibility.md) and
+[candidate installation guide](installation.md).
+
+## Contract references
+
 - [Compatibility contract](compatibility.md): installation, endpoints,
   authentication, Assist and deliberately bounded native transport behavior.
 - [Machine-readable compatibility contract](compatibility.json): identifiers,
