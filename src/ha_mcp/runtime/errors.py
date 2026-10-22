@@ -9,8 +9,8 @@ from ha_mcp.tool_api import ToolFailure
 def raise_failure(payload: dict[str, Any]) -> NoReturn:
     error = payload.get("error", {})
     raise ToolFailure(
-        error.get("code", "TOOL_ERROR"),
-        error.get("message", "Tool failed"),
+        error.get("code", "TOOL_ERROR") if isinstance(error, dict) else "TOOL_ERROR",
+        error.get("message", "Tool failed") if isinstance(error, dict) else str(error),
         data=payload,
     )
 

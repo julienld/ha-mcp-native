@@ -304,6 +304,22 @@ never replay an unconfirmed operation. Core Container qualifies hardware-absent
 reads and write refusal for all four families. Physical devices and HAOS radio
 operations remain covered only by isolated owner tests and pinned Core source.
 
+Native File/YAML calls the same local business owners as the component's
+legacy services, with no ServiceCall fabrication or transport loopback. The
+separate File & YAML entry, feature opt-ins, permission store and non-overridable
+deny floor remain required. Public schemas and safety hints are unchanged.
+The native settings panel exposes these opt-ins and custom allowed paths.
+
+Writes require enabled, successful snapshots. They recheck authority, entry,
+permissions and the exact before-image after backup and before owned file I/O.
+YAML confirmation tokens now include that before-image: previously issued
+preview tokens require a fresh preview. These checks are optimistic against
+external filesystem writers; they are not atomic filesystem compare-and-swap.
+Binary files retain the legacy text-snapshot limitation, while their actual
+digest is still compared. Native history and UI restore share the same guards,
+including deleted-file recreation. POSIX and HAOS path fixtures remain active
+on Linux; their Windows skips do not qualify a physical HAOS installation.
+
 Native Updates uses the published UpdateEntity owners, original update services
 and IssueRegistry callbacks. List/get preserve presentation and expose complete
 provider attributes; release notes come from the actual provider, with the shared

@@ -59,9 +59,14 @@ class NativeRestoreOperations:
     dashboard_owner: Any = field(default=None, init=False)
     group_owner: Any = field(default=None, init=False)
     blueprint_owner: Any = field(default=None, init=False)
+    file_owner: Any = field(default=None, init=False)
 
     async def needs_safety(self) -> bool:
         domain = self.data["domain"]
+        if domain in {"file", "yaml", "yaml_file"}:
+            self.file_owner = self.snapshots.domains.file_restore(self.data, self.actor)
+            self.before = await self.file_owner.current()
+            return self.before is not None
         if domain in {"blueprint_automation", "blueprint_script"}:
             self.blueprint_owner = self.snapshots.domains.blueprint_restore(
                 self.data, self.actor
@@ -150,12 +155,12 @@ class NativeRestoreOperations:
         return True
 
     async def capture_safety(self, outcome: dict[str, Any]) -> Path | None:
-        flow = (
-            _is_flow_helper_domain(self.data["domain"])
-            or self.data["domain"] == "helper_config_subentry"
-        )
+        independent_safety = _is_flow_helper_domain(self.data["domain"]) or self.data[
+            "domain"
+        ] in {"helper_config_subentry", "file", "yaml", "yaml_file"}
         if self.before is None or (
-            not flow and not self.snapshots.manager.policy.flag("enable_auto_backup")
+            not independent_safety
+            and not self.snapshots.manager.policy.flag("enable_auto_backup")
         ):
             return None
         store = self.store
@@ -202,6 +207,9 @@ class NativeRestoreOperations:
             "group",
             "blueprint_automation",
             "blueprint_script",
+            "file",
+            "yaml",
+            "yaml_file",
         }:
             owner = {
                 "dashboard": self.dashboard_owner,
@@ -209,6 +217,9 @@ class NativeRestoreOperations:
                 "group": self.group_owner,
                 "blueprint_automation": self.blueprint_owner,
                 "blueprint_script": self.blueprint_owner,
+                "file": self.file_owner,
+                "yaml": self.file_owner,
+                "yaml_file": self.file_owner,
             }[self.data["domain"]]
             assert owner is not None
             return await owner.apply(self.before)

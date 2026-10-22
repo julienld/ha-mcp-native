@@ -69,6 +69,9 @@ def _prewarm() -> bool:
         "native_operations.blueprint_restore",
         "native_operations.device_operations",
         "native_operations.system_lifecycle",
+        "native_filesystem_tools",
+        "native_yaml_tools",
+        "native_operations.file_restore",
     ):
         importlib.import_module(f"{__package__}.{module}")
     for module in (

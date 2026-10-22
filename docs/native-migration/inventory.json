@@ -29,12 +29,14 @@
     "custom_components/ha_mcp_tools/native_theme_tools.py",
     "custom_components/ha_mcp_tools/native_pipeline_tools.py",
     "custom_components/ha_mcp_tools/native_update_tools.py",
-    "custom_components/ha_mcp_tools/native_radio_tools.py"
+    "custom_components/ha_mcp_tools/native_radio_tools.py",
+    "custom_components/ha_mcp_tools/native_filesystem_tools.py",
+    "custom_components/ha_mcp_tools/native_yaml_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 70,
+    "native_catalog_declarations": 72,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -739,13 +741,19 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_yaml_read.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/yaml_read_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
-      "client_call_candidates": []
+      "client_call_candidates": [
+        {
+          "line": 75,
+          "call": "YamlLookup(LegacyYamlFiles(self._client)).get",
+          "wire_literals": []
+        }
+      ]
     },
     {
       "name": "ha_config_list_dashboard_resources",
@@ -1742,8 +1750,8 @@
         "reload validation"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_yaml_config.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/yaml_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -1768,7 +1776,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_filesystem.py",
+      "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2805,7 +2813,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_filesystem.py",
+      "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3472,7 +3480,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_filesystem.py",
+      "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -4519,7 +4527,7 @@
       ],
       "native_status": "not_verified",
       "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_filesystem.py",
+      "shared_source": "src/ha_mcp/runtime/filesystem_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",

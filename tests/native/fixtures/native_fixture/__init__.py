@@ -185,6 +185,10 @@ class FixtureView(HomeAssistantView):
     def _configuration_observation(
         self, request: web.Request, operation: str
     ) -> web.Response | None:
+        if operation == "file_probe":
+            from .file_support import file_probe
+
+            return web.json_response(file_probe(self.hass))
         if operation == "update_probe":
             from .update_actions import update_probe
 
@@ -237,6 +241,7 @@ class FixtureView(HomeAssistantView):
             "seed_system_actions",
             "pipeline_seed",
             "seed_updates",
+            "file_external_edit",
         }:
             return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
@@ -292,6 +297,10 @@ class FixtureView(HomeAssistantView):
         return web.json_response({"data": result.data, "error": result.error})
 
     async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "file_external_edit":
+            from .file_support import external_yaml_edit
+
+            return await external_yaml_edit(self.hass)
         if operation == "seed_updates":
             from .update_actions import seed_updates
 

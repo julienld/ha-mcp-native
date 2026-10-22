@@ -20,15 +20,15 @@ import json
 import logging
 import time
 import weakref
-from typing import Annotated, Any, NoReturn
-
-from pydantic import Field
+from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..component_contract import MIN_COMPONENT_VERSION as MIN_COMPONENT_VERSION
 from ..errors import ErrorCode, create_error_response
+from ..runtime.filesystem_tools import FilesystemTools as FilesystemContractTools
 from .auto_backup import with_auto_backup
 from .component_api import ComponentCaps, get_component_caps
 from .config_entry_flow import COMPONENT_DOMAIN as MCP_TOOLS_DOMAIN
@@ -496,59 +496,14 @@ async def _assert_mcp_tools_available(client: Any) -> None:
         _raise_tools_entry_not_set_up()
 
 
-class FilesystemTools:
+class LegacyFilesystem:
     """Filesystem access tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
-        name="ha_list_files",
-        tags={"Files", "beta"},
-        annotations=read_only_hints("List Files", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_list_files(
-        self,
-        path: Annotated[
-            str,
-            Field(
-                description=(
-                    "Directory path. Relative to the config dir for the built-in "
-                    "allowlist; absolute for a configured custom directory or "
-                    "HAOS sibling volume. "
-                    "Example: 'www/' or '/share/llm'"
-                ),
-            ),
-        ],
-        pattern: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "Optional glob pattern to filter files. "
-                    "Example: '*.css', '*.yaml', '*.js'"
-                ),
-            ),
-        ] = None,
-    ) -> dict[str, Any]:
-        """List files in a directory within the Home Assistant config directory.
-
-        Returns file names, sizes, and modification times for one of the allowed
-        directories:
-        - `www/` - Web assets (CSS, JS, images for dashboards)
-        - `themes/` - Theme files
-        - `custom_templates/` - Jinja2 template files
-        - `dashboards/` - YAML-mode dashboard files
-        - `blueprints/` - Automation/script blueprint sources (read-only)
-        - `packages/`, plus the folder bound by `homeassistant: packages:` when
-          it has another name
-        - Plus any custom directories OR HAOS sibling volumes (`/share`,
-          `/media`, `/ssl`, `/backup`) configured in the ha-mcp settings UI
-        Path traversal (../) is blocked.
-
-        EXAMPLE: ha_list_files(path="www/", pattern="*.css")
-        """
+    async def list_files(self, path: str, pattern: str | None = None) -> dict[str, Any]:
+        """Retain the existing component-service route for legacy callers."""
         try:
             # Check if custom component is available
             await _assert_mcp_tools_available(self._client)
@@ -592,79 +547,10 @@ class FilesystemTools:
             return None
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
 
-    @tool(
-        name="ha_read_file",
-        tags={"Files", "beta"},
-        annotations=read_only_hints("Read File", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_read_file(
-        self,
-        path: Annotated[
-            str,
-            Field(
-                description=(
-                    "File path. Relative to the config dir for the built-in "
-                    "allowlist; absolute for a configured HAOS sibling volume. "
-                    "Examples: "
-                    "'configuration.yaml', 'www/custom.css', '/share/llm/notes.md'"
-                ),
-            ),
-        ],
-        tail_lines: Annotated[
-            int | None,
-            Field(
-                default=None,
-                ge=1,
-                le=10000,
-                description=(
-                    "For log files, return only the last N lines. Default: None (return "
-                    "full file, or last 1000 lines for logs)"
-                ),
-            ),
-        ] = None,
-        yaml_path: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "Dotted YAML key path (e.g. 'alert2', 'mqtt.sensor'). When set, the "
-                    "response also carries 'subtree': the round-trip text of just that "
-                    "key's value (null when the key is absent); comments and HA tags "
-                    "('!secret', '!include') survive as written and a '!secret' is never "
-                    "resolved."
-                ),
-            ),
-        ] = None,
+    async def read_file(
+        self, path: str, tail_lines: int | None = None, yaml_path: str | None = None
     ) -> dict[str, Any]:
-        """Read a file from the Home Assistant config directory.
-
-        General-purpose escape hatch — prefer a dedicated tool when one exists:
-        ha_manage_blueprints(action="get") for a blueprint body,
-        ha_config_get_yaml for a config key, ha_config_get_automation/script/scene
-        for storage-mode items. Reach for ha_read_file only for raw on-disk text
-        those tools don't expose.
-
-        Some files have special handling:
-        - `secrets.yaml`: Values are masked for security
-        - `home-assistant.log` / `home-assistant.log.fault`: Prefer
-          ha_get_logs(source='error_log') and
-          ha_get_logs(source='fault_log') over reading these directly.
-
-        **Allowed Read Paths:**
-        - `configuration.yaml`, `automations.yaml`, `scripts.yaml`, `scenes.yaml`
-        - `secrets.yaml` (values masked)
-        - `*.yaml` at any depth under `packages/` and under the folder bound by
-          `homeassistant: packages:`
-        - `home-assistant.log`, `home-assistant.log.fault` (tail only)
-        - `www/**`, `themes/**`, `custom_templates/**`, `dashboards/**`, `blueprints/**`
-        - `custom_components/**/*.py` (read-only)
-        - Plus any custom directories OR HAOS sibling volumes (`/share`,
-          `/media`, `/ssl`, `/backup`) configured in the ha-mcp settings UI
-        Path traversal (../) is blocked.
-
-        EXAMPLE: ha_read_file(path="packages/alert2.yaml", yaml_path="alert2")
-        """
+        """Retain the existing component-service route for legacy callers."""
         try:
             # Check if custom component is available
             await _assert_mcp_tools_available(self._client)
@@ -707,72 +593,10 @@ class FilesystemTools:
             return None
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
 
-    @tool(
-        name="ha_write_file",
-        tags={"Files", "beta"},
-        annotations=write_hints(
-            "Write File", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(domain="file", id_param="path", mandatory=True)
-    @log_tool_usage
-    async def ha_write_file(
-        self,
-        path: Annotated[
-            str,
-            Field(
-                description=(
-                    "File path in an allowed write directory; pass the "
-                    "absolute path for a HAOS sibling volume. "
-                    "Example: 'www/custom.css', '/share/llm/out.txt'"
-                ),
-            ),
-        ],
-        content: Annotated[
-            str,
-            Field(
-                description="The content to write to the file.",
-            ),
-        ],
-        overwrite: Annotated[
-            bool,
-            Field(
-                default=False,
-                description=("Whether to overwrite if the file exists."),
-            ),
-        ] = False,
-        create_dirs: Annotated[
-            bool,
-            Field(
-                default=True,
-                description=(
-                    "Whether to create parent directories if they don't exist."
-                ),
-            ),
-        ] = True,
+    async def write_file(
+        self, path: str, content: str, overwrite: bool = False, create_dirs: bool = True
     ) -> dict[str, Any]:
-        """Write a file to allowed directories in the Home Assistant config.
-
-        Creates or updates files (custom CSS/JS for dashboards, Jinja2 macro
-        templates, theme YAML) in restricted directories only.
-
-        **Allowed Write Directories:**
-        - `www/` - Web assets for dashboards
-        - `themes/` - Theme YAML files
-        - `custom_templates/` - Jinja2 template files
-        - `dashboards/` - YAML-mode dashboard files
-        - Plus any custom directories OR HAOS sibling volumes (`/share`,
-          `/media`, `/ssl`, `/backup`) configured in the ha-mcp settings UI
-        Configuration files (configuration.yaml, etc.) cannot be written; path
-        traversal (../) is blocked.
-
-        Text content only. Overwriting a file that currently holds binary
-        content still succeeds, but its prior bytes cannot be captured by
-        auto-backup (only modifications/deletions of text files are
-        snapshotted); the skip is logged, the write is not blocked.
-
-        EXAMPLE: ha_write_file(path="custom_templates/formatters.jinja", content="{% macro shout(text) %}{{ text | upper }}{% endmacro %}")
-        """
+        """Retain the existing component-service route for legacy callers."""
         try:
             # Check if custom component is available
             await _assert_mcp_tools_available(self._client)
@@ -816,47 +640,8 @@ class FilesystemTools:
             return None
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
 
-    @tool(
-        name="ha_delete_file",
-        tags={"Files", "beta"},
-        annotations=write_hints(
-            "Delete File", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(domain="file", id_param="path", mandatory=True)
-    @log_tool_usage
-    async def ha_delete_file(
-        self,
-        path: Annotated[
-            str,
-            Field(
-                description=(
-                    "File path in an allowed delete directory; pass the "
-                    "absolute path for a HAOS sibling volume. "
-                    "Example: 'www/old-file.css'"
-                ),
-            ),
-        ],
-        confirm: Annotated[
-            bool,
-            Field(
-                default=False,
-                description=("Must be True to confirm deletion."),
-            ),
-        ] = False,
-    ) -> dict[str, Any]:
-        """Delete a file from allowed directories in the Home Assistant config.
-
-        ha_manage_backup(scope="edits") can restore a text file from its most
-        recent auto-backup snapshot; a binary file has no snapshot and its
-        deletion is permanent. Allowed directories:
-        `www/`, `themes/`, `custom_templates/`, `dashboards/`, plus any custom
-        directories OR HAOS sibling volumes (`/share`, `/media`, `/ssl`,
-        `/backup`) configured in the ha-mcp settings UI. Configuration files
-        cannot be deleted; path traversal (../) is blocked.
-
-        EXAMPLE: ha_delete_file(path="www/deprecated-style.css", confirm=True)
-        """
+    async def delete_file(self, path: str, confirm: bool = False) -> dict[str, Any]:
+        """Retain the existing component-service route for legacy callers."""
         try:
             if not confirm:
                 raise_tool_error(
@@ -906,6 +691,48 @@ class FilesystemTools:
             )
             return None
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
+
+
+class FilesystemTools(FilesystemContractTools, LegacyFilesystem):
+    def __init__(self, client: Any) -> None:
+        LegacyFilesystem.__init__(self, client)
+        FilesystemContractTools.__init__(self, self)
+
+    ha_list_files = tool(
+        name="ha_list_files",
+        tags={"Files", "beta"},
+        annotations=read_only_hints("List Files", open_world=False),
+    )(log_tool_usage(legacy_errors(FilesystemContractTools.ha_list_files)))
+
+    ha_read_file = tool(
+        name="ha_read_file",
+        tags={"Files", "beta"},
+        annotations=read_only_hints("Read File", open_world=False),
+    )(log_tool_usage(legacy_errors(FilesystemContractTools.ha_read_file)))
+
+    ha_write_file = tool(
+        name="ha_write_file",
+        tags={"Files", "beta"},
+        annotations=write_hints(
+            "Write File", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(domain="file", id_param="path", mandatory=True)(
+            log_tool_usage(legacy_errors(FilesystemContractTools.ha_write_file))
+        )
+    )
+
+    ha_delete_file = tool(
+        name="ha_delete_file",
+        tags={"Files", "beta"},
+        annotations=write_hints(
+            "Delete File", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(domain="file", id_param="path", mandatory=True)(
+            log_tool_usage(legacy_errors(FilesystemContractTools.ha_delete_file))
+        )
+    )
 
 
 def register_filesystem_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

@@ -21,15 +21,7 @@ def decorated_tool_param_names(module_path: Path, tool_name: str) -> set[str]:
     and the ``@mcp.tool(...)`` closure pattern, where the function name IS
     the tool name)."""
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
-    scripts = module_path.parents[3] / "scripts"
-    extractor = runpy.run_path(str(scripts / "extract_tools.py"))
-    shared = runpy.run_path(str(scripts / "extract_tools_shared.py"))
-    resolver = shared["SharedToolExtractor"](
-        extractor["_import_source"],
-        extractor["_module_scope"],
-        extractor["_extract_tool_from_node"],
-    )
-    resolved = resolver.resolve_function(module_path, tool_name)
+    resolved = resolved_tool_function(module_path, tool_name)
     if resolved is not None:
         tree.body.append(resolved)
 
@@ -57,3 +49,18 @@ def decorated_tool_param_names(module_path: Path, tool_name: str) -> set[str]:
         f"could not locate the @tool-decorated function for {tool_name} "
         f"in {module_path.name}"
     )
+
+
+def resolved_tool_function(
+    module_path: Path, tool_name: str
+) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
+    """Resolve the actual declaration behind a public registration, without imports."""
+    scripts = module_path.parents[3] / "scripts"
+    extractor = runpy.run_path(str(scripts / "extract_tools.py"))
+    shared = runpy.run_path(str(scripts / "extract_tools_shared.py"))
+    resolver = shared["SharedToolExtractor"](
+        extractor["_import_source"],
+        extractor["_module_scope"],
+        extractor["_extract_tool_from_node"],
+    )
+    return resolver.resolve_function(module_path, tool_name)

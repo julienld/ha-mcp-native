@@ -73,12 +73,23 @@ class NativeSnapshotDomains:
         domain = data["domain"]
         if domain == "calendar_event":
             return await self.calendar_restore(data, actor).current()
-        if domain in {"dashboard", "group", "blueprint_automation", "blueprint_script"}:
+        if domain in {
+            "dashboard",
+            "group",
+            "blueprint_automation",
+            "blueprint_script",
+            "file",
+            "yaml",
+            "yaml_file",
+        }:
             restore = {
                 "dashboard": self.dashboard_restore,
                 "group": self.group_restore,
                 "blueprint_automation": self.blueprint_restore,
                 "blueprint_script": self.blueprint_restore,
+                "file": self.file_restore,
+                "yaml": self.file_restore,
+                "yaml_file": self.file_restore,
             }[domain]
             return await restore(data, actor).comparison()
         if domain == "dashboard_resource":
@@ -184,6 +195,13 @@ class NativeSnapshotDomains:
                 "The saved entity registration no longer exists. Its integration owns creation; this restore cannot recreate the original registry identity.",
                 reason="entry_deleted",
             ) from error
+
+    def file_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
+        from .native_operations.file_restore import NativeFileRestore
+
+        return NativeFileRestore(
+            self.manager, actor, data["domain"], data["entity_id"], data["config"]
+        )
 
     def calendar_restore(self, data: dict[str, Any], actor: CallContext) -> Any:
         from .native_operations.calendar_events import NativeCalendars

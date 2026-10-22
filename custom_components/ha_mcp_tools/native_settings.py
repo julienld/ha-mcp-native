@@ -16,6 +16,7 @@ from aiohttp import web
 from .const import COMPONENT_VERSION, SERVER_CONFIG_SUBDIR
 from .native_server_policy import _read_object, env_tool_states, load_policy
 from .native_settings_backups import NativeBackupSettings
+from .native_settings_files import NativeFileSettings
 
 _LOGGER = logging.getLogger(__name__)
 _SUPPORTED_FLAGS = (
@@ -28,6 +29,12 @@ _SUPPORTED_FLAGS = (
     "redact_secrets",
     "enable_beta_features",
     "enable_code_mode",
+    "enable_filesystem_tools",
+    "enable_yaml_config_editing",
+    "enable_yaml_edit_confirm",
+    "enable_yaml_packages_automation",
+    "enable_yaml_packages_script",
+    "enable_yaml_packages_scene",
 )
 _BACKUP_SETTINGS = frozenset(
     {
@@ -47,6 +54,7 @@ _ADVANCED = {
     "code_mode_max_recursion": "CODE_MODE_MAX_RECURSION",
     "code_mode_max_invocations": "CODE_MODE_MAX_INVOCATIONS",
     "code_mode_saved_tools_path": "CODE_MODE_SAVED_TOOLS_PATH",
+    "extra_yaml_write_keys": "HA_MCP_EXTRA_YAML_KEYS",
 }
 
 
@@ -103,6 +111,7 @@ class NativeSettings:
             "api/policy/value-source": self._value_source,
             "api/policy/decision-pin": self._decision_pin,
             "api/visibility/config": self._visibility_config,
+            "api/settings/fs-custom-paths": NativeFileSettings(self).handle,
         }
         route = path.strip("/")
         handler = routes.get(route)
@@ -251,7 +260,11 @@ class NativeSettings:
         }
 
     async def _features(self, request: web.Request) -> web.Response:
-        from ha_mcp.config_registry import FEATURE_FLAG_FIELDS, SETTING_BOUNDS
+        from ha_mcp.config_registry import (
+            BETA_FEATURE_FIELDS,
+            FEATURE_FLAG_FIELDS,
+            SETTING_BOUNDS,
+        )
         from ha_mcp.config_settings import Settings
 
         if request.method == "POST":
@@ -288,7 +301,13 @@ class NativeSettings:
             "Enable beta features first, then reload this integration to activate."
         )
         return web.json_response(
-            {"flags": flags, "beta_sub_flags": ["enable_code_mode"], "is_addon": False}
+            {
+                "flags": flags,
+                "beta_sub_flags": [
+                    name for name in _SUPPORTED_FLAGS if name in BETA_FEATURE_FIELDS
+                ],
+                "is_addon": False,
+            }
         )
 
     def _save_features(self, body: Any) -> dict[str, Any]:
@@ -324,6 +343,8 @@ class NativeSettings:
                     "tool_search_max_results",
                     "enable_beta_features",
                     "enable_code_mode",
+                    "enable_filesystem_tools",
+                    "enable_yaml_config_editing",
                 }.intersection(raw)
             ),
         }

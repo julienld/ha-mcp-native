@@ -351,6 +351,42 @@ class NativeSnapshots:
 
         return await self._capture(capture)
 
+    async def file_backup(self, payload: dict[str, Any], context: CallContext) -> None:
+        """A required snapshot never degrades into a best-effort warning."""
+        from ha_mcp.tool_api import ToolFailure
+
+        domain, source = payload["domain"], payload["source_tool"]
+        if (domain, source) not in {
+            ("file", "ha_write_file"),
+            ("file", "ha_delete_file"),
+            ("yaml", "ha_config_set_yaml"),
+        }:
+            raise ValueError("Unsupported mandatory file snapshot domain/source")
+        await self.manager.backend.authorize(context)
+        if not self.manager.policy.flag("enable_auto_backup"):
+            raise ToolFailure(
+                "CONFIG_VALIDATION_FAILED",
+                "File and YAML writes require auto-backup",
+                status="not_started",
+            )
+        current = payload["current_config"]
+        # New files/keys and binary files have no text snapshot, as in legacy.
+        if current is None:
+            return
+        if not isinstance(current, str):
+            raise ValueError("File snapshots must contain text")
+        store = self._store()
+        try:
+            await self._io(
+                store.capture, domain, str(payload["backup_id"]), current, source
+            )
+        except Exception as error:
+            raise ToolFailure(
+                "BACKUP_CAPTURE_FAILED",
+                "The mandatory pre-write backup failed; nothing was changed. Resolve the backup storage problem before retrying.",
+                status="not_started",
+            ) from error
+
     async def snapshot_comparison(
         self, name: str, actor: CallContext
     ) -> tuple[dict[str, Any], Any]:
@@ -455,6 +491,9 @@ class NativeSnapshots:
                 "blueprint_script",
                 "entity_registry",
                 "entity_exposure",
+                "file",
+                "yaml",
+                "yaml_file",
             }:
                 # The Core service owns its mutation lock; it rechecks the
                 # captured before-image after acquiring it, so no lock is reentered.

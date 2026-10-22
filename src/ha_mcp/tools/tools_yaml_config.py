@@ -14,15 +14,31 @@ Feature Flag: Set ENABLE_YAML_CONFIG_EDITING=true to enable.
 import fnmatch
 import logging
 import os
-from typing import Annotated, Any
-
-from pydantic import Field
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.tool_api import ToolFailure
 
+from ..backends.legacy import legacy_errors
 from ..config import get_global_settings
 from ..errors import ErrorCode, create_error_response
+from ..runtime.yaml_tools import YamlConfigTools as YamlContractTools
+from ..runtime.yaml_values import (
+    _HELPER_EQUIVALENT_KEYS as _HELPER_EQUIVALENT_KEYS,
+)
+from ..runtime.yaml_values import (
+    _YAML_PACKAGES_FLAG_BY_KEY as _YAML_PACKAGES_FLAG_BY_KEY,
+)
+from ..runtime.yaml_values import (
+    _YAML_SKILL_FILES as _YAML_SKILL_FILES,
+)
+from ..runtime.yaml_values import (
+    _append_yaml_result_warnings as _append_yaml_result_warnings,
+)
+from ..runtime.yaml_values import (
+    _validate_yaml_action_and_content as _validate_yaml_action_and_content,
+)
 from ..strict_bps import BestPracticeKeyParam
 from .auto_backup import with_auto_backup
 from .config_write_helpers import (
@@ -49,7 +65,6 @@ from .util_helpers import unwrap_service_response
 # YAML packages frequently include template sensors, command_line entities,
 # and mqtt templates — exactly where template misuse causes the most
 # subtle bugs. template-guidelines.md is the relevant default.
-_YAML_SKILL_FILES: tuple[str, ...] = ("references/template-guidelines.md",)
 
 logger = logging.getLogger(__name__)
 
@@ -62,22 +77,12 @@ _LOVELACE_DASHBOARD_PREFIX = "lovelace.dashboards."
 # wrapper. The parity invariant (keys == PACKAGES_ONLY_YAML_KEYS, and
 # every value is a real Settings field) is enforced by
 # test_yaml_dashboards.py::test_flag_map_matches_packages_only_keys.
-_YAML_PACKAGES_FLAG_BY_KEY = {
-    "automation": "enable_yaml_packages_automation",
-    "script": "enable_yaml_packages_script",
-    "scene": "enable_yaml_packages_scene",
-}
 
 # Keys editable here that ALSO have a storage-mode helper equivalent.
 # Deliberately NOT blocked (git-managed YAML configs are legitimate) —
 # the response instead carries a reactive routing warning, since this
 # exact entry point (utility_meter via raw YAML when the helper tool
 # covered it) is how the #1720 corruption reached a production config.
-_HELPER_EQUIVALENT_KEYS: dict[str, str] = {
-    "template": "template",
-    "utility_meter": "utility_meter",
-    "group": "group",
-}
 
 
 def _is_preview_only_call(kwargs: dict[str, Any]) -> bool:
@@ -114,39 +119,6 @@ def _disabled_packages_keys(settings: Any) -> list[str]:
         for key, flag in _YAML_PACKAGES_FLAG_BY_KEY.items()
         if not getattr(settings, flag)
     )
-
-
-def _validate_yaml_action_and_content(action: str, content: str | None) -> None:
-    """Raise a ToolError if ``action`` is not a recognized action, or if
-    ``content`` is missing for an action that requires it.
-
-    Split out of ``ha_config_set_yaml`` purely to keep the caller's
-    complexity down; behavior and messages are unchanged.
-    """
-    # Validate action
-    valid_actions = ("add", "replace", "remove")
-    if action not in valid_actions:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Invalid action '{action}'. Must be one of: {', '.join(valid_actions)}",
-                suggestions=[
-                    "Use action='add' to insert content under a key",
-                    "Use action='replace' to overwrite a key's content",
-                    "Use action='remove' to delete a key entirely",
-                ],
-            )
-        )
-
-    # Validate content is provided for add/replace
-    if action in ("add", "replace") and not content:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"'content' is required for action '{action}'.",
-                suggestions=["Provide valid YAML content to insert or replace."],
-            )
-        )
 
 
 def _reject_disabled_packages_key(
@@ -211,44 +183,6 @@ def _reject_disabled_packages_key(
     return disabled_keys, top_key, normalized_target
 
 
-def _append_yaml_result_warnings(
-    result: dict[str, Any], *, action: str, top_key: str, normalized_target: str
-) -> None:
-    """Append any post-write advisory warnings to ``result`` in place.
-
-    Split out of ``ha_config_set_yaml`` purely to keep the caller's
-    complexity down; behavior and messages are unchanged.
-    """
-    if "reload_error" in result:
-        # Theme edits trigger frontend.reload_themes in the
-        # component; the file write succeeded even when that
-        # reload failed, so degrade to a warning instead of
-        # masking the partial failure behind a bare success.
-        result.setdefault("warnings", []).append(
-            "The file was updated, but "
-            f"{result.get('reload_service', 'the reload service')} "
-            f"failed: {result['reload_error']}. Re-run the reload "
-            '(e.g. ha_reload_core(target="themes")) or restart '
-            "Home Assistant to apply the change."
-        )
-    # themes/*.yaml guard: there the top_key is a THEME NAME, so
-    # a theme that happens to be called 'template'/'group'/
-    # 'utility_meter' must not draw the helper-routing warning.
-    if (
-        action in ("add", "replace")
-        and top_key in _HELPER_EQUIVALENT_KEYS
-        and not fnmatch.fnmatch(normalized_target, "themes/*.yaml")
-    ):
-        result.setdefault("warnings", []).append(
-            f"Best practice: '{top_key}' has a storage-mode "
-            f"equivalent — ha_config_set_helper(helper_type="
-            f"'{_HELPER_EQUIVALENT_KEYS[top_key]}') — which avoids "
-            "raw YAML file rewrites entirely. Prefer it unless "
-            "this configuration is deliberately YAML-managed "
-            "(e.g. git-tracked packages)."
-        )
-
-
 async def _check_storage_mode_dashboard_collision(client: Any, yaml_path: str) -> None:
     """Raise a ToolError if a storage-mode dashboard already owns the requested
     url_path; otherwise return without doing anything.
@@ -293,139 +227,21 @@ async def _check_storage_mode_dashboard_collision(client: Any, yaml_path: str) -
             )
 
 
-class YamlConfigTools:
+class LegacyYamlConfig:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
-        name="ha_config_set_yaml",
-        tags={"System", "beta"},
-        annotations=write_hints(
-            "Raw YAML Config Edit", destructive=True, idempotent=False, open_world=False
-        ),
-    )
-    @with_auto_backup(
-        domain="yaml",
-        id_fn=lambda kw: (
-            f"{kw.get('file') or 'configuration.yaml'}::{kw.get('yaml_path') or ''}"
-        ),
-        mandatory=True,
-        skip_fn=_is_preview_only_call,
-    )
-    @log_tool_usage
-    async def ha_config_set_yaml(
+    async def edit(
         self,
-        yaml_path: Annotated[
-            str,
-            Field(
-                description=(
-                    "Top-level YAML key to modify. Only a narrow allowlist of "
-                    "YAML-only or YAML-heavy integration keys is accepted (e.g., "
-                    "'command_line', 'rest', 'shell_command', 'notify', 'knx'). "
-                    "For YAML-mode dashboards, "
-                    "use the dotted form 'lovelace.dashboards.<url_path>' where "
-                    "<url_path> is lowercase, hyphenated, and not a reserved HA "
-                    "route. For themes in themes/*.yaml, use the theme name "
-                    "(simple name without dots; content is the mapping of "
-                    "theme variables only, without the theme name)."
-                ),
-            ),
-        ],
-        action: Annotated[
-            str,
-            Field(
-                description=(
-                    "Action to perform: 'add' (insert content if yaml_path is absent; "
-                    "otherwise merge one level deep: a list gets content's items "
-                    "appended, a mapping gets content's top-level keys set, "
-                    "overwriting same-named ones, so a nested mapping or list under "
-                    "such a key is replaced, not merged; mismatched types are "
-                    "rejected. For a nested edit, read the whole value of yaml_path, "
-                    "not a nested path below it, and use 'replace' with the "
-                    "complete edited value), "
-                    "'replace' (overwrite yaml_path with content), or 'remove' "
-                    "(delete yaml_path entirely)."
-                ),
-            ),
-        ],
-        content: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "YAML content for the value under yaml_path. Required for 'add' and "
-                    "'replace' actions."
-                ),
-            ),
-        ] = None,
-        file: Annotated[
-            str,
-            Field(
-                default="configuration.yaml",
-                description=(
-                    "Relative path to the YAML config file. Also supports 'packages/*.yaml'"
-                    " and 'themes/*.yaml'."
-                ),
-            ),
-        ] = "configuration.yaml",
-        confirm_token: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=("Confirmation token from a prior preview response."),
-            ),
-        ] = None,
-        MandatoryBPS: Annotated[
-            bool,
-            Field(default=True),
-        ] = True,
-        # BestPracticeKey (#1779): consumed by StrictBpsMiddleware, never read
-        # here — see strict_bps.py for the declaration contract.
+        yaml_path: str,
+        action: str,
+        content: str | None = None,
+        file: str = "configuration.yaml",
+        confirm_token: str | None = None,
+        MandatoryBPS: bool = True,
         BestPracticeKey: BestPracticeKeyParam = None,
     ) -> dict[str, Any]:
-        """Update raw YAML configuration in configuration.yaml, packages/*.yaml, or themes/*.yaml (LAST RESORT).
-
-        MUST call ha_get_skill_guide OR refer to your locally installed skills first.
-        ``template-guidelines.md`` ships under ``skill_content`` by default.
-
-        Destructive, disabled by default. Prefer the dedicated tools:
-        ha_config_set_helper for template sensors and every other helper type,
-        ha_config_set_automation / ha_config_set_script / ha_config_set_scene
-        for storage-mode items.
-
-        Intended for YAML-only integrations with no config-flow or API
-        equivalent (command_line, rest, shell_command, notify platforms),
-        for integrations with significant YAML-only configuration (knx
-        entities in package files), for registering YAML-mode dashboards via
-        ``lovelace.dashboards.<url_path>`` (no other ``lovelace.*`` keys),
-        and for editing theme files in ``themes/*.yaml``. Themes only load when
-        configuration.yaml carries the ``frontend: themes:`` include (e.g.
-        ``!include_dir_merge_named themes``); this tool cannot add that include
-        (``frontend`` is not an allowed key). ``automation``, ``script`` and
-        ``scene`` keys are accepted only when ``file`` is a ``packages/*.yaml``
-        and the operator has turned on that key's packages setting (each is
-        off by default); writes of those keys to ``configuration.yaml`` are
-        rejected; use the storage-mode tools.
-
-        Check ``post_action`` in the response: most keys need a full HA
-        restart. For ``themes/*.yaml`` this tool *performs* the reload itself
-        (``frontend.reload_themes``), so ``post_action`` is ``reload_performed``
-        (or ``reload_available`` plus ``reload_error`` if that reload failed).
-        For template, mqtt, group, automation, script, and scene it only
-        *advertises* the reload service (``post_action: reload_available`` with
-        a ``reload_service`` to call yourself); the edit is on disk but not yet
-        live. Preserves YAML comments and HA tags (``!include``,
-        ``!secret``) on round-trip; ``replace`` swaps the subtree as-is.
-
-        Two-step confirmation (default ON, toggle ENABLE_YAML_EDIT_CONFIRM /
-        Server Settings): the first call returns ``preview: true`` with a
-        unified ``diff`` of exactly what would change on disk and a
-        ``confirm_token`` — nothing is written. Review the diff, then repeat
-        the identical call adding ``confirm_token`` to apply. Every applied
-        write also returns the final ``diff``. A token mismatch means the file
-        changed since the preview (or the token was wrong); use the freshly
-        returned token.
-        """
+        """Retain the existing component-service route for legacy callers."""
         try:
             _validate_yaml_action_and_content(action, content)
 
@@ -502,6 +318,9 @@ class YamlConfigTools:
                 )
             )
 
+        except ToolFailure as failure:
+            augment_error_dict_with_skill_content(failure.data, bp_warnings=None)
+            raise
         except ToolError as te:
             raise augment_tool_error_with_skill_content(te, bp_warnings=None) from None
         except Exception as e:  # noqa: BLE001
@@ -519,6 +338,29 @@ class YamlConfigTools:
             raise_tool_error(error)
             return None  # raise_tool_error always raises; explicit for CodeQL
         return None  # py/mixed-returns: explicit terminal; error handlers above always raise (NoReturn), unreachable
+
+
+class YamlConfigTools(YamlContractTools, LegacyYamlConfig):
+    def __init__(self, client: Any) -> None:
+        LegacyYamlConfig.__init__(self, client)
+        YamlContractTools.__init__(self, self)
+
+    ha_config_set_yaml = tool(
+        name="ha_config_set_yaml",
+        tags={"System", "beta"},
+        annotations=write_hints(
+            "Raw YAML Config Edit", destructive=True, idempotent=False, open_world=False
+        ),
+    )(
+        with_auto_backup(
+            domain="yaml",
+            id_fn=lambda kw: (
+                f"{kw.get('file') or 'configuration.yaml'}::{kw.get('yaml_path') or ''}"
+            ),
+            mandatory=True,
+            skip_fn=_is_preview_only_call,
+        )(log_tool_usage(legacy_errors(YamlContractTools.ha_config_set_yaml)))
+    )
 
 
 def register_yaml_config_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
