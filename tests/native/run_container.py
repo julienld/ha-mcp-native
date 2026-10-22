@@ -16,6 +16,7 @@ from pathlib import Path
 
 import httpx
 from app_checks import exercise_apps
+from backup_checks import exercise_backups
 from blueprint_checks import exercise_blueprints
 from blueprint_source import blueprint_source
 from bulk_checks import exercise_bulk
@@ -433,6 +434,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_apps(checks)
     await exercise_code_mode(checks, BASE)
     await exercise_developer_tools(checks, BASE)
+    await exercise_backups(checks)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)
@@ -514,7 +516,16 @@ async def main() -> None:
         encoding="utf-8",
     )
     (preferences / "backup_settings.json").write_text(
-        json.dumps({"enable_auto_backup": True}), encoding="utf-8"
+        json.dumps(
+            {
+                "enable_auto_backup": True,
+                "enable_snapshot_actions": True,
+                "enable_snapshot_delete": True,
+                "snapshot_delete_min_age_days": 0,
+                "backup_read_only": False,
+            }
+        ),
+        encoding="utf-8",
     )
     (CONFIG / "configuration.yaml").write_text(
         "homeassistant:\n  name: Native migration CI\n  latitude: 0\n  longitude: 0\n"
@@ -533,7 +544,7 @@ async def main() -> None:
         "      mode: yaml\n      title: Native YAML Search\n      show_in_sidebar: false\n"
         "      filename: native-search-dashboard.yaml\n"
         "recorder:\n  commit_interval: 1\nhistory:\nenergy:\nconversation:\nassist_pipeline:\n"
-        "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\n"
+        "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nbackup:\n"
         "frontend:\n  themes:\n    native_fixture_blue:\n      primary-color: '#2255aa'\n"
         "    native_fixture_night:\n      primary-color: '#112244'\nnative_fixture:\n"
         "camera:\n  - platform: native_fixture\n",

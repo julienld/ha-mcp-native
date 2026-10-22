@@ -812,7 +812,7 @@ The add-on provides 87+ MCP tools for controlling Home Assistant:
 ### System
 - `ha_config_get_yaml` **(beta — dev channel only)** — Get the current YAML fragment under a key, from one config file or across a glob.
 - `ha_config_set_yaml` **(beta — dev channel only)** — Update raw YAML configuration in configuration.yaml, packages/*.yaml, or themes/*.yaml (LAST RESORT).
-- `ha_manage_backup` — Polymorphic backup tool. See the tool description for the routing matrix.
+- `ha_manage_backup` — Manage Home Assistant backups — both full HA snapshots AND per-edit auto-backups.
 - `ha_manage_custom_tool` **(beta — dev channel only)** — Create and run a custom tool in a sandbox, or manage saved custom tools.
 - `ha_manage_security_policy` — Manage the tool security policy that gates high-stakes tool calls behind user approval.
 - `ha_manage_theme` — Manage Home Assistant frontend themes.

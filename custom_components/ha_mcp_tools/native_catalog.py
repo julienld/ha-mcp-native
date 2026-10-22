@@ -6,6 +6,7 @@ from ha_mcp.runtime.catalog import build_initial_catalog
 from ha_mcp.tool_api import ToolDefinition
 
 from .native_app_tools import app_definitions
+from .native_backup_tools import backup_definition
 from .native_blueprint_tools import blueprint_definition
 from .native_bulk_tools import bulk_definitions
 from .native_calendar_tools import build_calendar_tools
@@ -48,6 +49,7 @@ def build_native_catalog(manager: Any) -> list[ToolDefinition]:
     return [
         *bridge,
         *app_definitions(manager),
+        backup_definition(manager),
         *dev_definitions(manager),
         *build_label_tools(manager),
         *build_device_tools(manager),

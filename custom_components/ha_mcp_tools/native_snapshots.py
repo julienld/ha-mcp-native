@@ -461,6 +461,9 @@ class NativeSnapshots:
         try:
             data = await self._io(store.read_snapshot, name)
             validate_snapshot_identity(data)
+            from .native_backup_visibility import guard_snapshot_visibility
+
+            await guard_snapshot_visibility(self.manager, actor, "restore", data)
             if _is_flow_helper_domain(data["domain"]):
                 data["entity_id"] = _validate_flow_snapshot(
                     data["entity_id"],

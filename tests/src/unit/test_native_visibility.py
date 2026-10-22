@@ -86,6 +86,10 @@ async def test_hidden_argument_is_concealed_before_approval_and_execution(
         ("ha_manage_app", {"slug": "fixture", "action": "start"}),
         ("ha_manage_hacs", {"action": "download", "repository": "fixture/example"}),
         ("ha_manage_hacs", {"action": "remove", "repository": "fixture/example"}),
+        (
+            "ha_manage_backup",
+            {"scope": "snapshot", "action": "restore", "backup_id": "fixture"},
+        ),
     ],
 )
 async def test_opaque_native_app_and_hacs_writes_stop_before_execution(

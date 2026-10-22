@@ -450,6 +450,22 @@ redirects disabled. Neither opens a Home Assistant API connection. An uncertain
 dispatch is never replayed. Real local transport tests prove these guards;
 the Container bench proves Supervisor absence, not HAOS app execution.
 
+Native full backups use Core's configured manager and local agent. Creation
+waits for completion and identifies its archive using a unique metadata nonce.
+Deletion retains the newest/manual/age/confirmation gates and refuses an
+incomplete inventory. These are optimistic checks against other Core agents
+and external filesystem writers, rather than atomic archive transactions.
+
+Full restore requires a completed safety archive including the database. The
+target, manager, reader/writer, agent and protection stay pinned through safety
+capture and deferred Core handoff. Its reply confirms scheduling only, with
+`restore_completed=false`. Hidden-entity enforcement refuses full restore.
+Edit backups reuse the existing store and native domain restorers, checking
+actual content and target identities. Renamed scripts retain their storage key.
+Integration metadata restores only an existing entry's enabled state, without
+replaying credentials or connection options. Container tests exercise local
+archives and edit captures; a full restore and HAOS remain unqualified.
+
 Native developer controls edit only the entry's native configuration through
 shared validators and locked patch producers. Editing one tool preserves its
 neighbours. Human-only approval and backup controls remain accessible through

@@ -182,6 +182,14 @@
     "array_patch": "One GET and one POST, serialized among our calls, without a conditional-write guarantee against other app clients. The before-image is detached before shared array edits.",
     "qualification": "Local real HTTP/WebSocket tests prove single request/command, dropped response and redirect refusal. Core Container proves explicit Supervisor absence; actual HAOS app management remains unqualified."
   },
+  "native_backups": {
+    "archives": "Core's published backup manager creates and deletes the configured local archives. Creation waits for Core completion and correlates a unique metadata nonce rather than a name or timestamp.",
+    "restore": "A complete safety archive including the database is mandatory. The target, manager, reader/writer, agent and protection remain pinned through safety capture and deferred Core handoff. The reply confirms scheduling only, with restore_completed=false.",
+    "edits": "Existing snapshot store, domain readers and native restore coordinator. Canonical storage keys survive renamed script entities. Integration snapshots restore only an existing entry's enabled state, never credentials or connection options.",
+    "guards": "Newest/manual/age/confirmation controls and human-only deletion settings remain enforced. An incomplete inventory refuses deletion. Full restore is refused under hidden-entity enforcement; edit content and actual target identities are checked.",
+    "concurrency": "Preflight comparisons are optimistic; Core agents and external filesystem writers do not share an atomic lock with HA-MCP. No uncertain mutation is retried.",
+    "qualification": "Container exercises genuine local archives and edit captures. Full installation restore and HAOS/Supervisor reader/writer are not live qualified."
+  },
   "native_administration": {
     "developer": "Entry-scoped native configuration only. Shared validators and locked patch producers preserve neighbouring settings and tool overrides. Human-only approval and backup controls remain UI/environment-only.",
     "source_update": "Native update_source refuses before dispatch; install integration updates through HACS, never pip inside the shared Core process.",

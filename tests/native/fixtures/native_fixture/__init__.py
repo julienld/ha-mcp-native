@@ -250,6 +250,9 @@ class FixtureView(HomeAssistantView):
             "file_external_edit",
             "oauth_code",
             "legacy_rollback",
+            "seed_backups",
+            "backup_probe",
+            "cleanup_backups",
         }:
             return web.json_response(
                 await self._seed_data(operation, manager, user, body)
@@ -309,6 +312,18 @@ class FixtureView(HomeAssistantView):
     async def _seed_configuration(
         self, operation: str, user: Any, body: dict[str, Any]
     ) -> dict[str, Any]:
+        if operation == "seed_backups":
+            from .backup_actions import seed_backups
+
+            return await seed_backups(self.hass)
+        if operation == "backup_probe":
+            from .backup_actions import backup_probe
+
+            return await backup_probe(self.hass, body["backup_id"])
+        if operation == "cleanup_backups":
+            from .backup_actions import cleanup_backups
+
+            return await cleanup_backups(self.hass)
         if operation == "legacy_rollback":
             from .legacy_rollback import legacy_rollback
 
@@ -341,6 +356,9 @@ class FixtureView(HomeAssistantView):
             "seed_updates",
             "pipeline_seed",
             "legacy_rollback",
+            "seed_backups",
+            "backup_probe",
+            "cleanup_backups",
         }:
             return await self._seed_configuration(operation, user, body)
         if operation == "seed_system_actions":

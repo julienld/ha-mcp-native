@@ -31,13 +31,14 @@ class NativeSystemLifecycle:
 
     def schedule(
         self,
-        action: Literal["restart", "entry_reload", "update_install"],
+        action: Literal["restart", "entry_reload", "update_install", "backup_restore"],
         actor: CallContext,
         *,
         entry: Any = None,
         update: Any = None,
         backup: bool = False,
         update_service: Any = None,
+        restore_target: Any = None,
     ) -> None:
         check_mutation_admission(actor)
         if self.closed:
@@ -59,7 +60,14 @@ class NativeSystemLifecycle:
         actor = replace(actor, progress=None)
         task = asyncio.create_task(
             self._deliver(
-                action, actor, entry, self._policy_key(), update, backup, update_service
+                action,
+                actor,
+                entry,
+                self._policy_key(),
+                update,
+                backup,
+                update_service,
+                restore_target,
             ),
             name=f"ha-mcp-deferred-{action}",
         )
@@ -75,6 +83,7 @@ class NativeSystemLifecycle:
         update: Any = None,
         backup: bool = False,
         update_service: Any = None,
+        restore_target: Any = None,
     ) -> None:
         try:
             # This is a response-flush allowance, not a promise of delivery or
@@ -82,13 +91,7 @@ class NativeSystemLifecycle:
             await asyncio.sleep(self.reply_delay)
             await self.manager.refresh_policy()
             await admit_registry_write(actor, self.manager.backend.authorize)
-            if action == "update_install":
-                from .updates import NativeUpdates
-
-                await NativeUpdates(self.manager, actor)._visible_target(
-                    update.entity_id
-                )
-                await admit_registry_write(actor, self.manager.backend.authorize)
+            await self._verify_deferred_target(action, actor, update, restore_target)
             if self.closed or not self.manager.accepting:
                 raise ToolFailure(
                     "INTEGRATION_STOPPING", "The integration is stopping."
@@ -125,7 +128,7 @@ class NativeSystemLifecycle:
             task = asyncio.current_task()
             if task is not None:
                 self.pending.discard(task)
-            self._handoff(action, actor, entry, update, backup)
+            self._handoff(action, actor, entry, update, backup, restore_target)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - the replied caller cannot receive a deferred failure
@@ -135,13 +138,42 @@ class NativeSystemLifecycle:
                 getattr(error, "code", type(error).__name__),
             )
 
+    async def _verify_deferred_target(
+        self, action: str, actor: CallContext, update: Any, restore_target: Any
+    ) -> None:
+        if action == "update_install":
+            from .updates import NativeUpdates
+
+            await NativeUpdates(self.manager, actor)._visible_target(update.entity_id)
+            await admit_registry_write(actor, self.manager.backend.authorize)
+        elif action == "backup_restore":
+            from .full_backup_restore import FullRestoreTarget
+
+            if not isinstance(restore_target, FullRestoreTarget):
+                raise ValueError("A full restore requires a pinned target")
+            await restore_target.verify(self.manager, actor)
+
     def _handoff(
-        self, action: str, actor: CallContext, entry: Any, update: Any, backup: bool
+        self,
+        action: str,
+        actor: CallContext,
+        entry: Any,
+        update: Any,
+        backup: bool,
+        restore_target: Any = None,
     ) -> None:
         hass = self.manager.hass
         clean = TaskContext()
         if action == "entry_reload":
             clean.run(hass.config_entries.async_schedule_reload, entry.entry_id)
+        elif action == "backup_restore":
+            request = restore_target.owner.async_restore_backup(
+                restore_target.backup_id, **restore_target.arguments()
+            )
+            owner_task = clean.run(
+                hass.async_create_task, request, "ha-mcp requested backup restore"
+            )
+            owner_task.add_done_callback(partial(_completed_handoff, action=action))
         else:
             from homeassistant.core import Context
 

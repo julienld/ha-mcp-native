@@ -583,23 +583,16 @@ class TestBackupLiteDescriptionSize:
     cannot: it fails if someone re-inflates the lite value toward the full
     one, and it does not need touching when the wording changes.
 
-    ``ha_manage_backup``'s advertised text is the ``description=`` f-string
-    built in ``register_backup_tools()``, not a docstring (``__doc__`` is 73
-    chars), so the full side is measured by extracting that template and
-    substituting the hint the same way registration does.
+    ``ha_manage_backup`` uses the shared facade's full document and substitutes
+    the operator hint during registration. Measure that authoritative producer.
     """
 
     def _full_description(self, hint_level: str, monkeypatch) -> str:
         monkeypatch.setenv("BACKUP_HINT", hint_level)
+        from ha_mcp.runtime.backup_tools import backup_description
         from ha_mcp.tools.backup import _get_backup_hint_text
 
-        source = (REPO_ROOT / "src" / "ha_mcp" / "tools" / "backup.py").read_text(
-            encoding="utf-8"
-        )
-        opener = 'manage_backup_description = f"""'
-        start = source.index(opener) + len(opener)
-        template = source[start : source.index('"""', start)]
-        return template.replace("{backup_hint_text}", _get_backup_hint_text())
+        return backup_description(_get_backup_hint_text())
 
     @pytest.mark.parametrize("hint_level", ["strong", "normal", "weak"])
     def test_backup_lite_description_stays_substantially_smaller(

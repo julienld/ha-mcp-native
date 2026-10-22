@@ -60,6 +60,7 @@ class NativeRestoreOperations:
     group_owner: Any = field(default=None, init=False)
     blueprint_owner: Any = field(default=None, init=False)
     file_owner: Any = field(default=None, init=False)
+    integration_owner: Any = field(default=None, init=False)
 
     async def needs_safety(self) -> bool:
         domain = self.data["domain"]
@@ -73,11 +74,14 @@ class NativeRestoreOperations:
             )
             self.before = await self.blueprint_owner.current()
             return self.before is not None
-        if domain == "group":
-            self.group_owner = self.snapshots.domains.group_restore(
-                self.data, self.actor
-            )
-            self.before = await self.group_owner.current()
+        if domain in {"group", "integration"}:
+            factory = {
+                "group": self.snapshots.domains.group_restore,
+                "integration": self.snapshots.domains.integration_restore,
+            }[domain]
+            owner = factory(self.data, self.actor)
+            setattr(self, f"{domain}_owner", owner)
+            self.before = await owner.current()
             return self.before is not None
         if domain == "dashboard":
             self.dashboard_owner = self.snapshots.domains.dashboard_restore(
@@ -200,8 +204,14 @@ class NativeRestoreOperations:
             )
 
     async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
+        from .native_backup_visibility import guard_snapshot_visibility
+
+        await guard_snapshot_visibility(
+            self.snapshots.manager, self.actor, "restore", self.data, self.before
+        )
         self.snapshots._require_restore_access(self.actor)
         if self.data["domain"] in {
+            "integration",
             "dashboard",
             "calendar_event",
             "group",
@@ -212,6 +222,7 @@ class NativeRestoreOperations:
             "yaml_file",
         }:
             owner = {
+                "integration": self.integration_owner,
                 "dashboard": self.dashboard_owner,
                 "calendar_event": self.calendar_owner,
                 "group": self.group_owner,

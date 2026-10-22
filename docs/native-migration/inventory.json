@@ -35,6 +35,7 @@
     "custom_components/ha_mcp_tools/native_screenshot_tools.py",
     "custom_components/ha_mcp_tools/native_hacs_tools.py",
     "custom_components/ha_mcp_tools/native_app_tools.py",
+    "custom_components/ha_mcp_tools/native_backup_tools.py",
     "custom_components/ha_mcp_tools/native_dev_tools.py",
     "custom_components/ha_mcp_tools/native_report_tools.py",
     "custom_components/ha_mcp_tools/native_security_policy_tools.py"
@@ -42,7 +43,7 @@
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 85,
+    "native_catalog_declarations": 86,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -3007,8 +3008,8 @@
         "partial failure recovery"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/backup.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/backup_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -3018,62 +3019,62 @@
       ],
       "client_call_candidates": [
         {
-          "line": 170,
+          "line": 172,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 235,
+          "line": 237,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 851,
+          "line": 841,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 920,
+          "line": 894,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1056,
+          "line": 1030,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1439,
+          "line": 1353,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1545,
+          "line": 1418,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 285,
+          "line": 287,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 496,
+          "line": 486,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 584,
+          "line": 574,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 776,
+          "line": 766,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1252,
+          "line": 1193,
           "call": "client.send_websocket_message",
           "wire_literals": [
             "backup/info"

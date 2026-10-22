@@ -122,6 +122,12 @@ class NativeIntegrationState(CoreOperationOwner):
                     "error_code": "not_found",
                     "error": "Config entry not found",
                 }
+            if arguments.get("expected_owner", entry) is not entry:
+                raise ToolFailure(
+                    "CONFIG_CONFLICT",
+                    "The integration owner changed before its state update.",
+                    status="not_started",
+                )
             refuse_component_entry(
                 entry.domain, action="enable or disable", entry_id=entry_id
             )

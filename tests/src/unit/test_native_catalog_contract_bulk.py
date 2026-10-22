@@ -52,6 +52,7 @@ def test_composed_bulk_keeps_schemas_tags_and_annotations(native: object) -> Non
         "ha_manage_hacs",
         "ha_get_app",
         "ha_manage_app",
+        "ha_manage_backup",
         "ha_dev_manage_settings",
         "ha_dev_manage_server",
         "ha_report_issue",

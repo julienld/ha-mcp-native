@@ -94,6 +94,12 @@ def hidden_from_core(hass: Any, config: VisibilityConfig) -> set[str]:
 
 
 def _native_unscannable_reason(name: str, arguments: dict[str, Any]) -> str | None:
+    if (
+        name == "ha_manage_backup"
+        and arguments.get("scope") == "snapshot"
+        and arguments.get("action") == "restore"
+    ):
+        return "A full Home Assistant restore can replace hidden entities without naming them. It is unavailable while entity visibility enforcement has active hiding rules."
     if name == "ha_manage_app":
         return "App operations can read or act on hidden entities without inspectable Core targets, including opaque HTTP GET APIs."
     if name == "ha_manage_hacs" and arguments.get("action") in {"download", "remove"}:
