@@ -16,6 +16,7 @@ from pathlib import Path
 
 import httpx
 from calendar_checks import exercise_calendars
+from camera_checks import exercise_camera
 from configuration_checks import (
     exercise_configuration,
     exercise_flow_helpers,
@@ -24,9 +25,11 @@ from configuration_checks import (
 from device_checks import exercise_devices
 from entity_checks import exercise_entities
 from event_checks import exercise_events
+from health_checks import exercise_health
 from history_checks import exercise_history
 from interop_checks import exercise_llm
 from log_checks import exercise_logs
+from overview_checks import exercise_overview
 from registry_checks import exercise_registries
 from resource_checks import exercise_resources
 
@@ -399,9 +402,12 @@ async def exercise(checks: Checks) -> dict:
     await exercise_devices(checks, BASE)
     await exercise_entities(checks, BASE)
     await exercise_events(checks)
+    await exercise_camera(checks)
     await exercise_resources(checks, BASE)
     await exercise_history(checks)
     await exercise_logs(checks)
+    await exercise_health(checks)
+    await exercise_overview(checks, BASE)
     for headers in ({}, checks.headers("reader")):
         response = await checks.client.post(
             BASE + checks.path, headers=headers, json=message("tools/list")
@@ -466,7 +472,8 @@ async def main() -> None:
         "person:\ntag:\nconfig:\nscript: !include scripts.yaml\n"
         "scene: !include scenes.yaml\nautomation: !include automations.yaml\n"
         "lovelace:\n  mode: storage\nrecorder:\n  commit_interval: 1\n"
-        "system_log:\nlogger:\nlogbook:\nnative_fixture:\n",
+        "system_log:\nlogger:\nlogbook:\nsystem_health:\ndiagnostics:\nfrontend:\nnative_fixture:\n"
+        "camera:\n  - platform: native_fixture\n",
         encoding="utf-8",
     )
     for filename, empty in (

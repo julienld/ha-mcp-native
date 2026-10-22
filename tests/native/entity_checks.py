@@ -113,13 +113,20 @@ async def exercise_entities(checks: Any, base: str) -> None:
 
 
 async def _exercise_state_history(checks: Any, panel: str) -> None:
-
     seeded = await checks.control("seed_entity_history", {})
     state_id = seeded["entity_id"]
+    exposure_id = seeded["exposure_entity_id"]
     fixture = await checks.control("entity")
     assert fixture["legacy_preferences"] is None, fixture
+    assert fixture["legacy_exposure_entity_id"] == exposure_id, fixture
+    assert fixture["legacy_state"]["entity_id"] == state_id, fixture
+    assert (
+        not fixture["legacy_exposure_has_state"]
+        and not fixture["legacy_exposure_has_registration"]
+    ), fixture
     exposed = await checks.call(
-        "ha_set_entity", {"entity_id": state_id, "expose_to": {"conversation": False}}
+        "ha_set_entity",
+        {"entity_id": exposure_id, "expose_to": {"conversation": False}},
     )
     assert exposed["success"], exposed
     fixture = await checks.control("entity")
@@ -127,11 +134,23 @@ async def _exercise_state_history(checks: Any, panel: str) -> None:
         fixture["legacy_preferences"]["assistants"]["conversation"]["should_expose"]
         is False
     ), fixture
-    snapshot = (await _backups(checks, panel, "entity_exposure", state_id))[0]["name"]
+    assert (
+        not fixture["legacy_exposure_has_state"]
+        and not fixture["legacy_exposure_has_registration"]
+    ), fixture
+    snapshot = (await _backups(checks, panel, "entity_exposure", exposure_id))[0][
+        "name"
+    ]
     await _restore(checks, panel, snapshot)
     fixture = await checks.control("entity")
     assert fixture["legacy_preferences"] is None, fixture
-    checks.passed("native_state_only_exposure_restore_preserves_absence_versus_false")
+    assert (
+        not fixture["legacy_exposure_has_state"]
+        and not fixture["legacy_exposure_has_registration"]
+    ), fixture
+    checks.passed(
+        "native_legacy_exposure_store_restores_absence_versus_false_without_registration"
+    )
 
     diff = await checks.client.get(panel + "/" + seeded["snapshot"] + "/diff")
     assert diff.status_code == 200 and "changed" in diff.text, diff.text
@@ -139,6 +158,7 @@ async def _exercise_state_history(checks: Any, panel: str) -> None:
     fixture = await checks.control("entity")
     assert fixture["legacy_state"]["state"] == "saved", fixture
     assert fixture["legacy_state"]["attributes"]["fixture"] == "before", fixture
+    assert fixture["legacy_state"]["context"]["user_id"], fixture
     assert "physical device" in str(result) and "automations" in str(result), result
     checks.passed("native_historical_entity_restore_changes_only_StateMachine_values")
 

@@ -101,6 +101,10 @@ class FixtureView(HomeAssistantView):
                     "request_user_id": request["hass_user"].id,
                 }
             )
+        if operation == "camera":
+            from .camera import describe_camera
+
+            return web.json_response(describe_camera(self.hass))
         if operation == "device":
             data = self.hass.data[DOMAIN]
             return web.json_response(
@@ -166,7 +170,7 @@ class FixtureView(HomeAssistantView):
         manager = self.hass.data.get("ha_mcp_tools", {}).get("manager")
         if operation == "guard":
             self.hass.data[DOMAIN]["guard"] = True
-        elif operation in {"seed_history", "seed_logs", "seed_entity_history"}:
+        elif operation in {"seed_history", "seed_logs", "seed_entity_history", "seed_health"}:
             return web.json_response(await self._seed_data(operation, manager))
         elif operation == "seed_resources":
             from homeassistant.components.lovelace.const import LOVELACE_DATA
@@ -222,6 +226,10 @@ class FixtureView(HomeAssistantView):
         return web.json_response({"ok": True})
 
     async def _seed_data(self, operation: str, manager: Any) -> dict[str, Any]:
+        if operation == "seed_health":
+            from .system_health import seed_health
+
+            return await seed_health(self.hass)
         if operation == "seed_entity_history":
             from .sensor import seed_entity_state_history
 

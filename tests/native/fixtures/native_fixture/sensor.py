@@ -3,6 +3,7 @@
 import json
 from functools import partial
 from typing import Any
+from uuid import uuid4
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -54,7 +55,8 @@ def describe_sensor(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry_id}:sensor")
     entry = registry.async_get(entity_id) if entity_id is not None else None
     state = hass.states.get(entity_id) if entity_id is not None else None
-    legacy = hass.data[DATA_EXPOSED_ENTITIES].entities.get(LEGACY_STATE_ID)
+    exposure_id = hass.data[DOMAIN].get("legacy_exposure_id")
+    legacy = hass.data[DATA_EXPOSED_ENTITIES].entities.get(exposure_id)
     legacy_state = hass.states.get(LEGACY_STATE_ID)
     result: dict[str, Any] = json.loads(
         json_bytes(
@@ -64,6 +66,14 @@ def describe_sensor(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
                 "registry_entry": entry.extended_dict if entry is not None else None,
                 "state": state.as_dict() if state is not None else None,
                 "legacy_entity_id": LEGACY_STATE_ID,
+                "legacy_exposure_entity_id": exposure_id,
+                "legacy_exposure_has_state": hass.states.get(exposure_id) is not None
+                if exposure_id is not None
+                else False,
+                "legacy_exposure_has_registration": registry.async_get(exposure_id)
+                is not None
+                if exposure_id is not None
+                else False,
                 "legacy_preferences": legacy.to_json() if legacy is not None else None,
                 "legacy_state": legacy_state.as_dict()
                 if legacy_state is not None
@@ -105,8 +115,16 @@ async def seed_entity_state_history(
     )
     assert invalid is not None
     hass.states.async_set(LEGACY_STATE_ID, "changed", {"fixture": "after"})
+    # Core may materialize exposure defaults whenever a state is published. Its
+    # public exposure setter also supports IDs without state/registration, so
+    # use a fresh one to qualify store absence independently of state consumers.
+    exposure_id = f"sensor.native_exposure_{uuid4().hex}"
+    assert hass.states.get(exposure_id) is None
+    assert er.async_get(hass).async_get(exposure_id) is None
+    hass.data[DOMAIN]["legacy_exposure_id"] = exposure_id
     return {
         "entity_id": LEGACY_STATE_ID,
+        "exposure_entity_id": exposure_id,
         "snapshot": path.name,
         "invalid_snapshot": invalid.name,
     }

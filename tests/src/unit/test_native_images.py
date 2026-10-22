@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -22,6 +23,32 @@ from ha_mcp.tool_api import CallContext, ToolDefinition, ToolImage, ToolResult  
 from .test_native_visibility import runtime as visibility_runtime  # noqa: E402
 
 _IMAGE = b"bounded image bytes"
+
+
+@pytest.mark.parametrize(
+    "mime", ["image/avif", "image/tiff", "image/svg+xml", "IMAGE/PNG"]
+)
+def test_neutral_image_keeps_the_producers_well_formed_media_type(mime):
+    image = ToolImage(_IMAGE, mime)
+    assert image.mime_type == mime and image.data == _IMAGE
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "text/html",
+        "image/",
+        "image/*",
+        "image/png; charset=utf-8",
+        "image/png\r\nHeader: value",
+        " image/png",
+        "image/é",
+        "image/" + "a" * 128,
+    ],
+)
+def test_neutral_image_rejects_non_image_and_malformed_media_types(mime):
+    with pytest.raises(ValueError):
+        ToolImage(_IMAGE, mime)
 
 
 def test_neutral_images_enforce_per_image_aggregate_and_count_bounds(monkeypatch):
@@ -160,3 +187,60 @@ async def test_assist_reports_image_limit_without_base64_or_losing_write_outcome
     assert result["meta"]["ha_mcp"]["status"] == "confirmed"
     assert all(block["type"] != "image" for block in result["content"])
     assert base64.b64encode(_IMAGE).decode() not in json.dumps(result)
+
+
+async def test_camera_caption_remains_plain_text_beside_the_image(image_runtime):
+    manager, mcp = image_runtime
+    definition = manager.engine.tools["native_image"]
+    manager.engine.tools["native_image"] = replace(
+        definition,
+        handler=AsyncMock(
+            return_value=ToolResult(
+                "Camera snapshot (PNG).", images=(ToolImage(_IMAGE, "image/png"),)
+            )
+        ),
+    )
+    async with Client(mcp) as client:
+        result = await client.call_tool("native_image", {})
+    assert result.content[0].text == "Camera snapshot (PNG)."
+    assert result.content[1].type == "image" and result.structured_content is None
+
+
+async def test_assist_refuses_image_only_tools_before_provider_execution(
+    image_runtime, monkeypatch
+):
+    manager, _ = image_runtime
+    manager.engine.tools["native_image"].meta["ha_mcp"] = {
+        "requires_image_content": True
+    }
+    manager.engine.call = AsyncMock()
+    monkeypatch.setattr(
+        native_llm,
+        "exposed_catalog",
+        AsyncMock(return_value=([SimpleNamespace(name="native_image")], set())),
+    )
+    monkeypatch.setattr(native_llm, "tool_result", lambda value, **kwargs: value)
+    result = await native_llm.call_exposed(
+        manager,
+        "native_image",
+        {},
+        SimpleNamespace(
+            context=SimpleNamespace(user_id="owner"), platform="test", language="en"
+        ),
+    )
+    manager.engine.call.assert_not_awaited()
+    assert result["structuredContent"]["error"]["code"] == "IMAGE_CONTENT_UNSUPPORTED"
+    assert result["meta"]["ha_mcp"]["status"] == "not_started"
+
+
+async def test_visibility_refuses_camera_pixels_before_provider_execution(
+    tmp_path, monkeypatch
+):
+    _, engine, handler = visibility_runtime(
+        tmp_path, monkeypatch, "ha_get_camera_image", {"unused": True}
+    )
+    result = await engine.call(
+        "ha_get_camera_image", {"entity_id": "camera.visible"}, CallContext("owner")
+    )
+    assert result.is_error and result.status == "not_started" and result.images == ()
+    handler.assert_not_awaited()

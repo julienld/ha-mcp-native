@@ -3,11 +3,14 @@
 import json
 from typing import Any
 
+from camera_checks import exercise_camera_assist
+
 
 async def exercise_llm(checks: Any) -> None:
     await exercise_templates(checks)
     await checks.control("configure", {})
     await checks.ready()
+    await exercise_camera_assist(checks)
     result = await checks.control(
         "llm",
         {

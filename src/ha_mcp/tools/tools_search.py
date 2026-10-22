@@ -4,7 +4,7 @@ Search and discovery tools for Home Assistant MCP server.
 This module provides entity search, system overview, deep search, and state retrieval tools.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field
 
@@ -14,6 +14,8 @@ from ha_mcp._vendor.fastmcp.tools import tool
 from ..backends.legacy import legacy_errors
 from ..config import get_global_settings
 from ..errors import create_validation_error
+from ..runtime.overview_tools import OverviewService, OverviewTools
+from ..runtime.overview_values import resolve_overview_request
 from ..transforms.categorized_search import DEFAULT_PINNED_TOOLS
 from .coercion import JSON_STRING_COERCION, parse_string_list_param
 from .component_api import (
@@ -31,10 +33,8 @@ from .search.component import ComponentSearchMixin, _component_serves_search_typ
 from .search.entities import _requested_membership, _validate_result_field_names
 from .search.overview import (
     _OVERVIEW_AVAILABLE_FIELDS,
-    _OVERVIEW_ENTITY_FIELDS,
     _OVERVIEW_INDEPENDENT_FIELDS,
     OverviewMixin,
-    _OverviewInputs,
 )
 from .search.response import (
     _compute_eligibility,
@@ -422,214 +422,49 @@ class SearchTools(ComponentSearchMixin, OverviewMixin, StateMixin):
 
         return await self._legacy_ha_search(req, ctx)
 
-    @tool(
-        name="ha_get_overview",
-        tags={"Search & Discovery"},
-        annotations=read_only_hints("Get System Overview", open_world=True),
-    )
-    @log_tool_usage
-    async def ha_get_overview(
+    @property
+    def overview(self) -> OverviewService:
+        return cast(OverviewService, self)
+
+    async def get_overview(
         self,
-        detail_level: Annotated[
-            Literal["minimal", "standard", "full"],
-            Field(
-                default="minimal",
-                description=(
-                    "'minimal': 10 entities/domain, top-5 states; 'standard': 200 "
-                    "entities/page, top-10 states (use offset for more); 'full': 200 "
-                    "entities/page + entity_id + state + full states."
-                ),
-            ),
-        ] = "minimal",
-        domains: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Filter to specific domains (e.g. 'light,sensor' or "
-                    "['light','sensor']). None = all domains."
-                ),
-            ),
-        ] = None,
-        limit: Annotated[
-            int | None,
-            Field(
-                default=None,
-                ge=1,
-                description=(
-                    "Max total entities across all domains (default: unlimited for minimal,"
-                    " 200 for standard/full)."
-                ),
-            ),
-        ] = None,
-        offset: Annotated[
-            int,
-            Field(
-                default=0,
-                ge=0,
-                description="Number of entities to skip for pagination",
-            ),
-        ] = 0,
-        max_entities_per_domain: Annotated[
-            int | None,
-            Field(
-                default=None,
-                description="Override default entity cap per domain (minimal=10, standard/full=unlimited). 0 = no limit on entities or states.",
-            ),
-        ] = None,
-        include_state: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="Include state field for entities (None = auto based on level). Full defaults to True.",
-            ),
-        ] = None,
-        include_entity_id: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="Include entity_id field for entities (None = auto based on level). Full defaults to True.",
-            ),
-        ] = None,
-        include_notifications: Annotated[
-            bool | None,
-            Field(
-                default=True,
-                description="Include active persistent notifications.",
-            ),
-        ] = True,
-        include_dismissed_repairs: Annotated[
-            bool | None,
-            Field(
-                default=False,
-                description=(
-                    "Include user-dismissed/ignored repairs. Dismiss or restore "
-                    "one with ha_manage_updates(action='ignore_repair' / "
-                    "'unignore_repair')."
-                ),
-            ),
-        ] = False,
-        fields: Annotated[
-            str | list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "Return only the specified top-level response keys to reduce response "
-                    'size (e.g. ["system_info", "domain_stats"]). None = full response. '
-                    "Available keys: success, system_summary, domain_stats, area_analysis, "
-                    "ai_insights, pagination, partial, warnings, device_types, "
-                    "service_availability, system_info, notification_count, notifications, "
-                    "repair_count, dismissed_repair_count, repairs, repairs_error, "
-                    "tool_discovery, settings_url, settings_url_hint, read_only_mode, "
-                    "read_only_mode_hint, ha_mcp_update. Note: ``settings_url`` (stdio "
-                    "mode), ``settings_url_hint`` (standalone HTTP/Docker mode), the "
-                    "``read_only_mode`` / ``read_only_mode_hint`` pair (only while Read "
-                    "Only Mode is on), and ``ha_mcp_update`` (when an update check applies)"
-                    " are emitted regardless of ``fields=`` projection."
-                ),
-            ),
-        ] = None,
+        detail_level: Literal["minimal", "standard", "full"] = "minimal",
+        domains: str | list[str] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        max_entities_per_domain: int | None = None,
+        include_state: bool | None = None,
+        include_entity_id: bool | None = None,
+        include_notifications: bool | None = True,
+        include_dismissed_repairs: bool | None = False,
+        fields: str | list[str] | None = None,
     ) -> dict[str, Any]:
-        """Get AI-friendly system overview with intelligent categorization.
-
-        Returns comprehensive system information at the requested detail level,
-        including Home Assistant base_url, version, location, timezone, entity overview,
-        and active persistent notifications (if any).
-        Use 'minimal' (default) for most queries. Domain counts and states_summary
-        are always complete regardless of entity pagination.
-
-        Requests whose fields= are composed only of system_info, notification,
-        repair, or server metadata fields skip the unrelated state, service, and
-        registry reads.
-
-        Do not use this tool to inspect a known entity or a narrow set of entities.
-        Use ha_get_state for one entity, ha_get_entity for registry metadata, or
-        ha_search with a domain or area filter. An unprojected overview collects
-        system-wide state, service, and registry data and can be expensive on large
-        Home Assistant installations.
-
-        When the ha-mcp settings-UI sidecar is running (stdio mode, e.g. Claude
-        Desktop / Claude Code) the response carries ``settings_url``, the local
-        URL of the tool-configuration page; in standalone HTTP / Docker modes
-        with an HTTP settings prefix it instead carries ``settings_url_hint``,
-        saying where the page is mounted and how to construct the full URL. Hand
-        whichever is present to the user when they ask how to enable or disable
-        tools or change server settings.
-
-        The response also carries ``ha_mcp_update`` ``{current, latest,
-        update_available}`` (PyPI for pip/Docker, the Supervisor store for the
-        app) — proactively tell the user when ``update_available`` is true.
-        Omitted for the ``unknown`` version, when ``HA_MCP_DISABLE_UPDATE_CHECK``
-        is set, or when the update check itself failed.
-        """
-        # Validate fields= early so a malformed value returns VALIDATION_FAILED
-        # with parameter="fields".
-        parsed_fields: list[str] | None = None
-        if fields is not None:
-            try:
-                parsed_fields = parse_string_list_param(
-                    fields, "fields", allow_csv=True
-                )
-            except ValueError as exc:
-                raise_tool_error(create_validation_error(str(exc), parameter="fields"))
-
-        include_state_bool = include_state
-        include_entity_id_bool = include_entity_id
-        include_notifications_bool = (
-            include_notifications if include_notifications is not None else True
+        inputs, parsed_fields, independent = resolve_overview_request(
+            detail_level=detail_level,
+            domains=domains,
+            limit=limit,
+            offset=offset,
+            max_entities_per_domain=max_entities_per_domain,
+            include_state=include_state,
+            include_entity_id=include_entity_id,
+            include_notifications=include_notifications,
+            include_dismissed_repairs=include_dismissed_repairs,
+            fields=fields,
         )
-        include_dismissed_repairs_bool = bool(include_dismissed_repairs)
-
-        try:
-            parsed_domains = parse_string_list_param(domains, "domains", allow_csv=True)
-        except ValueError as exc:
-            raise_tool_error(create_validation_error(str(exc), parameter="domains"))
-
-        requested_fields = set(parsed_fields or [])
-        recognized_fields = requested_fields & _OVERVIEW_INDEPENDENT_FIELDS
-        use_independent_collectors = (
-            parsed_fields is not None and not requested_fields & _OVERVIEW_ENTITY_FIELDS
-        )
-        if use_independent_collectors:
+        if independent:
             result = await self._collect_independent_overview(
-                requested_fields=recognized_fields,
-                detail_level=detail_level,
-                include_notifications=include_notifications_bool,
-                include_dismissed_repairs=include_dismissed_repairs_bool,
+                requested_fields=set(parsed_fields or [])
+                & _OVERVIEW_INDEPENDENT_FIELDS,
+                detail_level=inputs.detail_level,
+                include_notifications=inputs.include_notifications,
+                include_dismissed_repairs=inputs.include_dismissed_repairs,
             )
         else:
-            result = await self._collect_overview(
-                _OverviewInputs(
-                    detail_level=detail_level,
-                    max_entities_per_domain=max_entities_per_domain,
-                    include_state=include_state_bool,
-                    include_entity_id=include_entity_id_bool,
-                    domains_filter=parsed_domains,
-                    limit=limit,
-                    offset=offset,
-                    include_notifications=include_notifications_bool,
-                    include_dismissed_repairs=include_dismissed_repairs_bool,
-                )
-            )
-
+            result = await self._collect_overview(inputs)
         settings = get_global_settings()
         if settings.enable_tool_search:
             result["tool_discovery"] = {
-                "hint": (
-                    "This server uses search-based tool discovery. "
-                    "Use ha_search_tools(query='...') to find tools, "
-                    "ha_search_tools(tools=['<name>']) for the full input "
-                    "schema of the one you will call, then "
-                    "execute the discovered tool directly by name (preferred), "
-                    "or via a proxy for permission gating: "
-                    "ha_call_read_tool, ha_call_write_tool, or "
-                    "ha_call_delete_tool. Each proxy takes name and arguments "
-                    "as separate top-level params. Call proxy tools SEQUENTIALLY "
-                    "(not in parallel) to avoid cascading cancellations. "
-                    "Do NOT assume a capability is unavailable without searching first."
-                ),
+                "hint": "This server uses search-based tool discovery. Use ha_search_tools(query='...') to find tools, ha_search_tools(tools=['<name>']) for the full input schema of the one you will call, then execute the discovered tool directly by name (preferred), or via a proxy for permission gating: ha_call_read_tool, ha_call_write_tool, or ha_call_delete_tool. Each proxy takes name and arguments as separate top-level params. Call proxy tools SEQUENTIALLY (not in parallel) to avoid cascading cancellations. Do NOT assume a capability is unavailable without searching first.",
                 "pinned_tools": sorted(
                     [
                         *DEFAULT_PINNED_TOOLS,
@@ -640,60 +475,42 @@ class SearchTools(ComponentSearchMixin, OverviewMixin, StateMixin):
                     ]
                 ),
             }
-
-        # Surface the stdio settings UI sidecar URL when a URL file is present.
-        # Added *after* ``project_fields`` so it survives every ``fields=`` projection
-        # (issue #863).
         from ..stdio_settings_sidecar import read_sidecar_url
 
         projected = project_fields(
-            result,
-            parsed_fields,
-            available_fields=_OVERVIEW_AVAILABLE_FIELDS,
+            result, parsed_fields, available_fields=_OVERVIEW_AVAILABLE_FIELDS
         )
         sidecar_url = read_sidecar_url()
         if sidecar_url:
             projected["settings_url"] = sidecar_url
         else:
-            # No stdio sidecar URL file. In standalone HTTP / Docker modes hint at
-            # the page (and startup-log URL) instead of guessing a wrong absolute URL
-            # when bound to 0.0.0.0 (issue #1458).
             from ..settings_ui import get_http_settings_prefix
 
             http_prefix = get_http_settings_prefix()
             if http_prefix:
                 settings_path = f"{http_prefix.rstrip('/')}/settings"
                 projected["settings_url_hint"] = (
-                    "The settings page (enable/disable/pin tools, feature "
-                    "flags, advanced settings, backups, tool-approval) is "
-                    f"served at '{settings_path}' on this MCP server. Find the "
-                    "full URL in the ha-mcp startup logs. For a direct connection, "
-                    "use the MCP endpoint's scheme, host, and port with this "
-                    "settings path (replace the endpoint path rather than "
-                    "appending to it)."
+                    f"The settings page (enable/disable/pin tools, feature flags, advanced settings, backups, tool-approval) is served at '{settings_path}' on this MCP server. Find the full URL in the ha-mcp startup logs. For a direct connection, use the MCP endpoint's scheme, host, and port with this settings path (replace the endpoint path rather than appending to it)."
                 )
-
-        # Surface Read Only Mode after projection so the flag survives any
-        # fields= filter.
         from ..read_only import is_read_only, read_only_remedy_hint
 
         if is_read_only():
             projected["read_only_mode"] = True
             projected["read_only_mode_hint"] = (
-                "Read Only Mode is ON: write-capable tools are disabled and "
-                "all write or destructive operations are blocked "
-                "server-side. You can search, read, and analyze freely. "
-                f"{read_only_remedy_hint()}"
+                f"Read Only Mode is ON: write-capable tools are disabled and all write or destructive operations are blocked server-side. You can search, read, and analyze freely. {read_only_remedy_hint()}"
             )
-
-        # Surface the MCP server's own update status after projection.
         from ..update_check import get_update_field
 
         mcp_update = await get_update_field()
         if mcp_update is not None:
             projected["ha_mcp_update"] = mcp_update
-
         return projected
+
+    ha_get_overview = tool(
+        name="ha_get_overview",
+        tags={"Search & Discovery"},
+        annotations=read_only_hints("Get System Overview", open_world=True),
+    )(log_tool_usage(legacy_errors(OverviewTools.ha_get_overview)))
 
     ha_get_state = tool(
         name="ha_get_state",

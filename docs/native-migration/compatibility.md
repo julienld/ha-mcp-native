@@ -43,6 +43,19 @@ duplicate. A provider exception after update is an unknown outcome, with no
 creation fallback. Ranged and series-rule writes do not claim a complete,
 restorable series snapshot.
 
+## Camera image content
+
+The native camera tool calls Core's camera API, preserving the served bytes,
+plain text caption, dimensions and local retrieval time. It uses no camera proxy
+HTTP connection or administrator token. Images are bounded at 20 MiB each;
+Core retains ownership of best-effort resizing and its camera timeout.
+
+Assist cannot receive image content. An image-only tool is refused before
+capturing an image, while a completed dashboard write can retain its structured
+outcome with a warning when its supplementary screenshot cannot be delivered.
+Active entity visibility enforcement refuses unfilterable camera pixels before
+capture. Normal MCP clients continue to receive standard image content blocks.
+
 ## Preserve the HA-hosted MCP URLs
 
 Keep `/api/webhook/{webhook_id}` and its `/readonly` alias. Preserve the webhook
@@ -175,6 +188,23 @@ Native trace diagnostics distinguish an idle script (`off`) from a disabled
 automation. They read trace storage settings from the actual Core owner's
 configuration and return an unknown value when that configuration is unavailable.
 Legacy diagnostics, public arguments and safety annotations remain unchanged.
+
+The native HACS path omits optional `ha_mcp_update` metadata when no authoritative
+Core/HACS update information is available. PyPI and Supervisor package versions
+do not identify an update for the installed custom component or its fork. No
+`latest` version or `update_available=false` is invented. Standalone update
+checks retain their existing package source.
+
+Native system health retains the `health_info.data` domain map and each Core
+platform's metadata, including `manage_url` and typed dates. It resolves pending
+values within an observation window instead of returning only the first
+subscription frame. Timed-out probes started by the invocation are cancelled and
+drained; shared Core Futures remain running and are reported as pending. The
+`component_count` is corrected to the number of actual domains, rather than the
+number of keys in the historical event envelope. Independently available Core
+sections can still be returned when the system-health integration is absent,
+with `baseline_available=false` and an explicit warning. Physical ZHA, Z-Wave and
+Thread hardware is not qualified by the Container test fixture.
 
 The native catalog deliberately corrects three safety hints for
 `ha_config_list_helpers`: `readOnlyHint=false`, `destructiveHint=true` and

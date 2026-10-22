@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -25,13 +26,15 @@ class ToolImage:
             or len(self.data) > MAX_TOOL_IMAGE_BYTES
         ):
             raise ValueError("Tool image exceeds the supported byte bounds")
-        if self.mime_type not in {
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "image/gif",
-            "image/bmp",
-        }:
+        if (
+            not isinstance(self.mime_type, str)
+            or re.fullmatch(
+                r"image/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}",
+                self.mime_type,
+                flags=re.IGNORECASE | re.ASCII,
+            )
+            is None
+        ):
             raise ValueError("Unsupported tool image media type")
 
 

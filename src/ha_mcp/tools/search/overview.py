@@ -12,6 +12,29 @@ from ...client.rest_client import (
     HomeAssistantCommandTimeout,
 )
 from ...client.websocket_client import get_websocket_client
+from ...runtime.overview_sections import (
+    apply_overview_notifications,
+    apply_overview_repairs,
+    apply_overview_system_info,
+)
+from ...runtime.overview_values import (
+    _OVERVIEW_AVAILABLE_FIELDS as _OVERVIEW_AVAILABLE_FIELDS,
+)
+from ...runtime.overview_values import (
+    _OVERVIEW_ENTITY_FIELDS as _OVERVIEW_ENTITY_FIELDS,
+)
+from ...runtime.overview_values import (
+    _OVERVIEW_INDEPENDENT_FIELDS as _OVERVIEW_INDEPENDENT_FIELDS,
+)
+from ...runtime.overview_values import (
+    _OVERVIEW_NOTIFICATION_FIELDS as _OVERVIEW_NOTIFICATION_FIELDS,
+)
+from ...runtime.overview_values import (
+    _OVERVIEW_REPAIR_FIELDS as _OVERVIEW_REPAIR_FIELDS,
+)
+from ...runtime.overview_values import (
+    _OverviewInputs as _OverviewInputs,
+)
 from ..component_api import (
     DEVICE_REGISTRY_CHILD_SEMANTICS,
     component_supports,
@@ -19,7 +42,6 @@ from ..component_api import (
     invalidate_caps,
     is_unknown_command,
 )
-from ..util_helpers import filter_active_repairs, project_repair_fields
 from .base import SearchToolsBase
 
 __all__ = [
@@ -32,26 +54,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _OverviewInputs:
-    """Resolved ``ha_get_overview`` inputs threaded to the routing/assembly.
-
-    All display params (``detail_level`` … ``offset``) stay server-side — the
-    component returns raw slices independent of them; the two include-flags gate
-    which slices it bothers to snapshot.
-    """
-
-    detail_level: str
-    max_entities_per_domain: int | None
-    include_state: bool | None
-    include_entity_id: bool | None
-    domains_filter: list[str] | None
-    limit: int | None
-    offset: int
-    include_notifications: bool
-    include_dismissed_repairs: bool
 
 
 @dataclass(frozen=True)
@@ -74,55 +76,6 @@ class _OverviewSlices:
 
 # These disjoint sets partition every key documented by ha_get_overview's
 # fields parameter. Keep the manifest test in sync when the public schema changes.
-_OVERVIEW_INDEPENDENT_FIELDS = frozenset(
-    {
-        "success",
-        "system_info",
-        "notification_count",
-        "notifications",
-        "repair_count",
-        "dismissed_repair_count",
-        "repairs",
-        "repairs_error",
-        "tool_discovery",
-        "settings_url",
-        "settings_url_hint",
-        "read_only_mode",
-        "read_only_mode_hint",
-        "ha_mcp_update",
-    }
-)
-
-
-_OVERVIEW_NOTIFICATION_FIELDS = frozenset({"notification_count", "notifications"})
-
-
-_OVERVIEW_REPAIR_FIELDS = frozenset(
-    {
-        "repair_count",
-        "dismissed_repair_count",
-        "repairs",
-        "repairs_error",
-    }
-)
-
-
-_OVERVIEW_ENTITY_FIELDS = frozenset(
-    {
-        "system_summary",
-        "domain_stats",
-        "area_analysis",
-        "ai_insights",
-        "pagination",
-        "partial",
-        "warnings",
-        "device_types",
-        "service_availability",
-    }
-)
-
-
-_OVERVIEW_AVAILABLE_FIELDS = _OVERVIEW_INDEPENDENT_FIELDS | _OVERVIEW_ENTITY_FIELDS
 
 
 def _build_component_overview_request(inputs: _OverviewInputs) -> dict[str, Any]:
@@ -263,37 +216,9 @@ class OverviewMixin(SearchToolsBase):
                 if prefetched_config is not None
                 else await self._client.get_config()
             )
-            system_info: dict[str, Any] = {
-                "base_url": self._client.base_url,
-                "version": config.get("version"),
-                "location_name": config.get("location_name"),
-                "time_zone": config.get("time_zone"),
-                "language": config.get("language"),
-                "state": config.get("state"),
-            }
-            if detail_level == "full":
-                system_info.update(
-                    {
-                        "country": config.get("country"),
-                        "currency": config.get("currency"),
-                        "unit_system": config.get("unit_system", {}),
-                        "latitude": config.get("latitude"),
-                        "longitude": config.get("longitude"),
-                        "elevation": config.get("elevation"),
-                        "components_loaded": len(config.get("components", [])),
-                        "safe_mode": config.get("safe_mode", False),
-                        "internal_url": config.get("internal_url"),
-                        "external_url": config.get("external_url"),
-                        # No default: distinguish HA-not-exposing-the-key (None)
-                        # from empty-allowlist ([]) — security-relevant for agents.
-                        "allowlist_external_dirs": config.get(
-                            "allowlist_external_dirs"
-                        ),
-                    }
-                )
-            result["system_info"] = system_info
-            if "system_summary" in result:
-                result["system_summary"]["version"] = config.get("version") or "unknown"
+            apply_overview_system_info(
+                result, config, self._client.base_url, detail_level
+            )
         except Exception as e:
             logger.warning(
                 "Failed to fetch system info for overview: %s", e, exc_info=True
@@ -326,16 +251,7 @@ class OverviewMixin(SearchToolsBase):
             )
             if ws_result.get("success"):
                 notifications = ws_result.get("result", [])
-                result["notification_count"] = len(notifications)
-                result["notifications"] = [
-                    {
-                        "notification_id": n.get("notification_id"),
-                        "title": n.get("title"),
-                        "message": n.get("message"),
-                        "created_at": n.get("created_at"),
-                    }
-                    for n in notifications
-                ]
+                apply_overview_notifications(result, notifications)
             else:
                 # HA answered and rejected. The pre-seeded zero would otherwise
                 # report "none pending" for a section that never ran, the same
@@ -388,21 +304,11 @@ class OverviewMixin(SearchToolsBase):
                 # ``active=False`` placeholders the legacy path and Repairs UI
                 # never show, so drop them here for parity. Legacy rows omit
                 # ``active`` (None) → no-op for them.
-                all_issues = [i for i in raw_issues if i.get("active") is not False]
-                visible_issues = filter_active_repairs(
-                    all_issues,
-                    include_dismissed=include_dismissed_repairs_bool,
+                apply_overview_repairs(
+                    result,
+                    raw_issues,
+                    include_dismissed_repairs_bool,
                 )
-                result["repair_count"] = len(visible_issues)
-                if not include_dismissed_repairs_bool:
-                    # Baseline excludes inactive registry stubs so they are
-                    # not miscounted as dismissed.
-                    dismissed_count = len(
-                        filter_active_repairs(all_issues, include_dismissed=True)
-                    ) - len(visible_issues)
-                    if dismissed_count:
-                        result["dismissed_repair_count"] = dismissed_count
-                result["repairs"] = [project_repair_fields(r) for r in visible_issues]
             else:
                 err = repairs_result.get("error") or {}
                 err_msg = (

@@ -109,7 +109,11 @@ def mcp_result(result: ToolResult, *, allow_continuation: bool = True) -> Any:
     ):
         return continuation
 
-    content: Any = json.dumps(result.data, default=str)
+    content: Any = (
+        result.data
+        if isinstance(result.data, str)
+        else json.dumps(result.data, default=str)
+    )
     if result.images:
         import base64
 

@@ -83,9 +83,25 @@ async def call_exposed(
     if name not in names:
         return tool_result({"error": f"Unknown tool '{name}'."}, error=True)
     try:
-        result = await manager.engine.call(
-            name, arguments, replace(actor, allowed_tools=names)
-        )
+        definition = manager.engine.tools.get(name)
+        if definition and definition.meta.get("ha_mcp", {}).get(
+            "requires_image_content"
+        ):
+            result = ToolResult(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "IMAGE_CONTENT_UNSUPPORTED",
+                        "message": "Home Assistant Assist cannot receive tool images. Use an MCP client to retrieve this image.",
+                    },
+                },
+                is_error=True,
+                status="not_started",
+            )
+        else:
+            result = await manager.engine.call(
+                name, arguments, replace(actor, allowed_tools=names)
+            )
     except ToolFailure as err:
         result = ToolResult(err.data, is_error=True, status=err.status or "not_started")
     if result.images:

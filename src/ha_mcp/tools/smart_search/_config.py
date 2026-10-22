@@ -6,6 +6,9 @@ on it without creating an import cycle.
 """
 
 from ha_mcp.config import get_global_settings
+from ha_mcp.runtime.overview_values import (
+    _simplify_states_summary as _simplify_states_summary,
+)
 
 # Default concurrency limit for parallel operations
 DEFAULT_CONCURRENCY_LIMIT = 20
@@ -37,35 +40,3 @@ SCENE_CONFIG_TIME_BUDGET = _settings.scene_config_time_budget
 # size toward 1 and/or raise the timeout on such instances (issue #1784).
 INDIVIDUAL_CONFIG_TIMEOUT = _settings.individual_config_timeout
 INDIVIDUAL_FETCH_BATCH_SIZE = _settings.individual_fetch_batch_size
-
-
-def _simplify_states_summary(
-    states_summary: dict[str, int],
-    detail_level: str,
-    max_states: int | None = None,
-) -> dict[str, int]:
-    """Keep only the most common states, aggregate the rest into _other.
-
-    Args:
-        states_summary: Original {state: count} mapping.
-        detail_level: "minimal", "standard", or "full".
-        max_states: Override cap (None = 5 for minimal, 10 for standard).
-
-    Returns:
-        Capped states_summary with ``_other`` count when truncated.
-    """
-    if detail_level == "full":
-        return states_summary
-
-    if max_states is None:
-        max_states = 5 if detail_level == "minimal" else 10
-
-    if len(states_summary) <= max_states:
-        return states_summary
-
-    sorted_states = sorted(states_summary.items(), key=lambda x: x[1], reverse=True)
-    top = dict(sorted_states[:max_states])
-    other_count = sum(count for _, count in sorted_states[max_states:])
-    if other_count > 0:
-        top["_other"] = other_count
-    return top

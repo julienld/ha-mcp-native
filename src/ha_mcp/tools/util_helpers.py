@@ -9,6 +9,14 @@ from typing import Any
 
 from ha_mcp.backends.legacy_flows import legacy_helper_flow
 from ha_mcp.runtime.errors import websocket_error_message as websocket_error_message
+from ha_mcp.runtime.health_results import (
+    _REPAIR_PROJECTION_FIELDS as _REPAIR_PROJECTION_FIELDS,
+)
+from ha_mcp.runtime.health_results import filter_active_repairs as filter_active_repairs
+from ha_mcp.runtime.health_results import project_repair_fields as project_repair_fields
+from ha_mcp.runtime.health_results import (
+    summarize_theme_listing as summarize_theme_listing,
+)
 from ha_mcp.runtime.integration_logs import get_logger_levels as _shared_logger_levels
 from ha_mcp.runtime.integration_logs import normalize_log_level as normalize_log_level
 
@@ -32,23 +40,6 @@ get_logger_levels = legacy_helper_flow(_shared_logger_levels)
 # confirmation. Lives here (a low-level module both consumers already import from)
 # so the two write paths share one map with no import cycle. The legacy
 # WS-subscribe verifier (``tools_service._verify_state_change``) reads it too.
-
-
-def summarize_theme_listing(raw_themes: dict[str, Any]) -> dict[str, Any]:
-    """Summarize a ``frontend/get_themes`` result into names plus defaults.
-
-    Returns theme NAMES, not the full per-theme CSS variable dicts (installed
-    community themes can carry hundreds of variables; listings are a
-    discovery/verify surface, not a content dump).
-    """
-    themes_value = raw_themes.get("themes") or {}
-    theme_names = sorted(themes_value.keys() if isinstance(themes_value, dict) else [])
-    return {
-        "themes": theme_names,
-        "count": len(theme_names),
-        "default_theme": raw_themes.get("default_theme"),
-        "default_dark_theme": raw_themes.get("default_dark_theme"),
-    }
 
 
 def unwrap_service_response(result: dict[str, Any]) -> dict[str, Any]:
@@ -121,48 +112,6 @@ BLOCKED_WS_WRITE_COMMANDS: frozenset[str] = frozenset(
 # Fields surfaced from each repair issue. Includes `ignored` / `dismissed_version`
 # so callers can distinguish active vs. user-dismissed repairs when both are
 # returned (e.g., `include_dismissed_repairs=True`).
-_REPAIR_PROJECTION_FIELDS = (
-    "issue_id",
-    "domain",
-    "severity",
-    "translation_key",
-    "ignored",
-    "dismissed_version",
-    "is_fixable",
-    "breaks_in_ha_version",
-    "created",
-    "issue_domain",
-)
-
-
-def filter_active_repairs(
-    issues: list[dict[str, Any]], *, include_dismissed: bool = False
-) -> list[dict[str, Any]]:
-    """Drop user-dismissed repairs unless ``include_dismissed`` is set.
-
-    HA's `repairs/list_issues` returns both active and ignored repairs (the
-    Repairs UI hides ignored ones by default). Mirror that UI default so
-    overview / system-health responses don't surface repairs the user has
-    already dismissed.
-
-    Entries with ``active=False`` are always dropped, regardless of
-    ``include_dismissed``: HA core's ``ws_list_issues`` never emits them
-    (on restart the registry reloads each stored non-persistent issue as an
-    inactive stub until it is re-raised or deleted), but the component's
-    raw registry dump does.
-    """
-    if include_dismissed:
-        return [r for r in issues if r.get("active") is not False]
-    return [r for r in issues if r.get("active") is not False and not r.get("ignored")]
-
-
-def project_repair_fields(issue: dict[str, Any]) -> dict[str, Any]:
-    """Project a repair issue dict to the public-facing field subset.
-
-    Drops verbose fields (`translation_placeholders`, `learn_more_url`) to
-    keep overview payloads compact.
-    """
-    return {k: issue[k] for k in _REPAIR_PROJECTION_FIELDS if k in issue}
 
 
 # Python logging numeric-level → canonical level name.

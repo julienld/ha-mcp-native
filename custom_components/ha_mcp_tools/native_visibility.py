@@ -149,7 +149,7 @@ class NativeVisibility:
         if config is None:
             return
         if not config.enforce:
-            if name in {"ha_search", "ha_get_overview"}:
+            if name == "ha_search":
                 raise ToolFailure(
                     "ENTITY_VISIBILITY_ENFORCED",
                     "Native discovery visibility requires its filtered owner",
@@ -160,6 +160,11 @@ class NativeVisibility:
                     status="not_started",
                 )
             return
+        if name == "ha_get_camera_image":
+            self._deny(
+                name,
+                "Camera pixels cannot be filtered for hidden entities under visibility enforcement.",
+            )
         try:
             matcher = await self._matcher(config)
         except VisibilityDataUnavailable:

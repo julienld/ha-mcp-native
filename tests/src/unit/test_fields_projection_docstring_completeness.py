@@ -55,13 +55,13 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "tool": "ha_get_overview",
         "docstring": ("tools/tools_search.py", "ha_get_overview"),
         "var_harvest": [
-            ("tools/tools_search.py", "ha_get_overview", "result"),
+            ("tools/tools_search.py", "get_overview", "result"),
             # `settings_url` is assigned after `project_fields(result, ...)`
             # to a separate `projected` var, so it bypasses `fields=`
             # filtering and is always emitted when the sidecar is running.
-            ("tools/tools_search.py", "ha_get_overview", "projected"),
+            ("tools/tools_search.py", "get_overview", "projected"),
             (
-                "tools/smart_search/_overview.py",
+                "runtime/overview_results.py",
                 "_assemble_overview_response",
                 "base_response",
             ),
@@ -70,6 +70,9 @@ TOOL_SPECS: list[dict[str, Any]] = [
             ("tools/search/overview.py", "_fetch_system_info", "result"),
             ("tools/search/overview.py", "_fetch_notifications", "result"),
             ("tools/search/overview.py", "_fetch_repairs", "result"),
+            ("runtime/overview_sections.py", "apply_overview_system_info", "result"),
+            ("runtime/overview_sections.py", "apply_overview_notifications", "result"),
+            ("runtime/overview_sections.py", "apply_overview_repairs", "result"),
         ],
         "return_harvest": [],
     },
@@ -667,9 +670,11 @@ def test_harvester_finds_dismissed_repair_count_in_ha_get_overview() -> None:
     case for ``ha_get_overview`` would still pass — both sides of the diff
     would shrink in lockstep. Pin the find here so regressions surface.
     """
-    keys = _harvest_var_keys("tools/search/overview.py", "_fetch_repairs", "result")
+    keys = _harvest_var_keys(
+        "runtime/overview_sections.py", "apply_overview_repairs", "result"
+    )
     assert "dismissed_repair_count" in keys, (
-        "AST harvest of `_fetch_repairs` lost `dismissed_repair_count`. "
+        "AST harvest of `apply_overview_repairs` lost `dismissed_repair_count`. "
         "The regression-catch guarantee this test file provides is broken."
     )
     documented = _extract_documented_keys("tools/tools_search.py", "ha_get_overview")

@@ -17,11 +17,20 @@ from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.backends.legacy import legacy_errors
+from ha_mcp.runtime.health_results import (
+    HealthResults,
+    dead_entities_result,
+    repair_section,
+    thread_network_result,
+    zha_network_result,
+    zwave_network_result,
+)
+from ha_mcp.runtime.health_tools import HealthFacade
 
 from ..client.rest_client import HomeAssistantCommandError, HomeAssistantCommandTimeout
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
-from .coercion import JSON_STRING_COERCION
 from .component_api import (
     component_supports,
     get_component_caps,
@@ -39,7 +48,7 @@ from .helpers import (
 )
 from .system_restart import restart_home_assistant
 from .tool_hints import read_only_hints, write_hints
-from .util_helpers import filter_active_repairs, summarize_theme_listing
+from .util_helpers import summarize_theme_listing
 
 logger = logging.getLogger(__name__)
 
@@ -151,11 +160,12 @@ RELOAD_TARGETS = {
 }
 
 
-class SystemTools:
+class SystemTools(HealthFacade, HealthResults):
     """System management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        super().__init__(self._get_system_health)
 
     @tool(
         name="ha_restart",
@@ -473,119 +483,27 @@ class SystemTools:
             "entry_id": entry_id,
         }
 
-    @tool(
+    ha_get_system_health = tool(
         name="ha_get_system_health",
         tags={"System", "Zigbee", "Z-Wave", "Thread", "Matter", "Integrations"},
         annotations=read_only_hints(
             "Get System Health (incl. ZHA/Z-Wave/integration diagnostics)",
             open_world=True,
         ),
-    )
-    @log_tool_usage
-    async def ha_get_system_health(
+    )(log_tool_usage(legacy_errors(HealthFacade.ha_get_system_health)))
+
+    async def _get_system_health(
         self,
-        include: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Comma-separated extra sections: 'repairs' (Repair items, "
-                    "active only unless include_dismissed_repairs=True); "
-                    "'zha_network' (ZHA devices with radio signal summary: name, "
-                    "LQI, RSSI); 'zha_network_full' (all ZHA device details; large "
-                    "on 100+ device networks); 'zwave_network' (Z-Wave JS status "
-                    "and node summary: status, security, routing); "
-                    "'thread_network' (per border-router channel, extended_pan_id "
-                    "and border_agent_id; not per-node Thread health); "
-                    "'matter_network' (Matter integration presence: "
-                    "config_entry_id, state, title; per-node health is in Matter "
-                    "node diagnostics); 'themes' (installed theme names, count, "
-                    "default_theme, default_dark_theme); 'diagnostics' "
-                    "(per-integration diagnostics dump, integration-defined JSON; "
-                    "REQUIRES config_entry_id; payloads can be large — pair with "
-                    "diagnostics_fields or diagnostics_truncate_at_bytes); "
-                    "'config_check' (validate the HA configuration, the "
-                    "pre-restart check ha_restart runs automatically; returns "
-                    "{result: valid|invalid, is_valid, errors}); 'dead_entities' "
-                    "(orphaned/stale entity-registry entries: config_entry_orphans "
-                    "whose owning integration instance is gone, and stale_restored "
-                    "entries HA restored on startup that the loaded integration no "
-                    "longer provides, each with entity_id + platform for cleanup "
-                    "via ha_remove_entity; unknown-state entities and "
-                    "merely-offline devices are excluded)."
-                )
-            ),
-        ] = None,
-        include_dismissed_repairs: Annotated[
-            bool | None,
-            Field(
-                description=(
-                    "Include user-dismissed/ignored repairs. Only meaningful when "
-                    "'repairs' is in include. Dismiss or restore one with "
-                    "ha_manage_updates(action='ignore_repair' / 'unignore_repair')."
-                )
-            ),
-        ] = False,
-        config_entry_id: Annotated[
-            str | None,
-            Field(
-                description="Config entry ID of the integration (find via ha_get_integration). Required when include contains 'diagnostics'."
-            ),
-        ] = None,
-        device_id: Annotated[
-            str | None,
-            Field(
-                description="With include='diagnostics', return the device-scoped dump for this device instead of the full integration dump. Some integrations only expose config-entry-level dumps."
-            ),
-        ] = None,
-        diagnostics_fields: Annotated[
-            list[str] | str | None,
-            JSON_STRING_COERCION,
-            Field(
-                description="Top-level keys to keep from the diagnostics data payload (e.g. ['home_assistant', 'issues']). Accepts a JSON list or comma-separated string. Only applies with include='diagnostics'."
-            ),
-        ] = None,
-        diagnostics_truncate_at_bytes: Annotated[
-            int | None,
-            Field(
-                ge=1,
-                description="Byte cap on the serialized diagnostics payload (post-projection / post-data_path). On hit, drops data and emits truncated=true, bytes_total, byte_cap, plus available_fields (when the capped value is a dict). Recommended starting point: 20000. Only applies with include='diagnostics'.",
-            ),
-        ] = None,
-        diagnostics_data_path: Annotated[
-            str | None,
-            Field(
-                description="Dotted path into the diagnostics data sub-tree (e.g. 'data.devices' for ZHA per-device records). Walks into the post-fields payload. Resolution failures replace data with null and surface data_path_error. Only applies with include='diagnostics'."
-            ),
-        ] = None,
-        diagnostics_data_offset: Annotated[
-            int | None,
-            Field(
-                ge=0,
-                description="Pagination start index for list-valued diagnostics_data_path results. Only applies with include='diagnostics'.",
-            ),
-        ] = 0,
-        diagnostics_data_limit: Annotated[
-            int | None,
-            Field(
-                ge=1,
-                description="Pagination window for list-valued diagnostics_data_path results; data becomes {path, items, offset, limit, total, has_more}. Only applies with include='diagnostics'.",
-            ),
-        ] = None,
+        include: str | None,
+        include_dismissed_repairs: bool | None,
+        config_entry_id: str | None,
+        device_id: str | None,
+        diagnostics_fields: list[str] | str | None,
+        diagnostics_truncate_at_bytes: int | None,
+        diagnostics_data_path: str | None,
+        diagnostics_data_offset: int | None,
+        diagnostics_data_limit: int | None,
     ) -> dict[str, Any]:
-        """Get Home Assistant system health, including Zigbee (ZHA), Z-Wave JS, and per-integration diagnostics dumps.
-
-        Returns health check results from integrations, system resources, and
-        connectivity; available information varies by installation type and
-        loaded integrations. Optional sections are selected with `include`.
-
-        The result may include ``ha_mcp_update`` ``{current, latest,
-        update_available}``. When update_available is true, tell the user a
-        newer ha-mcp release is available.
-
-        EXAMPLES:
-        - ha_get_system_health(include="repairs,zha_network,zwave_network,config_check")
-        - Page a list-valued diagnostics sub-tree: ha_get_system_health(include="diagnostics", config_entry_id="abc", diagnostics_data_path="<list-valued path>", diagnostics_data_limit=10), then repeat with diagnostics_data_offset=10 while has_more is true.
-        """
         includes = self._parse_includes(include)
         include_dismissed_repairs_bool = bool(include_dismissed_repairs)
 
@@ -769,30 +687,6 @@ class SystemTools:
             return None  # unreachable: exception_to_structured_error always raises
         finally:
             await self._safe_disconnect(ws_client)
-
-    @staticmethod
-    def _warn_unknown_includes(result: dict[str, Any], includes: set[str]) -> None:
-        """Append a warning to ``result`` for any unrecognized include sections.
-
-        Extracted verbatim from ``ha_get_system_health``.
-        """
-        VALID_INCLUDES = {
-            "repairs",
-            "zha_network",
-            "zha_network_full",
-            "zwave_network",
-            "thread_network",
-            "matter_network",
-            "diagnostics",
-            "config_check",
-            "themes",
-            "dead_entities",
-        }
-        unknown = includes - VALID_INCLUDES
-        if unknown:
-            result.setdefault("warnings", []).append(
-                f"Unknown include sections ignored: {', '.join(sorted(unknown))}"
-            )
 
     @staticmethod
     def _stub_ws_unavailable(
@@ -1062,13 +956,6 @@ class SystemTools:
         result["dead_entities"] = dead_section
 
     @staticmethod
-    def _parse_includes(include: str | None) -> set[str]:
-        """Parse the comma-separated include parameter into a set of section names."""
-        if not include:
-            return set()
-        return {s.strip().lower() for s in include.split(",") if s.strip()}
-
-    @staticmethod
     async def _safe_disconnect(ws_client: Any) -> None:
         """Best-effort WebSocket disconnect; never raises."""
         if ws_client is None:
@@ -1250,22 +1137,7 @@ class SystemTools:
                 # which the legacy path and the Repairs UI never show. Drop them
                 # here so the component path matches. Legacy rows omit ``active``
                 # entirely (None), so this is a no-op for them.
-                all_issues = [i for i in raw_issues if i.get("active") is not False]
-                visible_issues = filter_active_repairs(
-                    all_issues, include_dismissed=include_dismissed
-                )
-                repairs = {
-                    "issues": visible_issues,
-                    "count": len(visible_issues),
-                }
-                if not include_dismissed:
-                    # Baseline excludes inactive registry stubs so they are
-                    # not miscounted as dismissed.
-                    dismissed_count = len(
-                        filter_active_repairs(all_issues, include_dismissed=True)
-                    ) - len(visible_issues)
-                    if dismissed_count:
-                        repairs["dismissed_count"] = dismissed_count
+                repairs = repair_section(raw_issues, include_dismissed)
             else:
                 err = repairs_result.get("error") or {}
                 err_msg = (
@@ -1284,43 +1156,12 @@ class SystemTools:
     @staticmethod
     async def _fetch_zha_network(ws_client: Any, *, full: bool) -> dict[str, Any]:
         """Fetch ZHA Zigbee network device data."""
-        ZHA_SUMMARY_LIMIT = 50
-        ZHA_FULL_LIMIT = 25
         zha_network: dict[str, Any] = {"devices": [], "count": 0, "total_count": 0}
         try:
             zha_result = await ws_client.send_command("zha/devices")
             if zha_result.get("success"):
                 raw_devices = zha_result.get("result", [])
-                total = len(raw_devices)
-                device_limit = ZHA_FULL_LIMIT if full else ZHA_SUMMARY_LIMIT
-                truncated = total > device_limit
-                capped_devices = raw_devices[:device_limit]
-                if full:
-                    zha_devices = capped_devices
-                else:
-                    zha_devices = [
-                        {
-                            "ieee": d.get("ieee"),
-                            "name": d.get("user_given_name") or d.get("name"),
-                            "manufacturer": d.get("manufacturer"),
-                            "model": d.get("model"),
-                            "lqi": d.get("lqi"),
-                            "rssi": d.get("rssi"),
-                            "available": d.get("available"),
-                        }
-                        for d in capped_devices
-                    ]
-                zha_network = {
-                    "devices": zha_devices,
-                    "count": len(zha_devices),
-                    "total_count": total,
-                }
-                if truncated:
-                    zha_network["truncated"] = True
-                    zha_network["hint"] = (
-                        f"Showing {device_limit} of {total} devices. "
-                        "Use ha_get_device(integration='zha') for full device list."
-                    )
+                zha_network = zha_network_result(raw_devices, full)
         except Exception as e:  # noqa: BLE001
             _reraise_if_fatal(e)
             logger.warning("Failed to fetch ZHA network data: %s", e)
@@ -1341,7 +1182,6 @@ class SystemTools:
         given; the ``zwave_js/network_status`` call itself always runs
         (system_snapshot doesn't reach into the radio integration).
         """
-        ZWAVE_NODE_LIMIT = 50
         zwave_network: dict[str, Any] = {
             "controller": {},
             "nodes": [],
@@ -1376,30 +1216,7 @@ class SystemTools:
             )
             if network_result.get("success"):
                 net_data = network_result.get("result", {})
-                zwave_network["controller"] = net_data.get("controller", {})
-                nodes = net_data.get("controller", {}).get("nodes", [])
-                total_nodes = len(nodes)
-                capped_nodes = nodes[:ZWAVE_NODE_LIMIT]
-                node_summaries = [
-                    {
-                        "node_id": n.get("node_id"),
-                        "status": n.get("status"),
-                        "is_routing": n.get("is_routing"),
-                        "is_secure": n.get("is_secure"),
-                        "zwave_plus_version": n.get("zwave_plus_version"),
-                        "is_controller_node": n.get("is_controller_node"),
-                    }
-                    for n in capped_nodes
-                ]
-                zwave_network["nodes"] = node_summaries
-                zwave_network["count"] = len(node_summaries)
-                zwave_network["total_count"] = total_nodes
-                if total_nodes > ZWAVE_NODE_LIMIT:
-                    zwave_network["truncated"] = True
-                    zwave_network["hint"] = (
-                        f"Showing {ZWAVE_NODE_LIMIT} of {total_nodes} nodes. "
-                        "Use ha_get_device(integration='zwave_js') for full device list."
-                    )
+                zwave_network = zwave_network_result(net_data)
         except Exception as e:  # noqa: BLE001
             _reraise_if_fatal(e)
             logger.warning("Failed to fetch Z-Wave network data: %s", e)
@@ -1429,19 +1246,7 @@ class SystemTools:
                 # ``otbr/info`` returns a dict keyed by each border router's
                 # extended address; the value carries the per-OTBR fields.
                 routers_raw = info_result.get("result") or {}
-                border_routers = [
-                    {
-                        "extended_address": ext_addr,
-                        "channel": (info or {}).get("channel"),
-                        "extended_pan_id": (info or {}).get("extended_pan_id"),
-                        "border_agent_id": (info or {}).get("border_agent_id"),
-                    }
-                    for ext_addr, info in routers_raw.items()
-                ]
-                thread_network = {
-                    "border_routers": border_routers,
-                    "count": len(border_routers),
-                }
+                thread_network = thread_network_result(routers_raw)
             else:
                 err = info_result.get("error") or {}
                 err_msg = (
@@ -1706,65 +1511,6 @@ class SystemTools:
         }
         return state_by_id, registry, live_entry_ids
 
-    @staticmethod
-    def _classify_registry_entries(
-        registry: list[dict[str, Any]],
-        state_by_id: dict[str, Any],
-        live_entry_ids: set[str] | None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Classify registry entries into ``(orphans, stale_restored)`` buckets.
-
-        Extracted verbatim from ``_fetch_dead_entities``' classification loop.
-        """
-        orphans: list[dict[str, Any]] = []
-        stale: list[dict[str, Any]] = []
-        for entry in registry:
-            if not isinstance(entry, dict):
-                continue
-            eid = entry.get("entity_id")
-            if not eid:
-                continue
-            cfg = entry.get("config_entry_id")
-            disabled_by = entry.get("disabled_by")
-
-            # Tier 1 — config-entry orphan (only when the live set loaded).
-            # Covers disabled leftovers too: a disabled entity whose config
-            # entry is gone is still dead cruft (disabled_by is surfaced on
-            # the item so the client sees why it lingered).
-            if live_entry_ids is not None and cfg and cfg not in live_entry_ids:
-                orphans.append(
-                    {
-                        "entity_id": eid,
-                        "platform": entry.get("platform"),
-                        "config_entry_id": cfg,
-                        "disabled_by": disabled_by,
-                        "has_state": eid in state_by_id,
-                    }
-                )
-                continue
-
-            # Tier 2 — stale restored. Skip intentionally-disabled entries
-            # (they normally have no state object anyway).
-            if disabled_by is not None:
-                continue
-            state_obj = state_by_id.get(eid)
-            if state_obj is None:
-                continue
-            attrs = state_obj.get("attributes")
-            if (
-                state_obj.get("state") == "unavailable"
-                and isinstance(attrs, dict)
-                and attrs.get("restored")
-            ):
-                stale.append(
-                    {
-                        "entity_id": eid,
-                        "platform": entry.get("platform"),
-                        "config_entry_id": cfg,
-                    }
-                )
-        return orphans, stale
-
     async def _fetch_dead_entities(
         self,
         *,
@@ -1814,7 +1560,6 @@ class SystemTools:
         supplied together by the caller as one unit; when given, all three
         fetches below are skipped.
         """
-        DEAD_ENTITIES_LIMIT = 50
         dead: dict[str, Any] = {
             "config_entry_orphans": {"items": [], "count": 0, "total_count": 0},
             "stale_restored": {"items": [], "count": 0, "total_count": 0},
@@ -1840,43 +1585,7 @@ class SystemTools:
                 return dead
             state_by_id, registry, live_entry_ids = sources
 
-            orphans, stale = self._classify_registry_entries(
-                registry, state_by_id, live_entry_ids
-            )
-
-            def _bucket(items: list[dict[str, Any]]) -> dict[str, Any]:
-                total = len(items)
-                capped = items[:DEAD_ENTITIES_LIMIT]
-                bucket: dict[str, Any] = {
-                    "items": capped,
-                    "count": len(capped),
-                    "total_count": total,
-                }
-                if total > DEAD_ENTITIES_LIMIT:
-                    bucket["truncated"] = True
-                    bucket["hint"] = (
-                        f"Showing {DEAD_ENTITIES_LIMIT} of {total}; "
-                        "remove cleanup candidates in batches and re-run."
-                    )
-                return bucket
-
-            candidate_total = len(orphans) + len(stale)
-            dead["config_entry_orphans"] = _bucket(orphans)
-            dead["stale_restored"] = _bucket(stale)
-            dead["summary"] = {
-                "candidate_total": candidate_total,
-                "registry_total": len(registry),
-            }
-            # Only attach the guidance note when there is something to act on —
-            # no point spending tokens on cleanup advice for an empty result.
-            if candidate_total:
-                dead["note"] = (
-                    "Excludes 'unknown'-state entities and merely-offline "
-                    "devices (bare 'unavailable' without 'restored'). Entries "
-                    "can appear under stale_restored transiently right after a "
-                    "restart; re-run if HA restarted recently. Remove a "
-                    "confirmed-dead entity with ha_remove_entity(entity_id)."
-                )
+            dead.update(dead_entities_result(state_by_id, registry, live_entry_ids))
         except ToolError:
             # A ToolError (incl. one re-raised by _reraise_if_fatal) carries the
             # MCP isError contract — let it reach ha_get_system_health's own

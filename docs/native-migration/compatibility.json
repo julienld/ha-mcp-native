@@ -86,6 +86,13 @@
     "trace_storage_enabled": "derived from the actual Core owner's _trace_config; null when unavailable",
     "legacy_diagnostics": "unchanged; these native corrections do not alter tool signatures or safety annotations"
   },
+  "native_health_diagnostics": {
+    "component_count": "number of loaded component domains, rather than character count of their serialized list",
+    "system_health_probes": "resolve actual Core observations with bounded waiting and owned executor drain; never cancel a shared Core probe Future",
+    "independent_sections": "baseline_available=false when Core system_health is absent; independently available sections remain usable",
+    "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
   "conditional_surfaces": [
     {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
     {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},

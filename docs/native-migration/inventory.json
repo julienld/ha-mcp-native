@@ -15,12 +15,15 @@
     "custom_components/ha_mcp_tools/native_log_tools.py",
     "custom_components/ha_mcp_tools/native_entity_tools.py",
     "custom_components/ha_mcp_tools/native_event_tools.py",
+    "custom_components/ha_mcp_tools/native_camera_tools.py",
+    "custom_components/ha_mcp_tools/native_overview_tools.py",
+    "custom_components/ha_mcp_tools/native_health_tools.py",
     "custom_components/ha_mcp_tools/native_calendar_tools.py"
   ],
   "counts": {
     "decorated_tools": 87,
     "beta_tagged_tools": 8,
-    "native_catalog_declarations": 50,
+    "native_catalog_declarations": 53,
     "families": {
       "assist": 2,
       "backup-and-restore": 1,
@@ -2051,15 +2054,15 @@
         "provider availability"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_camera.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/camera_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
       "operation_candidates": [],
       "client_call_candidates": [
         {
-          "line": 217,
+          "line": 103,
           "call": "self._client.httpx_client.get",
           "wire_literals": []
         }
@@ -2551,8 +2554,8 @@
         "bounded result serialization"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_search.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/overview_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2605,8 +2608,8 @@
         "native response contracts"
       ],
       "native_status": "not_verified",
-      "native_catalog_declaration": false,
-      "shared_source": "src/ha_mcp/tools/tools_system.py",
+      "native_catalog_declaration": true,
+      "shared_source": "src/ha_mcp/runtime/health_tools.py",
       "semantic_operation_candidates": [],
       "evidence": [],
       "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
@@ -2617,79 +2620,79 @@
       ],
       "client_call_candidates": [
         {
-          "line": 405,
+          "line": 415,
           "call": "self._client._request",
           "wire_literals": []
         },
         {
-          "line": 1184,
+          "line": 1071,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1291,
+          "line": 1161,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1373,
+          "line": 1213,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1427,
+          "line": 1244,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1529,
+          "line": 1334,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1918,
+          "line": 1627,
           "call": "self._client.check_config",
           "wire_literals": []
         },
         {
-          "line": 320,
+          "line": 330,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 360,
+          "line": 370,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1241,
+          "line": 1128,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1359,
+          "line": 1199,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1490,
+          "line": 1295,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1633,
+          "line": 1438,
           "call": "self._client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1634,
+          "line": 1439,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 1637,
+          "line": 1442,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
@@ -3553,79 +3556,79 @@
       ],
       "client_call_candidates": [
         {
-          "line": 405,
+          "line": 415,
           "call": "self._client._request",
           "wire_literals": []
         },
         {
-          "line": 1184,
+          "line": 1071,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1291,
+          "line": 1161,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1373,
+          "line": 1213,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1427,
+          "line": 1244,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1529,
+          "line": 1334,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1918,
+          "line": 1627,
           "call": "self._client.check_config",
           "wire_literals": []
         },
         {
-          "line": 320,
+          "line": 330,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 360,
+          "line": 370,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1241,
+          "line": 1128,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1359,
+          "line": 1199,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1490,
+          "line": 1295,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1633,
+          "line": 1438,
           "call": "self._client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1634,
+          "line": 1439,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 1637,
+          "line": 1442,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
@@ -4087,79 +4090,79 @@
       ],
       "client_call_candidates": [
         {
-          "line": 405,
+          "line": 415,
           "call": "self._client._request",
           "wire_literals": []
         },
         {
-          "line": 1184,
+          "line": 1071,
           "call": "get_websocket_client",
           "wire_literals": []
         },
         {
-          "line": 1291,
+          "line": 1161,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1373,
+          "line": 1213,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1427,
+          "line": 1244,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1529,
+          "line": 1334,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1918,
+          "line": 1627,
           "call": "self._client.check_config",
           "wire_literals": []
         },
         {
-          "line": 320,
+          "line": 330,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 360,
+          "line": 370,
           "call": "self._client.call_service",
           "wire_literals": []
         },
         {
-          "line": 1241,
+          "line": 1128,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1359,
+          "line": 1199,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1490,
+          "line": 1295,
           "call": "ws_client.send_command",
           "wire_literals": []
         },
         {
-          "line": 1633,
+          "line": 1438,
           "call": "self._client.get_states",
           "wire_literals": []
         },
         {
-          "line": 1634,
+          "line": 1439,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config/entity_registry/list"
           ]
         },
         {
-          "line": 1637,
+          "line": 1442,
           "call": "self._client.send_websocket_message",
           "wire_literals": [
             "config_entries/get"
