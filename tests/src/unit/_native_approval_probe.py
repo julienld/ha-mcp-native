@@ -19,12 +19,14 @@ def _component_imports() -> Any:
     sys.modules[package.__name__] = package
     for name in (
         "homeassistant",
+        "homeassistant.const",
         "homeassistant.core",
         "homeassistant.util",
         "homeassistant.util.aiohttp",
     ):
         sys.modules[name] = ModuleType(name)
     sys.modules["homeassistant.core"].HassJob = object
+    sys.modules["homeassistant.const"].__version__ = "2026.10.2"
     sys.modules["homeassistant.util.aiohttp"].MockRequest = type("MockRequest", (), {})
     from custom_components.ha_mcp_tools import native_server
 

@@ -1145,15 +1145,7 @@ class TestSweepWarningsShape:
 
         registered: dict[str, Any] = {}
         mock_mcp = MagicMock()
-
-        def tool_decorator(*args, **kwargs):
-            def wrapper(func):
-                registered[func.__name__] = func
-                return func
-
-            return wrapper
-
-        mock_mcp.tool = tool_decorator
+        mock_mcp.add_tool = lambda fn: registered.setdefault(fn.__name__, fn)
         client = MagicMock()
         client.base_url = "http://localhost:8123"
         client.token = "test-token"

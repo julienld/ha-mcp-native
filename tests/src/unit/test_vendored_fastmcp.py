@@ -199,6 +199,7 @@ def test_legacy_component_adapters_do_not_import_the_native_protocol_stack():
         str(path.relative_to(_REPO_ROOT))
         for path in component.rglob("*.py")
         if not path.stem.startswith("native_")
+        if "native_operations" not in path.relative_to(component).parts
         if any(
             (
                 isinstance(node, ast.ImportFrom)

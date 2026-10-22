@@ -27,6 +27,7 @@ DOMAIN = "native_fixture"
 
 
 class EchoTool(llm.Tool):
+    integration = DOMAIN
     name = "NativeEcho"
     description = "Echo validated text and the original caller."
     parameters = probatio.from_openapi(
@@ -62,6 +63,7 @@ class FixtureAPI(llm.API):
 
 
 class TurnOnTool(llm.Tool):
+    integration = DOMAIN
     name = "NativeTurnOn"
     description = "Turn on the disposable fixture light through Core's service owner."
     parameters = probatio.from_openapi(

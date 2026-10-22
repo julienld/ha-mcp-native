@@ -198,7 +198,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "tool": "ha_report_issue",
         "docstring": ("tools/tools_bug_report.py", "ha_report_issue"),
         "var_harvest": [
-            ("tools/tools_bug_report.py", "ha_report_issue", "result"),
+            ("runtime/report_rendering.py", "render_report", "result"),
         ],
         "return_harvest": [],
     },

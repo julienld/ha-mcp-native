@@ -1205,14 +1205,7 @@ def _register_addon_tools_and_capture(mock_client):
     mock_mcp = MagicMock()
     captured: dict[str, Any] = {}
 
-    def fake_tool(**kwargs):
-        def decorator(fn):
-            captured[fn.__name__] = fn
-            return fn
-
-        return decorator
-
-    mock_mcp.tool = fake_tool
+    mock_mcp.add_tool = lambda fn: captured.setdefault(fn.__name__, fn)
     register_addon_tools(mock_mcp, mock_client)
     return captured
 
