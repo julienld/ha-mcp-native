@@ -1,0 +1,4902 @@
+{
+  "format_version": 1,
+  "baseline_revision": "2dc504fd97d8416f87b6ea7f2fd8ce0332615956",
+  "method": "AST module-level candidates; neither complete call graph nor effort estimate",
+  "status_rule": "not_verified is the default; only matching implementation plus real Core evidence can establish parity",
+  "counts": {
+    "decorated_tools": 87,
+    "beta_tagged_tools": 8,
+    "families": {
+      "assist": 2,
+      "backup-and-restore": 1,
+      "collections": 6,
+      "configuration": 11,
+      "custom-code": 1,
+      "dashboards": 7,
+      "developer-controls": 2,
+      "discovery": 3,
+      "helpers-and-flows": 8,
+      "issue-reporting": 1,
+      "optional-images": 1,
+      "platform-extensions": 4,
+      "policy": 1,
+      "privileged-files": 2,
+      "recorder-and-diagnostics": 3,
+      "registries": 18,
+      "services": 5,
+      "system-and-platform": 10,
+      "utility-and-cross-cutting": 1
+    }
+  },
+  "tools": [
+    {
+      "name": "ha_bulk_control",
+      "source": "src/ha_mcp/tools/tools_service.py",
+      "tags": [
+        "Service & Device Control"
+      ],
+      "beta": false,
+      "family": "services",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "confirmation listeners before dispatch",
+        "partial results",
+        "unknown outcome after cancellation",
+        "arbitrary ws_command exception"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/",
+        "ha_mcp_tools/call_service"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 378,
+          "call": "client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1313,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 930,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1132,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1741,
+          "call": "self._client.fire_event",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_call_event",
+      "source": "src/ha_mcp/tools/tools_service.py",
+      "tags": [
+        "Service & Device Control"
+      ],
+      "beta": false,
+      "family": "services",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "confirmation listeners before dispatch",
+        "partial results",
+        "unknown outcome after cancellation",
+        "arbitrary ws_command exception"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/",
+        "ha_mcp_tools/call_service"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 378,
+          "call": "client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1313,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 930,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1132,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1741,
+          "call": "self._client.fire_event",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_call_service",
+      "source": "src/ha_mcp/tools/tools_service.py",
+      "tags": [
+        "Service & Device Control"
+      ],
+      "beta": false,
+      "family": "services",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "confirmation listeners before dispatch",
+        "partial results",
+        "unknown outcome after cancellation",
+        "arbitrary ws_command exception"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/",
+        "ha_mcp_tools/call_service"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 378,
+          "call": "client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1313,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 930,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1132,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1741,
+          "call": "self._client.fire_event",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_delete_dashboard",
+      "source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/dashboards",
+        "lovelace/config",
+        "lovelace/config/save",
+        "lovelace/dashboards/create",
+        "lovelace/dashboards/delete",
+        "lovelace/dashboards/list",
+        "lovelace/dashboards/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 178,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1049,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/list"
+          ]
+        },
+        {
+          "line": 1254,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 938,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1911,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2257,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3147,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3182,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3390,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3733,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_delete_dashboard_resource",
+      "source": "src/ha_mcp/tools/tools_resources.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "lovelace/info",
+        "lovelace/resources",
+        "lovelace/resources/create",
+        "lovelace/resources/delete",
+        "lovelace/resources/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 417,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 770,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 858,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/info"
+          ]
+        },
+        {
+          "line": 932,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/update"
+          ]
+        },
+        {
+          "line": 942,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/create"
+          ]
+        },
+        {
+          "line": 995,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_automation",
+      "source": "src/ha_mcp/tools/tools_config_automations.py",
+      "tags": [
+        "Automations"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 434,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 518,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 503,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1256,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1609,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_calendar_events",
+      "source": "src/ha_mcp/tools/tools_calendar.py",
+      "tags": [
+        "Calendar"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "calendar/event/create",
+        "calendar/event/delete",
+        "calendar/event/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 313,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/create"
+          ]
+        },
+        {
+          "line": 349,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 395,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/update"
+          ]
+        },
+        {
+          "line": 232,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 863,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_category",
+      "source": "src/ha_mcp/tools/tools_categories.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/category_registry/delete",
+        "config/category_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 93,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 251,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 370,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_dashboard",
+      "source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/dashboards",
+        "lovelace/config",
+        "lovelace/config/save",
+        "lovelace/dashboards/create",
+        "lovelace/dashboards/delete",
+        "lovelace/dashboards/list",
+        "lovelace/dashboards/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 178,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1049,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/list"
+          ]
+        },
+        {
+          "line": 1254,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 938,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1911,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2257,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3147,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3182,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3390,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3733,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_label",
+      "source": "src/ha_mcp/tools/tools_labels.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/area_registry/update",
+        "config/label_registry/delete",
+        "config/label_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 76,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/label_registry/list"
+          ]
+        },
+        {
+          "line": 137,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 392,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/update"
+          ]
+        },
+        {
+          "line": 759,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 827,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_scene",
+      "source": "src/ha_mcp/tools/tools_config_scenes.py",
+      "tags": [
+        "Scenes"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 879,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 242,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_script",
+      "source": "src/ha_mcp/tools/tools_config_scripts.py",
+      "tags": [
+        "Scripts"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 270,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 850,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_get_yaml",
+      "source": "src/ha_mcp/tools/tools_yaml_read.py",
+      "tags": [
+        "System",
+        "beta"
+      ],
+      "beta": true,
+      "family": "privileged-files",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_config_list_dashboard_resources",
+      "source": "src/ha_mcp/tools/tools_resources.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "lovelace/info",
+        "lovelace/resources",
+        "lovelace/resources/create",
+        "lovelace/resources/delete",
+        "lovelace/resources/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 417,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 770,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 858,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/info"
+          ]
+        },
+        {
+          "line": 932,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/update"
+          ]
+        },
+        {
+          "line": 942,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/create"
+          ]
+        },
+        {
+          "line": 995,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_list_groups",
+      "source": "src/ha_mcp/tools/tools_groups.py",
+      "tags": [
+        "Groups"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 173,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 351,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 479,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_list_helpers",
+      "source": "src/ha_mcp/tools/tools_config_helpers.py",
+      "tags": [
+        "Helper Entities"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/helpers_list",
+        "ha_mcp_tools/helpers_list (all) failed: %r",
+        "ha_mcp_tools/helpers_list connection error; fell back to legacy: %r",
+        "ha_mcp_tools/helpers_list failed for flow type %r: %r",
+        "ha_mcp_tools/helpers_list failed; fell back to legacy: %r"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 384,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 404,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 497,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 234,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_automation",
+      "source": "src/ha_mcp/tools/tools_config_automations.py",
+      "tags": [
+        "Automations"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 434,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 518,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 503,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1256,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1609,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_calendar_event",
+      "source": "src/ha_mcp/tools/tools_calendar.py",
+      "tags": [
+        "Calendar"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "calendar/event/create",
+        "calendar/event/delete",
+        "calendar/event/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 313,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/create"
+          ]
+        },
+        {
+          "line": 349,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 395,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/update"
+          ]
+        },
+        {
+          "line": 232,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 863,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_category",
+      "source": "src/ha_mcp/tools/tools_categories.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/category_registry/delete",
+        "config/category_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 93,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 251,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 370,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_group",
+      "source": "src/ha_mcp/tools/tools_groups.py",
+      "tags": [
+        "Groups"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 173,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 351,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 479,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_label",
+      "source": "src/ha_mcp/tools/tools_labels.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/area_registry/update",
+        "config/label_registry/delete",
+        "config/label_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 76,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/label_registry/list"
+          ]
+        },
+        {
+          "line": 137,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 392,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/update"
+          ]
+        },
+        {
+          "line": 759,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 827,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_scene",
+      "source": "src/ha_mcp/tools/tools_config_scenes.py",
+      "tags": [
+        "Scenes"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 879,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 242,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_remove_script",
+      "source": "src/ha_mcp/tools/tools_config_scripts.py",
+      "tags": [
+        "Scripts"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 270,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 850,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_automation",
+      "source": "src/ha_mcp/tools/tools_config_automations.py",
+      "tags": [
+        "Automations"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 434,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 518,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 503,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1256,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1609,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_calendar_event",
+      "source": "src/ha_mcp/tools/tools_calendar.py",
+      "tags": [
+        "Calendar"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "calendar/event/create",
+        "calendar/event/delete",
+        "calendar/event/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 313,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/create"
+          ]
+        },
+        {
+          "line": 349,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 395,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/update"
+          ]
+        },
+        {
+          "line": 232,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 863,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "calendar/event/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_category",
+      "source": "src/ha_mcp/tools/tools_categories.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/category_registry/delete",
+        "config/category_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 93,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 251,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 370,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_dashboard",
+      "source": "src/ha_mcp/tools/tools_config_dashboards.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/dashboards",
+        "lovelace/config",
+        "lovelace/config/save",
+        "lovelace/dashboards/create",
+        "lovelace/dashboards/delete",
+        "lovelace/dashboards/list",
+        "lovelace/dashboards/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 178,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1049,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/list"
+          ]
+        },
+        {
+          "line": 1254,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 938,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1911,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2257,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3147,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3182,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3390,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 3733,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/dashboards/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_dashboard_resource",
+      "source": "src/ha_mcp/tools/tools_resources.py",
+      "tags": [
+        "Dashboards"
+      ],
+      "beta": false,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "lovelace/info",
+        "lovelace/resources",
+        "lovelace/resources/create",
+        "lovelace/resources/delete",
+        "lovelace/resources/update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 417,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 770,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources"
+          ]
+        },
+        {
+          "line": 858,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/info"
+          ]
+        },
+        {
+          "line": 932,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/update"
+          ]
+        },
+        {
+          "line": 942,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/create"
+          ]
+        },
+        {
+          "line": 995,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "lovelace/resources/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_group",
+      "source": "src/ha_mcp/tools/tools_groups.py",
+      "tags": [
+        "Groups"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 173,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 351,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 479,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_helper",
+      "source": "src/ha_mcp/tools/tools_config_helpers.py",
+      "tags": [
+        "Helper Entities"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/helpers_list",
+        "ha_mcp_tools/helpers_list (all) failed: %r",
+        "ha_mcp_tools/helpers_list connection error; fell back to legacy: %r",
+        "ha_mcp_tools/helpers_list failed for flow type %r: %r",
+        "ha_mcp_tools/helpers_list failed; fell back to legacy: %r"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 384,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 404,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 497,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 234,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_label",
+      "source": "src/ha_mcp/tools/tools_labels.py",
+      "tags": [
+        "Labels & Categories"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/area_registry/update",
+        "config/label_registry/delete",
+        "config/label_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 76,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/label_registry/list"
+          ]
+        },
+        {
+          "line": 137,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 392,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/update"
+          ]
+        },
+        {
+          "line": 759,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 827,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_scene",
+      "source": "src/ha_mcp/tools/tools_config_scenes.py",
+      "tags": [
+        "Scenes"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 879,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 242,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_script",
+      "source": "src/ha_mcp/tools/tools_config_scripts.py",
+      "tags": [
+        "Scripts"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 270,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 850,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_config_set_yaml",
+      "source": "src/ha_mcp/tools/tools_yaml_config.py",
+      "tags": [
+        "System",
+        "beta"
+      ],
+      "beta": true,
+      "family": "privileged-files",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "tools-entry gate",
+        "path jail and symlinks",
+        "executor I/O",
+        "reload validation"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_delete_file",
+      "source": "src/ha_mcp/tools/tools_filesystem.py",
+      "tags": [
+        "Files",
+        "beta"
+      ],
+      "beta": true,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 180,
+          "call": "client.get_services",
+          "wire_literals": []
+        },
+        {
+          "line": 275,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 381,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 391,
+          "call": "client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_dev_manage_server",
+      "source": "src/ha_mcp/tools/tools_dev.py",
+      "tags": [
+        "Developer"
+      ],
+      "beta": false,
+      "family": "developer-controls",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "entry lifecycle ownership",
+        "package override scope",
+        "no self-deadlock on reload"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config_entries/get",
+        "ha_mcp_tools/server_entry",
+        "ha_mcp_tools/server_entry_update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 440,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        },
+        {
+          "line": 308,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 506,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1903,
+          "call": "self._client.get_config",
+          "wire_literals": []
+        },
+        {
+          "line": 2100,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_dev_manage_settings",
+      "source": "src/ha_mcp/tools/tools_dev.py",
+      "tags": [
+        "Developer"
+      ],
+      "beta": false,
+      "family": "developer-controls",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "entry lifecycle ownership",
+        "package override scope",
+        "no self-deadlock on reload"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config_entries/get",
+        "ha_mcp_tools/server_entry",
+        "ha_mcp_tools/server_entry_update"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 440,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        },
+        {
+          "line": 308,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 506,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1903,
+          "call": "self._client.get_config",
+          "wire_literals": []
+        },
+        {
+          "line": 2100,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_eval_template",
+      "source": "src/ha_mcp/tools/tools_utility.py",
+      "tags": [
+        "Utilities"
+      ],
+      "beta": false,
+      "family": "utility-and-cross-cutting",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "inspect shared helper dependencies",
+        "preserve result and error contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/template_diagnose",
+        "ha_mcp_tools/template_diagnose failed: %r",
+        "ha_mcp_tools/template_diagnose unavailable",
+        "render_template"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 153,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 291,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 263,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_app",
+      "source": "src/ha_mcp/tools/tools_addons.py",
+      "tags": [
+        "Apps (add-ons)"
+      ],
+      "beta": false,
+      "family": "platform-extensions",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Supervisor availability",
+        "optional integration APIs",
+        "external-content hints"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "supervisor/api"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 449,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "supervisor/api"
+          ]
+        },
+        {
+          "line": 521,
+          "call": "supervisor_client.request",
+          "wire_literals": []
+        },
+        {
+          "line": 2356,
+          "call": "http_client.request",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_automation_traces",
+      "source": "src/ha_mcp/tools/tools_traces.py",
+      "tags": [
+        "History & Statistics"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "automation/config",
+        "config/entity_registry/get",
+        "trace/get",
+        "trace/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 239,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "trace/get"
+          ]
+        },
+        {
+          "line": 277,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "trace/list"
+          ]
+        },
+        {
+          "line": 388,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 491,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "automation/config"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_get_camera_image",
+      "source": "src/ha_mcp/tools/tools_camera.py",
+      "tags": [
+        "Camera"
+      ],
+      "beta": false,
+      "family": "optional-images",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "binary image serialization",
+        "entity access",
+        "provider availability"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 217,
+          "call": "self._client.httpx_client.get",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_dashboard_screenshot",
+      "source": "src/ha_mcp/tools/tools_dashboard_screenshot.py",
+      "tags": [
+        "Dashboard",
+        "beta"
+      ],
+      "beta": true,
+      "family": "dashboards",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "storage vs YAML mode",
+        "optimistic conflict checks",
+        "frontend/custom-card discovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_get_device",
+      "source": "src/ha_mcp/tools/tools_registry.py",
+      "tags": [
+        "Device Registry",
+        "Matter",
+        "Z-Wave",
+        "Zigbee"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/list",
+        "config/device_registry/remove_config_entry",
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 224,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 240,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 259,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/list"
+          ]
+        },
+        {
+          "line": 332,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 717,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 618,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/remove_config_entry"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_get_entity",
+      "source": "src/ha_mcp/tools/tools_entities.py",
+      "tags": [
+        "Entity Registry"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/get_entries",
+        "config/entity_registry/list",
+        "config/entity_registry/remove",
+        "config/entity_registry/update",
+        "ha_mcp_tools/entity_enrich",
+        "homeassistant/expose_entity"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 155,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 407,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 418,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 700,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 821,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1322,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1396,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 535,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 597,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 664,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 782,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1099,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "homeassistant/expose_entity"
+          ]
+        },
+        {
+          "line": 2083,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/remove"
+          ]
+        },
+        {
+          "line": 1353,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get_entries"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_get_entity_exposure",
+      "source": "src/ha_mcp/tools/tools_voice_assistant.py",
+      "tags": [
+        "Entity Registry"
+      ],
+      "beta": false,
+      "family": "assist",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "pipeline lifecycle",
+        "native exposure helpers",
+        "anonymous Assist identity policy"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/exposure",
+        "homeassistant/expose_entity/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 104,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 293,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_hacs_info",
+      "source": "src/ha_mcp/tools/tools_hacs.py",
+      "tags": [
+        "HACS"
+      ],
+      "beta": false,
+      "family": "platform-extensions",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Supervisor availability",
+        "optional integration APIs",
+        "external-content hints"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 56,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 134,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 402,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 836,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 458,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 550,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 643,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 678,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_history",
+      "source": "src/ha_mcp/tools/tools_history.py",
+      "tags": [
+        "History & Statistics"
+      ],
+      "beta": false,
+      "family": "recorder-and-diagnostics",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "recorder executor ownership",
+        "query bounds",
+        "native result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "history/history_during_period",
+        "recorder/statistics_during_period"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 906,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "history/history_during_period"
+          ]
+        },
+        {
+          "line": 1022,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "recorder/statistics_during_period"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_get_integration",
+      "source": "src/ha_mcp/tools/tools_integrations.py",
+      "tags": [
+        "Integrations"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/get",
+        "ha_mcp_tools/config_entries",
+        "knx/get_knx_project"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 342,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1126,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "knx/get_knx_project"
+          ]
+        },
+        {
+          "line": 1419,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 2913,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 2941,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2735,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_logs",
+      "source": "src/ha_mcp/tools/tools_logs.py",
+      "tags": [
+        "History & Statistics"
+      ],
+      "beta": false,
+      "family": "recorder-and-diagnostics",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "recorder executor ownership",
+        "query bounds",
+        "native result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_get_operation_status",
+      "source": "src/ha_mcp/tools/tools_service.py",
+      "tags": [
+        "Service & Device Control"
+      ],
+      "beta": false,
+      "family": "services",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "confirmation listeners before dispatch",
+        "partial results",
+        "unknown outcome after cancellation",
+        "arbitrary ws_command exception"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "ha_mcp_tools/",
+        "ha_mcp_tools/call_service"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 378,
+          "call": "client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1313,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 930,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1132,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1741,
+          "call": "self._client.fire_event",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_overview",
+      "source": "src/ha_mcp/tools/tools_search.py",
+      "tags": [
+        "Search & Discovery"
+      ],
+      "beta": false,
+      "family": "discovery",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "aggregate native reads",
+        "visibility policy",
+        "bounded result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_get_state",
+      "source": "src/ha_mcp/tools/tools_search.py",
+      "tags": [
+        "Search & Discovery"
+      ],
+      "beta": false,
+      "family": "discovery",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "aggregate native reads",
+        "visibility policy",
+        "bounded result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_get_system_health",
+      "source": "src/ha_mcp/tools/tools_system.py",
+      "tags": [
+        "Integrations",
+        "Matter",
+        "System",
+        "Thread",
+        "Z-Wave",
+        "Zigbee"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "config_entries/get",
+        "ha_mcp_tools/system_snapshot"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 405,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 1184,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1291,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1373,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1427,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1529,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1918,
+          "call": "self._client.check_config",
+          "wire_literals": []
+        },
+        {
+          "line": 320,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 360,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1241,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1359,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1490,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1633,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1634,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 1637,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_get_todo",
+      "source": "src/ha_mcp/tools/tools_todo.py",
+      "tags": [
+        "Todo Lists"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "todo/item/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 128,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 355,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 409,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 562,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 81,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_get_zone",
+      "source": "src/ha_mcp/tools/tools_zones.py",
+      "tags": [
+        "Zones"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "ha_mcp_tools/helpers_list",
+        "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
+        "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
+        "zone/delete",
+        "zone/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 296,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 324,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 379,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 426,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 353,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 728,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_list_files",
+      "source": "src/ha_mcp/tools/tools_filesystem.py",
+      "tags": [
+        "Files",
+        "beta"
+      ],
+      "beta": true,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 180,
+          "call": "client.get_services",
+          "wire_literals": []
+        },
+        {
+          "line": 275,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 381,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 391,
+          "call": "client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_list_floors_areas",
+      "source": "src/ha_mcp/tools/tools_areas.py",
+      "tags": [
+        "Areas & Floors"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/floor_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 108,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 109,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/floor_registry/list"
+          ]
+        },
+        {
+          "line": 285,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 705,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 600,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_list_services",
+      "source": "src/ha_mcp/tools/tools_services.py",
+      "tags": [
+        "Service & Device Control"
+      ],
+      "beta": false,
+      "family": "services",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "confirmation listeners before dispatch",
+        "partial results",
+        "unknown outcome after cancellation",
+        "arbitrary ws_command exception"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "frontend/get_translations",
+        "ha_mcp_tools/services_list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 102,
+          "call": "client.get_services",
+          "wire_literals": []
+        },
+        {
+          "line": 149,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 197,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "frontend/get_translations"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_app",
+      "source": "src/ha_mcp/tools/tools_addons.py",
+      "tags": [
+        "Apps (add-ons)"
+      ],
+      "beta": false,
+      "family": "platform-extensions",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Supervisor availability",
+        "optional integration APIs",
+        "external-content hints"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "supervisor/api"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 449,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "supervisor/api"
+          ]
+        },
+        {
+          "line": 521,
+          "call": "supervisor_client.request",
+          "wire_literals": []
+        },
+        {
+          "line": 2356,
+          "call": "http_client.request",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_backup",
+      "source": "src/ha_mcp/tools/backup.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "backup-and-restore",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "capture all affected resources",
+        "restore owner and readback",
+        "partial failure recovery"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "backup/info",
+        "ha_mcp_tools/backup_prep"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 170,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 235,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 851,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 920,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1056,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1439,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1545,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 285,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 496,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 584,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 776,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1252,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "backup/info"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_blueprints",
+      "source": "src/ha_mcp/tools/tools_blueprints.py",
+      "tags": [
+        "Blueprints"
+      ],
+      "beta": false,
+      "family": "configuration",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "native validators",
+        "YAML and storage ownership",
+        "backup/hash/duplicate guards",
+        "reload and completion"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "blueprint/delete",
+        "blueprint/list",
+        "search/related"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 381,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "blueprint/list"
+          ]
+        },
+        {
+          "line": 513,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "blueprint/delete"
+          ]
+        },
+        {
+          "line": 628,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "search/related"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_custom_tool",
+      "source": "src/ha_mcp/tools/tools_code.py",
+      "tags": [
+        "System",
+        "beta"
+      ],
+      "beta": true,
+      "family": "custom-code",
+      "migration_risk": "exception",
+      "risk_reasons": [
+        "arbitrary REST/WebSocket ABI",
+        "saved custom tools",
+        "no retry after mutation"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 867,
+          "call": "self.client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_energy_prefs",
+      "source": "src/ha_mcp/tools/tools_energy.py",
+      "tags": [
+        "Energy"
+      ],
+      "beta": false,
+      "family": "recorder-and-diagnostics",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "recorder executor ownership",
+        "query bounds",
+        "native result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "energy/validate"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 366,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 563,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "energy/validate"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_hacs",
+      "source": "src/ha_mcp/tools/tools_hacs.py",
+      "tags": [
+        "HACS"
+      ],
+      "beta": false,
+      "family": "platform-extensions",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Supervisor availability",
+        "optional integration APIs",
+        "external-content hints"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 56,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 134,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 402,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 836,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 458,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 550,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 643,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 678,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_pipeline",
+      "source": "src/ha_mcp/tools/tools_assist_pipeline.py",
+      "tags": [
+        "Assist"
+      ],
+      "beta": false,
+      "family": "assist",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "pipeline lifecycle",
+        "native exposure helpers",
+        "anonymous Assist identity policy"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "assist_pipeline/pipeline/get",
+        "assist_pipeline/pipeline/list",
+        "assist_pipeline/pipeline/set_preferred"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 95,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 443,
+          "call": "self._client._request",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_radio",
+      "source": "src/ha_mcp/tools/tools_radio.py",
+      "tags": [
+        "Matter",
+        "Radio Management",
+        "Thread",
+        "Z-Wave",
+        "Zigbee"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/get"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 61,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_security_policy",
+      "source": "src/ha_mcp/tools/tools_security_policy.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "policy",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "shared policy engine",
+        "dynamic tool metadata",
+        "policy persistence"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_manage_theme",
+      "source": "src/ha_mcp/tools/tools_themes.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "frontend/get_themes"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 174,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "frontend/get_themes"
+          ]
+        },
+        {
+          "line": 344,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_manage_updates",
+      "source": "src/ha_mcp/tools/tools_updates.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "repairs/ignore_issue",
+        "repairs/list_issues",
+        "update/release_notes"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 167,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 241,
+          "call": "client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 477,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 766,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 857,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "repairs/list_issues"
+          ]
+        },
+        {
+          "line": 173,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 325,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 377,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 436,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 644,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "update/release_notes"
+          ]
+        },
+        {
+          "line": 914,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "repairs/ignore_issue"
+          ]
+        },
+        {
+          "line": 791,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_read_file",
+      "source": "src/ha_mcp/tools/tools_filesystem.py",
+      "tags": [
+        "Files",
+        "beta"
+      ],
+      "beta": true,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 180,
+          "call": "client.get_services",
+          "wire_literals": []
+        },
+        {
+          "line": 275,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 381,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 391,
+          "call": "client.call_service",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_reload_core",
+      "source": "src/ha_mcp/tools/tools_system.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "config_entries/get",
+        "ha_mcp_tools/system_snapshot"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 405,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 1184,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1291,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1373,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1427,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1529,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1918,
+          "call": "self._client.check_config",
+          "wire_literals": []
+        },
+        {
+          "line": 320,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 360,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1241,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1359,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1490,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1633,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1634,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 1637,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_area_or_floor",
+      "source": "src/ha_mcp/tools/tools_areas.py",
+      "tags": [
+        "Areas & Floors"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/floor_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 108,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 109,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/floor_registry/list"
+          ]
+        },
+        {
+          "line": 285,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 705,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 600,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_device",
+      "source": "src/ha_mcp/tools/tools_registry.py",
+      "tags": [
+        "Device Registry"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/list",
+        "config/device_registry/remove_config_entry",
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 224,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 240,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 259,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/list"
+          ]
+        },
+        {
+          "line": 332,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 717,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 618,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/remove_config_entry"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_entity",
+      "source": "src/ha_mcp/tools/tools_entities.py",
+      "tags": [
+        "Entity Registry"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/get_entries",
+        "config/entity_registry/list",
+        "config/entity_registry/remove",
+        "config/entity_registry/update",
+        "ha_mcp_tools/entity_enrich",
+        "homeassistant/expose_entity"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 155,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 407,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 418,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 700,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 821,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1322,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1396,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 535,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 597,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 664,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 782,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1099,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "homeassistant/expose_entity"
+          ]
+        },
+        {
+          "line": 2083,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/remove"
+          ]
+        },
+        {
+          "line": 1353,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get_entries"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_helpers_integrations",
+      "source": "src/ha_mcp/tools/tools_integrations.py",
+      "tags": [
+        "Helper Entities",
+        "Integrations"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/get",
+        "ha_mcp_tools/config_entries",
+        "knx/get_knx_project"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 342,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1126,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "knx/get_knx_project"
+          ]
+        },
+        {
+          "line": 1419,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 2913,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 2941,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2735,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_todo_item",
+      "source": "src/ha_mcp/tools/tools_todo.py",
+      "tags": [
+        "Todo Lists"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "todo/item/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 128,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 355,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 409,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 562,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 81,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_remove_zone",
+      "source": "src/ha_mcp/tools/tools_zones.py",
+      "tags": [
+        "Zones"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "ha_mcp_tools/helpers_list",
+        "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
+        "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
+        "zone/delete",
+        "zone/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 296,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 324,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 379,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 426,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 353,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 728,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_report_issue",
+      "source": "src/ha_mcp/tools/tools_bug_report.py",
+      "tags": [
+        "Utilities"
+      ],
+      "beta": false,
+      "family": "issue-reporting",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "redaction and diagnostic aggregation",
+        "external publication gate"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config_entries/get"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 541,
+          "call": "client.get_error_log",
+          "wire_literals": []
+        },
+        {
+          "line": 501,
+          "call": "http_client.get",
+          "wire_literals": []
+        },
+        {
+          "line": 689,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 741,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        },
+        {
+          "line": 792,
+          "call": "self._client.get_config",
+          "wire_literals": []
+        },
+        {
+          "line": 810,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_restart",
+      "source": "src/ha_mcp/tools/tools_system.py",
+      "tags": [
+        "System"
+      ],
+      "beta": false,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "config_entries/get",
+        "ha_mcp_tools/system_snapshot"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 405,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 1184,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1291,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1373,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1427,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1529,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1918,
+          "call": "self._client.check_config",
+          "wire_literals": []
+        },
+        {
+          "line": 320,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 360,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 1241,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1359,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1490,
+          "call": "ws_client.send_command",
+          "wire_literals": []
+        },
+        {
+          "line": 1633,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 1634,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 1637,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config_entries/get"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_search",
+      "source": "src/ha_mcp/tools/tools_search.py",
+      "tags": [
+        "Search & Discovery"
+      ],
+      "beta": false,
+      "family": "discovery",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "aggregate native reads",
+        "visibility policy",
+        "bounded result serialization"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": []
+    },
+    {
+      "name": "ha_set_area_or_floor",
+      "source": "src/ha_mcp/tools/tools_areas.py",
+      "tags": [
+        "Areas & Floors"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/area_registry/list",
+        "config/floor_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 108,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 109,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/floor_registry/list"
+          ]
+        },
+        {
+          "line": 285,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/area_registry/list"
+          ]
+        },
+        {
+          "line": 705,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 600,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_set_device",
+      "source": "src/ha_mcp/tools/tools_registry.py",
+      "tags": [
+        "Device Registry"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/list",
+        "config/device_registry/remove_config_entry",
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 224,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 240,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 259,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/list"
+          ]
+        },
+        {
+          "line": 332,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 717,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 618,
+          "call": "client.send_websocket_message",
+          "wire_literals": [
+            "config/device_registry/remove_config_entry"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_set_entity",
+      "source": "src/ha_mcp/tools/tools_entities.py",
+      "tags": [
+        "Entity Registry"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/device_registry/update",
+        "config/entity_registry/get",
+        "config/entity_registry/get_entries",
+        "config/entity_registry/list",
+        "config/entity_registry/remove",
+        "config/entity_registry/update",
+        "ha_mcp_tools/entity_enrich",
+        "homeassistant/expose_entity"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 155,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 407,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 418,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 700,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 821,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1322,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1396,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 535,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 597,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 664,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 782,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 1099,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "homeassistant/expose_entity"
+          ]
+        },
+        {
+          "line": 2083,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/remove"
+          ]
+        },
+        {
+          "line": 1353,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get_entries"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_set_integration",
+      "source": "src/ha_mcp/tools/tools_integrations.py",
+      "tags": [
+        "Integrations"
+      ],
+      "beta": false,
+      "family": "helpers-and-flows",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "live collection or flow owner",
+        "multi-step flow lifecycle",
+        "created entity readback"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/get",
+        "ha_mcp_tools/config_entries",
+        "knx/get_knx_project"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 342,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 1126,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "knx/get_knx_project"
+          ]
+        },
+        {
+          "line": 1419,
+          "call": "self._client._request",
+          "wire_literals": []
+        },
+        {
+          "line": 2913,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/get"
+          ]
+        },
+        {
+          "line": 2941,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 2735,
+          "call": "client.send_websocket_message",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_set_todo_item",
+      "source": "src/ha_mcp/tools/tools_todo.py",
+      "tags": [
+        "Todo Lists"
+      ],
+      "beta": false,
+      "family": "collections",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "native calendar/todo entity methods",
+        "date/time serialization",
+        "stable item IDs"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "todo/item/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 128,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": []
+        },
+        {
+          "line": 355,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 409,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 562,
+          "call": "self._client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 81,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        }
+      ]
+    },
+    {
+      "name": "ha_set_zone",
+      "source": "src/ha_mcp/tools/tools_zones.py",
+      "tags": [
+        "Zones"
+      ],
+      "beta": false,
+      "family": "registries",
+      "migration_risk": "medium",
+      "risk_reasons": [
+        "Core registry owner",
+        "rename cascade",
+        "write permissions and attribution"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [
+        "config/entity_registry/list",
+        "ha_mcp_tools/helpers_list",
+        "ha_mcp_tools/helpers_list (zone) connection error; fell back to legacy: %r",
+        "ha_mcp_tools/helpers_list (zone) failed; fell back to legacy: %r",
+        "zone/delete",
+        "zone/list"
+      ],
+      "client_call_candidates": [
+        {
+          "line": 296,
+          "call": "get_websocket_client",
+          "wire_literals": []
+        },
+        {
+          "line": 324,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 379,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "config/entity_registry/list"
+          ]
+        },
+        {
+          "line": 426,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/list"
+          ]
+        },
+        {
+          "line": 353,
+          "call": "self._client.get_states",
+          "wire_literals": []
+        },
+        {
+          "line": 728,
+          "call": "self._client.send_websocket_message",
+          "wire_literals": [
+            "zone/delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ha_write_file",
+      "source": "src/ha_mcp/tools/tools_filesystem.py",
+      "tags": [
+        "Files",
+        "beta"
+      ],
+      "beta": true,
+      "family": "system-and-platform",
+      "migration_risk": "high",
+      "risk_reasons": [
+        "Core vs Supervisor availability",
+        "restart/disconnection outcome",
+        "native response contracts"
+      ],
+      "native_status": "not_verified",
+      "evidence": [],
+      "boundary_scope": "containing module; includes sibling tools and excludes unresolved transitive calls",
+      "operation_candidates": [],
+      "client_call_candidates": [
+        {
+          "line": 180,
+          "call": "client.get_services",
+          "wire_literals": []
+        },
+        {
+          "line": 275,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 381,
+          "call": "client.call_service",
+          "wire_literals": []
+        },
+        {
+          "line": 391,
+          "call": "client.call_service",
+          "wire_literals": []
+        }
+      ]
+    }
+  ],
+  "existing_core_seams": [
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/bulk.py",
+      "functions": [
+        {
+          "name": "_do_bulk_call_service",
+          "line": 30,
+          "async": false
+        },
+        {
+          "name": "_bulk_call_service_prep",
+          "line": 45,
+          "async": true
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/call_service.py",
+      "functions": [
+        {
+          "name": "_do_call_service",
+          "line": 23,
+          "async": false
+        },
+        {
+          "name": "_call_service_prep",
+          "line": 40,
+          "async": true
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/config_entries.py",
+      "functions": [
+        {
+          "name": "_do_config_entries",
+          "line": 23,
+          "async": false
+        },
+        {
+          "name": "_config_entries_prep",
+          "line": 102,
+          "async": true
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/dashboards.py",
+      "functions": [
+        {
+          "name": "_do_dashboards",
+          "line": 52,
+          "async": false
+        },
+        {
+          "name": "_dashboards_prep",
+          "line": 124,
+          "async": true
+        },
+        {
+          "name": "_dashboard_edit_prep",
+          "line": 731,
+          "async": true
+        },
+        {
+          "name": "_do_dashboard_edit",
+          "line": 739,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/logbook.py",
+      "functions": [
+        {
+          "name": "_logbook_events_prep",
+          "line": 80,
+          "async": true
+        },
+        {
+          "name": "_do_logbook_events",
+          "line": 138,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/lookups.py",
+      "functions": [
+        {
+          "name": "_do_blueprint_get",
+          "line": 40,
+          "async": false
+        },
+        {
+          "name": "_blueprint_get_prep",
+          "line": 73,
+          "async": true
+        },
+        {
+          "name": "_do_device_get",
+          "line": 184,
+          "async": false
+        },
+        {
+          "name": "_do_device_list",
+          "line": 231,
+          "async": false
+        },
+        {
+          "name": "_do_entity_enrich",
+          "line": 295,
+          "async": false
+        },
+        {
+          "name": "_do_exposure",
+          "line": 325,
+          "async": false
+        },
+        {
+          "name": "_do_registry_lookup",
+          "line": 481,
+          "async": false
+        },
+        {
+          "name": "_do_entity_lookup",
+          "line": 554,
+          "async": false
+        }
+      ],
+      "wire_literals": [
+        "ha_mcp_tools/registry_lookup requires a non-empty entity_ids or config_entry_id"
+      ]
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/oauth_callbacks.py",
+      "functions": [
+        {
+          "name": "_do_oauth_callbacks",
+          "line": 75,
+          "async": false
+        },
+        {
+          "name": "_do_oauth_callbacks_update",
+          "line": 81,
+          "async": false
+        },
+        {
+          "name": "_oauth_callbacks_update_prep",
+          "line": 88,
+          "async": true
+        },
+        {
+          "name": "command_specs",
+          "line": 123,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/overview.py",
+      "functions": [
+        {
+          "name": "_do_helpers_list",
+          "line": 48,
+          "async": false
+        },
+        {
+          "name": "_helpers_list_prep",
+          "line": 111,
+          "async": true
+        },
+        {
+          "name": "_do_overview",
+          "line": 238,
+          "async": false
+        },
+        {
+          "name": "_do_states",
+          "line": 512,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/registries.py",
+      "functions": [
+        {
+          "name": "_do_registries",
+          "line": 23,
+          "async": false
+        }
+      ],
+      "wire_literals": [
+        "ha_mcp_tools/registries: category_scopes is required when 'category' is requested"
+      ]
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/search.py",
+      "functions": [
+        {
+          "name": "_do_search",
+          "line": 56,
+          "async": false
+        },
+        {
+          "name": "_search_prep",
+          "line": 310,
+          "async": true
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/services.py",
+      "functions": [
+        {
+          "name": "_do_services_list",
+          "line": 22,
+          "async": false
+        },
+        {
+          "name": "_services_list_prep",
+          "line": 67,
+          "async": true
+        },
+        {
+          "name": "_do_reference_data",
+          "line": 159,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/websocket_api/system.py",
+      "functions": [
+        {
+          "name": "_template_diagnose_prep",
+          "line": 47,
+          "async": true
+        },
+        {
+          "name": "_do_template_diagnose",
+          "line": 62,
+          "async": false
+        },
+        {
+          "name": "_do_info",
+          "line": 72,
+          "async": false
+        },
+        {
+          "name": "_do_system_snapshot",
+          "line": 156,
+          "async": false
+        },
+        {
+          "name": "_do_backup_prep",
+          "line": 227,
+          "async": false
+        },
+        {
+          "name": "_do_server_entry",
+          "line": 351,
+          "async": false
+        },
+        {
+          "name": "_do_server_entry_update",
+          "line": 382,
+          "async": false
+        },
+        {
+          "name": "_server_entry_update_prep",
+          "line": 397,
+          "async": true
+        }
+      ],
+      "wire_literals": []
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/helper_collections.py",
+      "functions": [
+        {
+          "name": "command_specs",
+          "line": 310,
+          "async": false
+        },
+        {
+          "name": "write_prep",
+          "line": 330,
+          "async": true
+        }
+      ],
+      "wire_literals": [
+        "ha_mcp_tools/helper_item",
+        "ha_mcp_tools/helper_schemas",
+        "ha_mcp_tools/helper_write"
+      ]
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/core_contract.py",
+      "functions": [
+        {
+          "name": "command_specs",
+          "line": 132,
+          "async": false
+        },
+        {
+          "name": "units_prep",
+          "line": 147,
+          "async": true
+        }
+      ],
+      "wire_literals": [
+        "ha_mcp_tools/core_contract",
+        "ha_mcp_tools/statistics_units"
+      ]
+    },
+    {
+      "path": "custom_components/ha_mcp_tools/dashboard_cards_ws.py",
+      "functions": [
+        {
+          "name": "command_specs",
+          "line": 79,
+          "async": false
+        }
+      ],
+      "wire_literals": []
+    }
+  ]
+}

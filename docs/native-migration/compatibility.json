@@ -1,0 +1,68 @@
+{
+  "format_version": 1,
+  "baseline_revision": "2dc504fd97d8416f87b6ea7f2fd8ce0332615956",
+  "scope": "migration preservation targets; not implementation evidence",
+  "integration": {
+    "domain": "ha_mcp_tools",
+    "entry_type_key": "entry_type",
+    "entry_types": ["tools", "server"],
+    "missing_entry_type": "tools",
+    "unique_ids": {"tools": "ha_mcp_tools", "server": "ha_mcp_tools-server"},
+    "preserve_entry_ids": true,
+    "shared_commands_both_entries": true,
+    "privileged_services_tools_entry_only": true
+  },
+  "llm": {
+    "full_api_id": "ha_mcp_tools-{entry_id}",
+    "toolsearch_api_id": "ha_mcp_tools-{entry_id}-toolsearch",
+    "exposure_values": ["full", "tool_search", "both"],
+    "own_api_import": "refuse to prevent recursion",
+    "anonymous_admin": false
+  },
+  "http": {
+    "mcp": "/api/webhook/{webhook_id}",
+    "readonly_mcp": "/api/webhook/{webhook_id}/readonly",
+    "protected_resource_metadata": "/.well-known/oauth-protected-resource/api/webhook/{webhook_id}",
+    "readonly_protected_resource_metadata": "/.well-known/oauth-protected-resource/api/webhook/{webhook_id}/readonly",
+    "authorization_server_metadata": "/api/ha_mcp_tools/oauth/authorization-server",
+    "authorize": "/api/ha_mcp_tools/oauth/authorize",
+    "token": "/api/ha_mcp_tools/oauth/token",
+    "revoke": "/api/ha_mcp_tools/oauth/revoke",
+    "register": "/api/ha_mcp_tools/oauth/register",
+    "legacy_root_aliases": ["/authorize", "/token"],
+    "fixed_metadata_publishing_webhook_id": false,
+    "preserve_cloudhook_registration": true
+  },
+  "authentication": {
+    "modes": ["none", "ha_auth", "legacy"],
+    "preserve_persisted_data_keys": ["webhook_id", "secret_path", "oauth_client_id", "oauth_client_secret", "oauth_signing_key", "dcr_signing_key", "server_user_id", "refresh_token_id", "admin_token", "issued_token_id"],
+    "preserve_redirect_allowlist_option": "oauth_redirect_allowlist",
+    "core_refresh_envelope_prefix": "hamcp-rt-",
+    "none": "webhook URL is the sole credential; OAuth compatibility bearers are cosmetic",
+    "ha_auth": "Core-issued Bearer, active human administrator; Core refresh/revocation remains authoritative",
+    "legacy": "persisted static client credential and signing key; administrator-equivalent single tenant",
+    "native_execution": "no internally generated access token required; revalidate principal/owner and authorize explicitly"
+  },
+  "retired_tool_aliases": {
+    "ha_get_addon": "ha_get_app",
+    "ha_manage_addon": "ha_manage_app",
+    "ha_get_blueprint": "ha_manage_blueprints",
+    "ha_import_blueprint": "ha_manage_blueprints"
+  },
+  "conditional_surfaces": [
+    {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
+    {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},
+    {"name": "ha_call_read_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search read proxy"},
+    {"name": "ha_call_write_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search write proxy"},
+    {"name": "ha_call_delete_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search delete proxy"},
+    {"name": "skill://...", "owner": "src/ha_mcp/server.py", "kind": "bundled SkillsDirectoryProvider resources and supporting files"},
+    {"name": "FastMCP code-mode transforms", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "conditional discovery/execution transform"}
+  ],
+  "explicit_exceptions": [
+    {"surface": "direct server_port/secret_path URL", "native_compatibility": "requires client URL migration when HA listens on another port; cannot retain exact URL with HA as the sole HTTP listener"},
+    {"surface": "enable_webhook=False", "native_compatibility": "must not silently enable public webhook; preserve legacy runtime or migrate to an explicitly local/authenticated HA route"},
+    {"surface": "ha_call_service.ws_command", "native_compatibility": "bounded semantic map only; unknown operations fail before side effects; remote backend retains transport capability"},
+    {"surface": "ha_manage_custom_tool api_get/api_post/ws_send", "native_compatibility": "bounded semantic map only; preserve saved code; call_tool is the portable route"},
+    {"surface": "caller attribution", "native_compatibility": "Core Context identifies the native actor rather than necessarily the historical server account; explicit authorization remains required"}
+  ]
+}
