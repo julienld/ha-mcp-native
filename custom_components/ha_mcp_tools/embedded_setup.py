@@ -592,7 +592,7 @@ def _read_min_component_version() -> str | None:
     server layouts that do not expose the constant by returning None (skip).
     """
     try:
-        from ha_mcp.tools.tools_filesystem import MIN_COMPONENT_VERSION
+        from ha_mcp.component_contract import MIN_COMPONENT_VERSION
     except (ImportError, AttributeError):
         return None
     return str(MIN_COMPONENT_VERSION)
