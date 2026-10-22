@@ -1,6 +1,9 @@
 """Run Monty with explicit external capabilities, without a transport context."""
 
+import asyncio
 from typing import Any
+
+from ha_mcp.utils.owned_executor import await_owned_io
 
 
 async def run_sandboxed_code(
@@ -21,7 +24,9 @@ async def run_sandboxed_code(
     See ``_SandboxBridge`` for the error shape contract these external
     functions share.
     """
-    m = Monty(code, script_name="ha_manage_custom_tool.py")
+    m = await await_owned_io(
+        asyncio.to_thread(Monty, code, script_name="ha_manage_custom_tool.py")
+    )
     run_kwargs: dict[str, Any] = {
         "external_functions": external_functions,
         "limits": ResourceLimits(

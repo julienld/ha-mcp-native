@@ -90,7 +90,7 @@ class NativeCode:
             return None
 
         async def invoke(arguments: dict[str, Any], actor: CallContext) -> Any:
-            return await self.manager.backend.execute("code.run", arguments, actor)
+            return await self.run(arguments, actor)
 
         return define_tool(
             self.manager.backend,
@@ -118,16 +118,32 @@ class NativeCode:
         async with self.lock:
             if actor is not None:
                 await self.manager.refresh_policy()
-                await self.manager.backend.authorize(actor)
-                check_mutation_admission(actor)
+                await self._authorize(actor, writes=True)
             # Hold the registry lock until issued I/O actually ends, including
             # when stop cancels the operation's waiter.
             return await await_owned_io(
                 self.manager.settings_ui._io(getattr(self.registry, method), *args)
             )
 
-    async def run(self, arguments: dict[str, Any], actor: CallContext) -> ToolResult:
+    async def _authorize(self, actor: CallContext, *, writes: bool = False) -> None:
         await self.manager.backend.authorize(actor)
+        if not self.manager.policy.flag(
+            "enable_beta_features"
+        ) or not self.manager.policy.flag("enable_code_mode"):
+            raise ToolFailure(
+                "FEATURE_DISABLED", "Native code mode is disabled", status="not_started"
+            )
+        if writes:
+            check_mutation_admission(actor)
+            if actor.read_only or self.manager.policy.read_only:
+                raise ToolFailure(
+                    "READ_ONLY",
+                    "Saved-script mutations are disabled",
+                    status="not_started",
+                )
+
+    async def run(self, arguments: dict[str, Any], actor: CallContext) -> ToolResult:
+        await self._authorize(actor)
         if self.registry is None:
             raise UnsupportedOperation("code.run")
         bridge = _NativeBridge(self, actor)
@@ -175,6 +191,33 @@ class NativeCode:
             run_code=run_code,
         )
         response = await session.ha_manage_custom_tool(**arguments)
+        registry_changed = bridge.registry_changed or bool(
+            response.get("data", {}).get("saved_as")
+        )
+        try:
+            await self._authorize(actor)
+        except (PermissionError, ToolFailure) as failure:
+            code = (
+                failure.code if isinstance(failure, ToolFailure) else "AUTH_FORBIDDEN"
+            )
+            changed = registry_changed or any(
+                item["status"] not in {"not_started", "pending"}
+                for item in bridge.outcomes
+            )
+            raise ToolFailure(
+                code,
+                "Code results were withheld because the caller or code-mode authority changed; inspect prior operations before retrying.",
+                data={
+                    "success": False,
+                    "error": {
+                        "code": code,
+                        "message": "Code results withheld after authority changed",
+                    },
+                    "saved_registry_changed": registry_changed,
+                    "operations": bridge.outcomes,
+                },
+                status="outcome_unknown" if changed else "not_started",
+            ) from failure
         if bridge.outcomes:
             response["data"]["operations"] = bridge.outcomes
         uncertain = any(item["status"] == "outcome_unknown" for item in bridge.outcomes)
@@ -190,6 +233,7 @@ class _NativeBridge:
         self.owner, self.actor = owner, actor
         self.count = 0
         self.outcomes: list[dict[str, Any]] = []
+        self.registry_changed = False
 
     def _limit(self) -> dict[str, Any] | None:
         from ha_mcp.errors import ErrorCode
@@ -237,7 +281,7 @@ class _NativeBridge:
     async def delete_saved_tool(self, name: Any) -> dict[str, Any]:
         if error := self._limit():
             return error
-        return cast(
+        result = cast(
             dict[str, Any],
             await self.owner._registry_call(
                 "delete",
@@ -246,3 +290,5 @@ class _NativeBridge:
                 actor=self.actor,
             ),
         )
+        self.registry_changed |= bool(result.get("deleted"))
+        return result

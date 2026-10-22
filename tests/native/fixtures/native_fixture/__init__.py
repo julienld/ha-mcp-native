@@ -185,6 +185,10 @@ class FixtureView(HomeAssistantView):
     def _configuration_observation(
         self, request: web.Request, operation: str
     ) -> web.Response | None:
+        if operation == "code_probe":
+            from .code_support import code_probe
+
+            return web.json_response(code_probe(self.hass, request["hass_user"].id))
         if operation == "file_probe":
             from .file_support import file_probe
 

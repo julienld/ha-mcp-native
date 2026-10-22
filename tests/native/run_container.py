@@ -21,6 +21,7 @@ from blueprint_source import blueprint_source
 from bulk_checks import exercise_bulk
 from calendar_checks import exercise_calendars
 from camera_checks import exercise_camera
+from code_checks import exercise_code_mode
 from configuration_checks import (
     exercise_configuration,
     exercise_flow_helpers,
@@ -141,6 +142,8 @@ class Checks:
         self.results: list[str] = []
 
     def passed(self, name: str) -> None:
+        if name in self.results:
+            return
         self.results.append(name)
         (OUT / "evidence.json").write_text(
             json.dumps({"complete": False, "checks": self.results}, indent=2) + "\n",
@@ -427,6 +430,7 @@ async def exercise_domain_tools(checks: Checks) -> None:
     await exercise_screenshots(checks, BASE)
     await exercise_hacs_absence(checks)
     await exercise_apps(checks)
+    await exercise_code_mode(checks, BASE)
     await exercise_logs(checks)
     await exercise_themes(checks)
     await exercise_health(checks)
