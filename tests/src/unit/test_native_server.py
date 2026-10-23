@@ -157,7 +157,7 @@ async def test_cancelled_stop_waiter_does_not_cancel_cleanup() -> None:
     await draining.wait()
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        _ = await waiter
     assert not runtime._cleanup_task.cancelled()
     finish.set()
     await runtime.async_stop()

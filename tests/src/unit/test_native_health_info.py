@@ -123,7 +123,7 @@ async def test_health_cancellation_does_not_cancel_shared_core_discovery(
 
     async def registered(_hass: Any) -> Any:
         started.set()
-        await discovery
+        _ = await discovery
         yield "core", {"info": {"ok": True}}
 
     health.owner._registered_domain_data = registered

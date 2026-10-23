@@ -98,3 +98,14 @@ _SNAPSHOT_SERVICE_ACTIONS: dict[tuple[str, str], str] = {
     ("hassio", "restore_full"): "restore",
     ("hassio", "restore_partial"): "restore",
 }
+
+
+__all__ = [
+    "_COMPONENT_RESPONSE_UNCONFIRMED_WARNING",
+    "_NON_ENVELOPE_WARNING",
+    "_NON_STATE_CHANGING_DOMAINS",
+    "_SERVICE_TO_STATE",
+    "_SNAPSHOT_SERVICE_ACTIONS",
+    "_STATE_CHANGING_SERVICES",
+    "is_single_entity_target",
+]

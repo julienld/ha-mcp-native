@@ -16,7 +16,6 @@ from ...errors import ErrorCode, create_error_response
 from ..helpers import exception_to_structured_error, raise_tool_error
 from .base import ws_call
 
-_validate = legacy_errors_sync(_values._validate)
 _no_raw_value = legacy_errors_sync(_values._no_raw_value)
 
 
@@ -91,3 +90,8 @@ async def read(client: Any, action: str, args: dict[str, Any]) -> dict[str, Any]
         RemoteParameters(client), action, args
     )
     return result
+
+
+__all__ = [
+    "read",
+]

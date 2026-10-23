@@ -104,3 +104,8 @@ async def _absence_reason(client: Any, entity_id: str) -> FlowLookupReason:
             raise
         state = None
     return "not_registry_managed" if state else "not_in_registry"
+
+
+__all__ = [
+    "_raise_platform_mismatch",
+]

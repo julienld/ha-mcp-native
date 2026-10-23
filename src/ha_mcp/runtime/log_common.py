@@ -195,3 +195,8 @@ def _validate_log_slug(source: str, slug: str | None) -> None:
                 ],
             )
         )
+
+
+__all__ = [
+    "_LOG_LEVEL_RE",
+]

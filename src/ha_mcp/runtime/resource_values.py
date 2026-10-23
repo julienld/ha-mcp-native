@@ -513,3 +513,9 @@ def resource_list_result(
         if resource_mode == "yaml":
             response["note"] = _YAML_MODE_MESSAGE
     return response
+
+
+__all__ = [
+    "_RESOURCE_TYPE",
+    "resource_list_result",
+]

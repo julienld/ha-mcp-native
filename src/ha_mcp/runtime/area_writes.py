@@ -125,7 +125,7 @@ class AreaWriteTools(AreaConfigTools):
             try:
                 parsed_aliases = parse_string_list_param(aliases, "aliases")
             except ValueError as e:
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.VALIDATION_INVALID_PARAMETER,
                         f"Invalid aliases parameter: {e}",
@@ -135,7 +135,7 @@ class AreaWriteTools(AreaConfigTools):
             try:
                 parsed_labels = parse_string_list_param(labels, "labels")
             except ValueError as e:
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.VALIDATION_INVALID_PARAMETER,
                         f"Invalid labels parameter: {e}",
@@ -227,7 +227,7 @@ class AreaWriteTools(AreaConfigTools):
                 ctx["name"] = name
             if id:
                 ctx[id_key] = id
-            raise_failure(
+            return raise_failure(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     f"Failed to {operation} {kind}: {error_msg}",
@@ -248,7 +248,7 @@ class AreaWriteTools(AreaConfigTools):
                 suggestions.append(
                     "If assigning labels, verify label IDs with ha_config_get_label()"
                 )
-            self._map_area_write_error(
+            return self._map_area_write_error(
                 e,
                 context={"operation": operation, "kind": kind, "name": name, "id": id},
                 suggestions=suggestions,
@@ -309,7 +309,7 @@ class AreaWriteTools(AreaConfigTools):
                 if isinstance(error, dict)
                 else str(error)
             )
-            raise_failure(
+            return raise_failure(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     f"Failed to remove {kind}: {error_msg}",
@@ -334,7 +334,7 @@ class AreaWriteTools(AreaConfigTools):
                 ) from error
             raise
         except Exception as e:  # noqa: BLE001
-            self._map_area_write_error(
+            return self._map_area_write_error(
                 e,
                 context={"kind": kind, id_key: id},
                 suggestions=[

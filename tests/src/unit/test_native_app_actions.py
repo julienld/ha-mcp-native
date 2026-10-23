@@ -230,5 +230,5 @@ async def test_double_cancel_keeps_app_lock_until_provider_finishes(
     finally:
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await first
-        await second
+            _ = await first
+        _ = await second

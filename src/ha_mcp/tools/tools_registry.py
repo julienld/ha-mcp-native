@@ -16,19 +16,7 @@ from ha_mcp._vendor.fastmcp.tools import tool
 from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..backends.legacy_devices import LegacyDevices
 from ..errors import ErrorCode, create_error_response
-from ..runtime.device_records import _add_integration_hints as _add_integration_hints
-from ..runtime.device_records import _build_entity_maps as _build_entity_maps
-from ..runtime.device_records import _classify_integration as _classify_integration
-from ..runtime.device_records import _device_config_entries as _device_config_entries
-from ..runtime.device_records import _extract_zigbee_info as _extract_zigbee_info
-from ..runtime.device_records import _filter_devices as _filter_devices
-from ..runtime.device_records import (
-    _first_ieee_from_connections as _first_ieee_from_connections,
-)
-from ..runtime.device_records import _get_device_info as _get_device_info
-from ..runtime.device_records import _list_devices_result as _list_devices_result
-from ..runtime.device_records import _matches_integration as _matches_integration
-from ..runtime.device_records import _process_device_domain as _process_device_domain
+from ..runtime.device_records import _build_entity_maps, _get_device_info
 from ..runtime.device_tools import Devices, DeviceWriteTools
 from ..runtime.devices import DeviceDiscoveryTools
 from ..utils.device_registry_semantics import (
@@ -376,3 +364,9 @@ class RegistryTools(LegacyBackendTools, DeviceDiscoveryTools, LegacyDevices):
 def register_registry_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register device registry management tools."""
     register_tool_methods(mcp, RegistryTools(client))
+
+
+__all__ = [
+    "RegistryTools",
+    "register_registry_tools",
+]

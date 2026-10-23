@@ -22,9 +22,6 @@ from ...runtime.registry_references import (
 from ...runtime.registry_references import (
     _raise_if_unknown_labels as _shared_raise_if_unknown_labels,
 )
-from ...runtime.registry_references import (
-    _registry_id_values as _shared_registry_id_values,
-)
 from ...utils.registry_update_lock import registry_update_lock
 from ..component_registry_lookup import fetch_entities_for_config_entry_via_component
 from ..config_write_helpers import apply_entity_category
@@ -33,7 +30,6 @@ from .schemas import SIMPLE_HELPER_TYPES, _simple_helper_error_context
 
 logger = logging.getLogger(__name__)
 
-_registry_id_values = legacy_errors_sync(_shared_registry_id_values)
 _raise_if_unknown_labels = legacy_errors_sync(_shared_raise_if_unknown_labels)
 _raise_if_unknown_area = legacy_errors_sync(_shared_raise_if_unknown_area)
 _raise_if_unknown_category = legacy_errors_sync(_shared_raise_if_unknown_category)
@@ -684,3 +680,8 @@ async def _apply_registry_updates_to_entity(
     )
     _process_cat_apply_result(cat_result, entity_id, applied, warnings)
     return applied
+
+
+__all__ = [
+    "validate_registry_ids",
+]

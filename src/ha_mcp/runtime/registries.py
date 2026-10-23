@@ -236,4 +236,4 @@ class AreaDiscoveryTools(BackendTools):
                 f"Error listing floors and areas in phase {progress['phase']!r}: {e} "
                 f"(progress={progress})"
             )
-            self._raise_list_error(e, progress)
+            return self._raise_list_error(e, progress)

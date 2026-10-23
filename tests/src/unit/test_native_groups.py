@@ -352,7 +352,7 @@ async def test_two_cancellations_keep_the_group_lock_until_core_drains(groups):
     kept_lock = not second.done() and world.calls.count("create") == 1
     world.create_release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert kept_lock and result["success"]
     assert (

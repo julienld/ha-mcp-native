@@ -182,7 +182,7 @@ async def test_disconnect_preserves_exactly_one_owned_write() -> None:
     await started.wait()
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        _ = await waiter
     assert len(engine.tasks) == 1
     finish.set()
     await engine.stop()
@@ -252,7 +252,7 @@ async def test_cap_prevents_unbounded_owned_work() -> None:
     with pytest.raises(ToolFailure, match="Too many"):
         await engine.call("work", {}, ACTOR)
     finish.set()
-    await waiter
+    _ = await waiter
     await engine.stop()
 
 
@@ -279,7 +279,7 @@ async def test_failed_drain_keeps_owner_and_can_be_retried() -> None:
     with pytest.raises(ToolFailure, match="stopping"):
         await engine.call("work", {}, ACTOR)
     finish.set()
-    await waiter
+    _ = await waiter
     await engine.stop()
     assert not engine.tasks
 

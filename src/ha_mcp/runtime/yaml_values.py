@@ -93,3 +93,9 @@ def _append_yaml_result_warnings(
             "this configuration is deliberately YAML-managed "
             "(e.g. git-tracked packages)."
         )
+
+
+__all__ = [
+    "_YAML_PACKAGES_FLAG_BY_KEY",
+    "_YAML_SKILL_FILES",
+]

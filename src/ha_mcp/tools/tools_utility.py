@@ -13,24 +13,8 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 from ha_mcp.backends.legacy import legacy_errors_sync
 from ha_mcp.runtime.template_results import (
-    CONDITION_ERROR_SUGGESTIONS as CONDITION_ERROR_SUGGESTIONS,
-)
-from ha_mcp.runtime.template_results import (
-    HA_RENDER_TIMEOUT_TEXT as HA_RENDER_TIMEOUT_TEXT,
-)
-from ha_mcp.runtime.template_results import (
-    TEMPLATE_ERROR_SUGGESTIONS as TEMPLATE_ERROR_SUGGESTIONS,
-)
-from ha_mcp.runtime.template_results import (
-    TEMPLATE_TIMEOUT_SUGGESTIONS as TEMPLATE_TIMEOUT_SUGGESTIONS,
-)
-from ha_mcp.runtime.template_results import (
-    _command_error_message as _command_error_message,
-)
-from ha_mcp.runtime.template_results import (
-    _render_outcome as _render_outcome,
-)
-from ha_mcp.runtime.template_results import (
+    HA_RENDER_TIMEOUT_TEXT,
+    _command_error_message,
     condition_failure,
     condition_result,
     render_success,
@@ -241,3 +225,9 @@ class LegacyTemplateTools(TemplateTools):
         tags={"Utilities"},
         annotations=read_only_hints("Evaluate Template", open_world=False),
     )(log_tool_usage(TemplateTools.ha_eval_template))
+
+
+__all__ = [
+    "UtilityTools",
+    "register_utility_tools",
+]

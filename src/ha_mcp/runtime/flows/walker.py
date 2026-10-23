@@ -20,34 +20,14 @@ from .menu import (
     _handle_menu_step,
 )
 from .submission import (
-    _RECONFIGURE_SUCCESS_REASONS as _RECONFIGURE_SUCCESS_REASONS,
-)
-from .submission import (
-    _UNDRIVABLE_STEP_TYPES as _UNDRIVABLE_STEP_TYPES,
-)
-from .submission import (
-    POST_COMMIT_STATUSES as POST_COMMIT_STATUSES,
-)
-from .submission import (
-    ReconfigureStatus as ReconfigureStatus,
-)
-from .submission import (
-    _build_flow_error_context as _build_flow_error_context,
-)
-from .submission import (
-    _parse_flow_api_error as _parse_flow_api_error,
-)
-from .submission import (
-    _raise_flow_api_error as _raise_flow_api_error,
-)
-from .submission import (
-    _raise_reconfigure_no_answer as _raise_reconfigure_no_answer,
-)
-from .submission import (
-    _submit_step as _submit_step,
-)
-from .submission import (
-    logger as logger,
+    _RECONFIGURE_SUCCESS_REASONS,
+    _UNDRIVABLE_STEP_TYPES,
+    POST_COMMIT_STATUSES,
+    ReconfigureStatus,
+    _parse_flow_api_error,
+    _raise_flow_api_error,
+    _submit_step,
+    logger,
 )
 
 
@@ -762,7 +742,7 @@ async def _handle_config_subentry_flow_steps(
             continue
 
         if result_type in {"progress", "progress_done"}:
-            raise_tool_error(
+            return raise_tool_error(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     "Config subentry flow requires an asynchronous progress step",
@@ -774,7 +754,7 @@ async def _handle_config_subentry_flow_steps(
                 )
             )
 
-        raise_tool_error(
+        return raise_tool_error(
             create_error_response(
                 ErrorCode.INTERNAL_UNEXPECTED,
                 f"Unexpected config subentry flow result type: {result_type}",
@@ -782,7 +762,7 @@ async def _handle_config_subentry_flow_steps(
             )
         )
 
-    raise_tool_error(
+    return raise_tool_error(
         create_error_response(
             ErrorCode.TIMEOUT_OPERATION,
             f"Config subentry flow exceeded {max_steps} steps",
@@ -805,3 +785,6 @@ async def _handle_config_subentry_flow_steps(
             },
         )
     )
+
+
+__all__ = ["POST_COMMIT_STATUSES", "_parse_flow_api_error", "_raise_flow_api_error"]

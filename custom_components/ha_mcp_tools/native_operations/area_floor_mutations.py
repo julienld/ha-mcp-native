@@ -115,7 +115,7 @@ async def _mutate(
             else None,
         }
     except Exception as error:  # noqa: BLE001 - callback/save/listener may already have mutated
-        registry_outcome_unknown(domain, action, error)
+        return registry_outcome_unknown(domain, action, error)
 
 
 async def area_read(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:

@@ -11,7 +11,7 @@ from typing import Any, Literal, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -21,9 +21,9 @@ from ..client.rest_client import (
 from ..errors import ErrorCode, create_error_response
 from ..runtime.config_reads import ScriptReadTools
 from ..runtime.config_removals import ScriptRemovalTools
-from ..runtime.script_config import ScriptConfigTools
 from ..runtime.script_config import (
-    _strip_empty_script_fields as _strip_empty_script_fields,
+    ScriptConfigTools,
+    _strip_empty_script_fields,
 )
 from ..runtime.script_writes import ScriptWriteTools
 from ..utils.python_sandbox import safe_execute
@@ -72,14 +72,16 @@ def _skip_script_run_backup(kwargs: dict[str, Any]) -> bool:
     return kwargs.get("run") is not None
 
 
-class ConfigScriptTools(ScriptWriteTools):
+class ConfigScriptTools(LegacyBackendTools, ScriptWriteTools):
     async def _transform_config(self, expression: str, config: dict[str, Any]) -> Any:
         return safe_execute(expression, config)
 
     """Script configuration management tools for Home Assistant."""
 
+    _client: HomeAssistantClient
+
     def __init__(self, client: HomeAssistantClient) -> None:
-        self._client = client
+        super().__init__(client)
 
     ha_config_get_script = tool(
         name="ha_config_get_script",
@@ -378,3 +380,11 @@ class ConfigScriptTools(ScriptWriteTools):
 def register_config_script_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant script configuration tools."""
     register_tool_methods(mcp, ConfigScriptTools(client))
+
+
+__all__ = [
+    "ConfigScriptTools",
+    "_SCRIPT_SKILL_FILES",
+    "_strip_empty_script_fields",
+    "register_config_script_tools",
+]

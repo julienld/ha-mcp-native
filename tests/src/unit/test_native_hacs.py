@@ -419,7 +419,7 @@ async def test_double_cancel_drains_hacs_write_before_releasing_mutex(hacs):
     )
     hacs.repo.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert (
         held

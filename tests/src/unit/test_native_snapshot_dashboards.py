@@ -198,7 +198,7 @@ async def test_dashboard_restore_reports_divergent_body_without_updating_setting
         await asyncio.sleep(0)
         owner.release.set()
         with pytest.raises(BackupRestoreError) as error:
-            await restore
+            _ = await restore
     finally:
         owner.release.set()
         await asyncio.gather(
@@ -242,7 +242,7 @@ async def test_dashboard_clear_restore_verifies_absence_before_writing_metadata(
         await owner.async_save({"views": [{"title": "Concurrent"}]})
         release.set()
         with pytest.raises(BackupRestoreError) as error:
-            await task
+            _ = await task
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)

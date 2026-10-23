@@ -14,7 +14,7 @@ from typing import Any, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..backends.legacy_config_errors import raise_legacy_classified
 from ..errors import ErrorCode, create_error_response
 from ..runtime.category_writes import CategoryWriteTools
@@ -31,11 +31,11 @@ from .tool_hints import read_only_hints, write_hints
 logger = logging.getLogger(__name__)
 
 
-class CategoryTools(CategoryWriteTools):
+class CategoryTools(LegacyBackendTools, CategoryWriteTools):
     """Category management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _category_change(
         self, action: str, data: dict[str, Any]

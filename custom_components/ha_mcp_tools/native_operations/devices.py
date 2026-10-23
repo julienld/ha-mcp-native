@@ -163,7 +163,7 @@ class NativeDevices:
                 row = commit_device_update(registry, device, validated)
                 return row, warnings
             except Exception as error:  # noqa: BLE001 - owner/listeners/serializer may fail after mutation
-                registry_outcome_unknown("device", "update", error)
+                return registry_outcome_unknown("device", "update", error)
 
     async def remove(self, device_id: str) -> dict[str, Any]:
         try:
@@ -261,7 +261,7 @@ class NativeDevices:
             )
             return accepted
         except Exception as error:  # noqa: BLE001 - the integration callback has started
-            registry_outcome_unknown("device", "remove", error)
+            return registry_outcome_unknown("device", "remove", error)
 
     async def _dispatch_remove(
         self,

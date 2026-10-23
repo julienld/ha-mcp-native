@@ -9,14 +9,16 @@ def test_importing_shared_package_does_not_import_remote_stack() -> None:
         [
             sys.executable,
             "-c",
-            "import sys, ha_mcp, ha_mcp.tools.coercion; "
-            "assert 'ha_mcp.client.rest_client' not in sys.modules; "
-            "assert 'ha_mcp.server' not in sys.modules; "
-            "assert 'ha_mcp.auth' not in sys.modules; "
-            "assert 'ha_mcp.tools.device_control' not in sys.modules; "
-            "assert 'Settings' in dir(ha_mcp); "
-            "from ha_mcp import Settings; "
-            "assert Settings.__name__ == 'Settings'",
+            """
+import sys, ha_mcp, ha_mcp.tools.coercion
+assert 'ha_mcp.client.rest_client' not in sys.modules
+assert 'ha_mcp.server' not in sys.modules
+assert 'ha_mcp.auth' not in sys.modules
+assert 'ha_mcp.tools.device_control' not in sys.modules
+assert 'Settings' in dir(ha_mcp)
+from ha_mcp import Settings
+assert Settings.__name__ == 'Settings'
+""",
         ],
         capture_output=True,
         text=True,

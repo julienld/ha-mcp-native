@@ -2,45 +2,20 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from ..blueprint_files import _read_blueprint_file as _read_blueprint_file
-from ..core_device_reads import (
-    _device_entities as _device_entities,
-)
-from ..core_device_reads import (
-    _entries_for_device as _entries_for_device,
-)
+from ..blueprint_files import _read_blueprint_file
 from ..core_device_reads import (
     device_get,
     device_list,
 )
 from ..core_entity_reads import (
-    _all_exposable_entity_ids as _all_exposable_entity_ids,
-)
-from ..core_entity_reads import (
-    _entity_exposed_to as _entity_exposed_to,
-)
-from ..core_entity_reads import (
-    _exposure_enrichment as _exposure_enrichment,
-)
-from ..core_entity_reads import (
-    _legacy_exposed_entity_ids as _legacy_exposed_entity_ids,
-)
-from ..core_entity_reads import (
-    _registry_lookup_missing_target as _registry_lookup_missing_target,
-)
-from ..core_entity_reads import (
-    enrich_entities as enrich_entities,
-)
-from ..core_entity_reads import (
-    entity_exposure as entity_exposure,
-)
-from ..core_entity_reads import (
-    registry_lookup as registry_lookup,
+    _legacy_exposed_entity_ids,
+    enrich_entities,
+    entity_exposure,
+    registry_lookup,
 )
 from .registry import (
     _all_entity_entries,
@@ -52,7 +27,6 @@ from .registry import (
 
 # All ws_* modules log through the websocket_api logger, so one logger
 # setting covers the whole command surface.
-_LOGGER = logging.getLogger(__package__)
 
 
 # =============================================================================
@@ -203,3 +177,9 @@ def _do_device_get(hass: HomeAssistant, params: dict[str, Any]) -> dict[str, Any
 
 def _do_device_list(hass: HomeAssistant, params: dict[str, Any]) -> dict[str, Any]:
     return device_list(hass)
+
+
+__all__ = [
+    "_legacy_exposed_entity_ids",
+    "_read_blueprint_file",
+]

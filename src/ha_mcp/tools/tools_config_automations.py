@@ -11,7 +11,7 @@ from typing import Any, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -21,31 +21,16 @@ from ..errors import (
     ErrorCode,
     create_error_response,
 )
-from ..runtime.automation_config import AutomationConfigMethods
 from ..runtime.automation_config import (
-    _action_contains_scene_create as _action_contains_scene_create,
-)
-from ..runtime.automation_config import (
-    _detect_conflicting_root_keys as _detect_conflicting_root_keys,
-)
-from ..runtime.automation_config import (
-    _scene_create_in_choose as _scene_create_in_choose,
-)
-from ..runtime.automation_config import (
-    _strip_redundant_identifier_echo as _strip_redundant_identifier_echo,
-)
-from ..runtime.automation_config import (
-    _validate_automation_identifier as _validate_identifier,
+    AutomationConfigMethods,
+    _detect_conflicting_root_keys,
+    _strip_redundant_identifier_echo,
 )
 from ..runtime.automation_writes import AutomationWriteTools
 from ..runtime.config_normalize import (
-    _normalize_automation_config as _normalize_automation_config,
-)
-from ..runtime.config_normalize import (
-    _normalize_config_for_roundtrip as _normalize_config_for_roundtrip,
-)
-from ..runtime.config_normalize import (
-    _normalize_trigger_keys as _normalize_trigger_keys,
+    _normalize_automation_config,
+    _normalize_config_for_roundtrip,
+    _normalize_trigger_keys,
 )
 from ..runtime.config_reads import AutomationReadTools
 from ..runtime.config_removals import AutomationRemovalTools
@@ -82,7 +67,6 @@ from .ws_waiters import (
 )
 
 logger = logging.getLogger(__name__)
-_validate_automation_identifier = legacy_errors_sync(_validate_identifier)
 
 
 # Skill files attached to ha_config_set_automation responses when
@@ -162,7 +146,6 @@ async def _resolve_runtime_target(
 
 # Standalone runtime calls raise on a service failure; after a config write the
 # same failure is a partial-success warning because the write already landed.
-_STANDALONE_RUNTIME_ACTIONS = ("set_enabled", "run_actions")
 
 
 async def _set_automation_enabled(client: Any, entity_id: str, enabled: bool) -> Any:
@@ -171,11 +154,11 @@ async def _set_automation_enabled(client: Any, entity_id: str, enabled: bool) ->
     return await client.call_service("automation", service, {"entity_id": entity_id})
 
 
-class AutomationConfigTools(AutomationWriteTools):
+class AutomationConfigTools(LegacyBackendTools, AutomationWriteTools):
     """Configuration management tools for Home Assistant automations."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _transform_config(self, expression: str, config: dict[str, Any]) -> Any:
         return safe_execute(expression, config)
@@ -574,3 +557,15 @@ class AutomationConfigTools(AutomationWriteTools):
 def register_config_automation_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant automation configuration tools."""
     register_tool_methods(mcp, AutomationConfigTools(client))
+
+
+__all__ = [
+    "AutomationConfigTools",
+    "_AUTOMATION_SKILL_FILES",
+    "_detect_conflicting_root_keys",
+    "_normalize_automation_config",
+    "_normalize_config_for_roundtrip",
+    "_normalize_trigger_keys",
+    "_strip_redundant_identifier_echo",
+    "register_config_automation_tools",
+]

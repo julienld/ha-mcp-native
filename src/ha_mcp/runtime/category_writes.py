@@ -118,7 +118,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
             else:
                 error_str = str(result.get("error", "")).lower()
                 if "not found" in error_str or "doesn't exist" in error_str:
-                    raise_failure(
+                    return raise_failure(
                         create_error_response(
                             ErrorCode.RESOURCE_NOT_FOUND,
                             f"Category not found: {category_id}",
@@ -132,7 +132,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
                             ],
                         )
                     )
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.SERVICE_CALL_FAILED,
                         f"Failed to {action} category: {result.get('error', 'Unknown error')}",
@@ -147,7 +147,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
         except ToolFailure:
             raise
         except Exception as e:  # noqa: BLE001
-            self._map_category_write_error(
+            return self._map_category_write_error(
                 e,
                 context={"name": name, "scope": scope, "category_id": category_id},
                 suggestions=[
@@ -216,7 +216,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
             else:
                 error_str = str(result.get("error", "")).lower()
                 if "not found" in error_str or "doesn't exist" in error_str:
-                    raise_failure(
+                    return raise_failure(
                         create_error_response(
                             ErrorCode.RESOURCE_NOT_FOUND,
                             f"Category not found: {category_id}",
@@ -226,7 +226,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
                             ],
                         )
                     )
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.SERVICE_CALL_FAILED,
                         f"Failed to delete category: {result.get('error', 'Unknown error')}",
@@ -237,7 +237,7 @@ class CategoryWriteTools(CategoryDiscoveryTools, RegistryWriteContext):
         except ToolFailure:
             raise
         except Exception as e:  # noqa: BLE001
-            self._map_category_write_error(
+            return self._map_category_write_error(
                 e,
                 context={"category_id": category_id, "scope": scope},
                 suggestions=[

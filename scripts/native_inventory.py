@@ -528,7 +528,7 @@ def build_inventory() -> dict[str, Any]:
 
 
 async def _capture_registered_tools() -> list[dict[str, Any]]:
-    import ha_mcp.tools as tools_package
+    from ha_mcp import tools as tools_package
     from ha_mcp._vendor.fastmcp import FastMCP
     from ha_mcp.tools import registry
 

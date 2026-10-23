@@ -162,7 +162,7 @@ class LegacyBlueprints:
         """Return a required parameter, or raise VALIDATION_MISSING_PARAMETER."""
         if value:
             return value
-        raise_tool_error(
+        return raise_tool_error(
             create_error_response(
                 ErrorCode.VALIDATION_MISSING_PARAMETER,
                 f"'{name}' is required for action='{action}'.",

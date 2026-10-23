@@ -14,7 +14,7 @@ from typing import Any, Literal, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -30,7 +30,6 @@ from ..runtime.config_removals import SceneRemovalTools
 from ..runtime.errors import raise_classified
 from ..runtime.scene_config import SceneConfigTools
 from ..runtime.scene_writes import SceneWriteTools
-from ..runtime.scene_writes import _activate_once_reloaded as _activate_once_reloaded
 from ..tool_api import ToolFailure
 from ..utils.python_sandbox import (
     safe_execute,
@@ -87,11 +86,13 @@ def _skip_scene_activation_backup(kwargs: dict[str, Any]) -> bool:
     )
 
 
-class ConfigSceneTools(SceneWriteTools):
+class ConfigSceneTools(LegacyBackendTools, SceneWriteTools):
     """Scene configuration management tools for Home Assistant."""
 
+    _client: HomeAssistantClient
+
     def __init__(self, client: HomeAssistantClient) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _fetch_category(
         self, entity_id: str, scope: str, warnings: list[str]
@@ -485,3 +486,10 @@ class ConfigSceneTools(SceneWriteTools):
 def register_config_scene_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant scene configuration tools."""
     register_tool_methods(mcp, ConfigSceneTools(client))
+
+
+__all__ = [
+    "ConfigSceneTools",
+    "_SCENE_SKILL_FILES",
+    "register_config_scene_tools",
+]

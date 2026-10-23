@@ -15,7 +15,7 @@ from typing import Any
 
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..backends.legacy_registry_errors import raise_entity_read_error
 from ..client.rest_client import (
     HomeAssistantCommandError,
@@ -23,9 +23,7 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
-from ..runtime.exposure import _EXPOSURE_ENRICHMENT_KEYS as _EXPOSURE_ENRICHMENT_KEYS
-from ..runtime.exposure import KNOWN_ASSISTANTS as KNOWN_ASSISTANTS
-from ..runtime.exposure import ExposureTools
+from ..runtime.exposure import KNOWN_ASSISTANTS, ExposureTools
 from .component_api import (
     DEVICE_REGISTRY_CHILD_SEMANTICS,
     component_supports,
@@ -56,11 +54,11 @@ WS_EXPOSURE = "ha_mcp_tools/exposure"
 # legacy keys (exposed_to / is_exposed_anywhere / has_custom_settings / note).
 
 
-class VoiceAssistantTools(ExposureTools):
+class VoiceAssistantTools(LegacyBackendTools, ExposureTools):
     """Voice assistant exposure query tools."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _fetch_exposure_via_component(
         self, entity_id: str | None
@@ -154,3 +152,10 @@ class VoiceAssistantTools(ExposureTools):
 def register_voice_assistant_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register voice assistant exposure query tools."""
     register_tool_methods(mcp, VoiceAssistantTools(client))
+
+
+__all__ = [
+    "KNOWN_ASSISTANTS",
+    "VoiceAssistantTools",
+    "register_voice_assistant_tools",
+]

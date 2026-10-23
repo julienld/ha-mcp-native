@@ -13,7 +13,7 @@ __version__ = get_version()
 __author__ = "Julien"
 __license__ = "MIT"
 
-from functools import partial
+from typing import Any
 
 from ._lazy_exports import resolve_export
 from .errors import (
@@ -42,7 +42,8 @@ _LAZY_EXPORTS = {
 }
 
 
-__getattr__ = partial(resolve_export, __name__, globals(), _LAZY_EXPORTS)
+def __getattr__(name: str) -> Any:
+    return resolve_export(__name__, globals(), _LAZY_EXPORTS, name)
 
 
 def __dir__() -> list[str]:

@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..config import get_global_settings
 from ..runtime.overview_tools import OverviewService, OverviewTools
 from ..runtime.overview_values import resolve_overview_request
@@ -38,11 +38,11 @@ from .search.state import StateMixin
 from .tool_hints import read_only_hints
 
 
-class SearchTools(ComponentSearchMixin, OverviewMixin, StateMixin):
+class SearchTools(LegacyBackendTools, ComponentSearchMixin, OverviewMixin, StateMixin):
     """Tool class providing search and entity discovery capabilities."""
 
     def __init__(self, client: Any, smart_tools: Any) -> None:
-        self._client = client
+        super().__init__(client)
         self._smart_tools = smart_tools
 
     @property
@@ -74,7 +74,7 @@ class SearchTools(ComponentSearchMixin, OverviewMixin, StateMixin):
             try:
                 ctx = get_context()
             except RuntimeError:
-                pass
+                ctx = None
         req = resolve_search_request(
             {
                 "query": query,

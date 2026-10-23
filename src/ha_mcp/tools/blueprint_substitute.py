@@ -3,12 +3,10 @@
 from typing import Any, cast
 
 from ..backends.legacy import legacy_errors, legacy_errors_sync
-from ..runtime.blueprint_substitute import TakenControl as TakenControl
-from ..runtime.blueprint_substitute import _blueprint_reference as _blueprint_reference
+from ..runtime.blueprint_substitute import TakenControl, rendered_blueprint
 from ..runtime.blueprint_substitute import (
     raise_substitute_failure as _raise_substitute_failure,
 )
-from ..runtime.blueprint_substitute import rendered_blueprint
 from ..runtime.blueprint_substitute import take_control_config as _take_control_config
 from ..runtime.blueprint_substitute import validate_write_modes as _validate_write_modes
 
@@ -41,3 +39,10 @@ async def take_control_config(
         )
 
     return await _take_control_config(render, domain, identifier, current_config)
+
+
+__all__ = [
+    "TakenControl",
+    "substitute_blueprint",
+    "take_control_config",
+]

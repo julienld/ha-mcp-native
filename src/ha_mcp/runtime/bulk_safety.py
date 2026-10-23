@@ -343,3 +343,9 @@ def _attach_resolution_to_response(
     response["resolution"] = summary
     if resolution_warnings:
         response.setdefault("warnings", []).extend(resolution_warnings)
+
+
+__all__ = [
+    "_INFRASTRUCTURE_ERROR_SUGGESTIONS",
+    "reject_group_member_conflicts",
+]

@@ -9,9 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 from ._vendor.websockets.exceptions import WebSocketException
-from .runtime.snapshot_entity_restore import (
-    _recreated_unique_id as _recreated_unique_id,
-)
 from .utils.registry_update_lock import registry_update_lock
 
 
@@ -105,3 +102,11 @@ async def _restore_entity_ids(
     return await restore(
         RemoteSnapshotFlowPorts(client), entry_id, original_entry_id, saved_rows
     )
+
+
+__all__ = [
+    "registry_row",
+    "restore_registry_icon",
+    "update_with_registry_icon",
+    "with_registry_icon",
+]

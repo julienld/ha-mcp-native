@@ -273,7 +273,7 @@ async def test_double_client_cancel_drains_worker_before_releasing_mutex(pipelin
     )
     pipelines.owner.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert kept_lock and result["success"] and len(pipelines.owner.calls) == 2
 

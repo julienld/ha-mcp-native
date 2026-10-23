@@ -216,5 +216,5 @@ async def test_cancellation_drains_core_finish_before_releasing_backup_lock(
     finally:
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await first
-        await second
+            _ = await first
+        _ = await second

@@ -90,7 +90,7 @@ async def _category_mutation(
             "result": serializer(entry) if action != "delete" else None,
         }
     except Exception as error:  # noqa: BLE001 - callback/save/listener may already have mutated
-        registry_outcome_unknown("category", action, error)
+        return registry_outcome_unknown("category", action, error)
 
 
 async def category_create(

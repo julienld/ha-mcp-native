@@ -276,7 +276,7 @@ async def test_double_cancel_keeps_radio_mutex_until_owned_driver_call_drains(ma
     )
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert (
         kept

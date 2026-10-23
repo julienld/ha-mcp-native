@@ -610,4 +610,4 @@ class LegacyLabels:
         except ToolError:
             raise
         except Exception as error:  # noqa: BLE001 - legacy classifier preserves public failures
-            self._raise_read_error(error, {"label_id": label_id})
+            return self._raise_read_error(error, {"label_id": label_id})

@@ -181,7 +181,7 @@ class NativeFlows:
                 "Invalid flow specified", status_code=404
             ) from error
         except Exception as error:  # noqa: BLE001 - dispatch has already occurred
-            _unknown_flow_outcome(error)
+            return _unknown_flow_outcome(error)
 
     async def _start(
         self, arguments: dict[str, Any], context: CallContext
@@ -297,7 +297,7 @@ class NativeFlows:
         except UnknownStep as error:
             raise HomeAssistantAPIError(str(error), status_code=400) from error
         except Exception as error:  # noqa: BLE001 - dispatch has already occurred
-            _unknown_flow_outcome(error)
+            return _unknown_flow_outcome(error)
 
     def _result(self, result: dict[str, Any], owned: OwnedFlow) -> dict[str, Any]:
         flow_id = result.get("flow_id")
@@ -317,7 +317,7 @@ class NativeFlows:
         try:
             return _prepare_flow_result(self.hass, owned.kind, result)
         except Exception as error:  # noqa: BLE001 - dispatch has already occurred
-            _unknown_flow_outcome(error)
+            return _unknown_flow_outcome(error)
 
     def _abort(self, flow_id: str, owned: OwnedFlow) -> None:
         from homeassistant.data_entry_flow import UnknownFlow

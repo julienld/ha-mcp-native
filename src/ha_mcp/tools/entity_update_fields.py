@@ -9,7 +9,6 @@ from ha_mcp.backends.legacy import legacy_errors_sync
 from ha_mcp.runtime import entity_fields as _fields
 
 from ..errors import ErrorCode, create_error_response
-from ..runtime.entity_records import uses_device_name as uses_device_name
 from .helpers import raise_tool_error
 
 # Home Assistant release that reads an empty entity-name override as "use the
@@ -79,3 +78,8 @@ reject_name_with_use_device_name = legacy_errors_sync(
 reject_use_device_name_without_device = legacy_errors_sync(
     _fields.reject_use_device_name_without_device
 )
+
+
+__all__ = [
+    "ensure_use_device_name_allowed",
+]

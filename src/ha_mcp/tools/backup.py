@@ -1214,9 +1214,6 @@ async def list_backups(client: HomeAssistantClient, limit: int = 200) -> dict[st
 _refuse_snapshot_delete = legacy_errors_sync(_backup_values._refuse_snapshot_delete)
 
 
-_newest_backup_id = _backup_values._newest_backup_id
-
-
 async def delete_backup(
     client: HomeAssistantClient,
     backup_id: str,

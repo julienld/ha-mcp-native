@@ -12,12 +12,10 @@ from typing import Any, Literal, NoReturn, overload
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp.backends.legacy import legacy_errors_sync as _legacy_errors_sync
 from ha_mcp.runtime.error_text import (
-    extract_structured_error_reason as extract_structured_error_reason,
+    extract_structured_error_reason,
+    extract_tool_error_message,
 )
-from ha_mcp.runtime.error_text import (
-    extract_tool_error_message as extract_tool_error_message,
-)
-from ha_mcp.runtime.errors import ws_failure_code as ws_failure_code
+from ha_mcp.runtime.errors import ws_failure_code
 from ha_mcp.runtime.validation import (
     reject_malformed_list_fields as _reject_malformed_list_fields,
 )
@@ -27,31 +25,9 @@ from ..errors import (
     ErrorCode,
     create_connection_error,
 )
-from ..runtime.error_classification import (
-    _ENVIRONMENT_CODES as _ENVIRONMENT_CODES,
-)
-from ..runtime.error_classification import (
-    _append_macos_hints as _append_macos_hints,
-)
-from ..runtime.error_classification import (
-    _classify_api_status as _classify_api_status,
-)
-from ..runtime.error_classification import (
-    _classify_by_message as _classify_by_message,
-)
-from ..runtime.error_classification import (
-    _classify_exception as _classify_exception,
-)
-from ..runtime.error_classification import (
-    _with_classified_suggestions as _with_classified_suggestions,
-)
 from ..runtime.error_classification import classified_error
-from ..runtime.validation import _QUOTE_ONLY as _QUOTE_ONLY
-from ..runtime.validation import WHITESPACE_CLEARS_NOTE as WHITESPACE_CLEARS_NOTE
-from ..runtime.validation import clear_hint as clear_hint
-from ..tool_api.parameters import HIDDEN_PARAM as HIDDEN_PARAM
-from ..tool_api.parameters import hidden_param_names as hidden_param_names
-from ..utils.tool_errors import raise_tool_error as raise_tool_error
+from ..tool_api.parameters import HIDDEN_PARAM, hidden_param_names
+from ..utils.tool_errors import raise_tool_error
 from ..utils.usage_logger import log_tool_call
 from .coercion import UNSET
 
@@ -319,3 +295,18 @@ def register_tool_methods(mcp: Any, instance: Any) -> None:
             count += 1
     if count == 0:
         logger.warning(f"No @tool-decorated methods found on {type(instance).__name__}")
+
+
+__all__ = [
+    "HIDDEN_PARAM",
+    "clearable_value",
+    "exception_to_structured_error",
+    "extract_structured_error_reason",
+    "extract_tool_error_message",
+    "get_connected_ws_client",
+    "log_tool_usage",
+    "register_tool_methods",
+    "safe_progress",
+    "validate_identifier_not_empty",
+    "ws_failure_code",
+]

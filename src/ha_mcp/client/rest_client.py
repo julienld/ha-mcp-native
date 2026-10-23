@@ -19,20 +19,12 @@ from ha_mcp.runtime import log_window as _log_window
 from .._vendor.websockets.exceptions import WebSocketException
 from .._version import get_supervisor_base_url, is_running_in_addon
 from ..config import get_global_settings
-from ..errors import (
-    NON_ADMIN_TOKEN_WARNING as NON_ADMIN_TOKEN_WARNING,
-)
-from ..errors import (
-    HomeAssistantAdminRequiredError as HomeAssistantAdminRequiredError,
-)
+from ..errors import NON_ADMIN_TOKEN_WARNING as NON_ADMIN_TOKEN_WARNING
+from ..errors import HomeAssistantAdminRequiredError as HomeAssistantAdminRequiredError
 from ..errors import HomeAssistantAPIError as HomeAssistantAPIError
 from ..errors import HomeAssistantAuthError as HomeAssistantAuthError
-from ..errors import (
-    HomeAssistantCommandError as HomeAssistantCommandError,
-)
-from ..errors import (
-    HomeAssistantCommandTimeout as HomeAssistantCommandTimeout,
-)
+from ..errors import HomeAssistantCommandError as HomeAssistantCommandError
+from ..errors import HomeAssistantCommandTimeout as HomeAssistantCommandTimeout
 from ..errors import HomeAssistantConnectionError as HomeAssistantConnectionError
 from ..errors import HomeAssistantError as HomeAssistantError
 from ..runtime.automation_identity import automation_write_body
@@ -75,7 +67,6 @@ _RETRYABLE_GATEWAY_STATUS = frozenset({502, 503, 504})
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _MAX_REQUEST_ATTEMPTS = 3
 MIN_LOG_WINDOW_LINES = _log_window.MIN_LOG_WINDOW_LINES
-_PROBE_ENTRIES = _log_window._PROBE_ENTRIES
 _ADMIN_ONLY_401_MESSAGE = (
     "Home Assistant returned 401 for an admin-only endpoint: "
     "the token is invalid or its user is not an administrator"

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -180,11 +181,9 @@ class NativeDeviceOperations:
     ) -> dict[str, Any]:
         entry = self._get(actor, identifier)
         if not entry.done.is_set() and timeout > 0:
-            try:
+            with suppress(TimeoutError):
                 async with asyncio.timeout(timeout):
                     await entry.done.wait()
-            except TimeoutError:
-                pass
         await authorize_actor(actor, authorize)
         if self._get(actor, identifier) is not entry:
             raise ToolFailure("RESOURCE_NOT_FOUND", "Operation expired while waiting.")

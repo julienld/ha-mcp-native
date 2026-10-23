@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any, cast
 
 from ha_mcp.backends.legacy import legacy_errors_sync
-from ha_mcp.runtime import dashboard_card_values as _shared
 from ha_mcp.runtime.dashboard_card_values import describe_card_result
 
 from ..client.websocket_client import get_websocket_client
@@ -64,6 +63,6 @@ async def describe_card_response(client: Any, card_type: str | None) -> dict[str
     )
 
 
-_flatten = legacy_errors_sync(_shared._flatten)
-_raise_describe_error = legacy_errors_sync(_shared._raise_describe_error)
-_no_fields_note = legacy_errors_sync(_shared._no_fields_note)
+__all__ = [
+    "describe_card_response",
+]

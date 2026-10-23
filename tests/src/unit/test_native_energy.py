@@ -249,7 +249,7 @@ async def test_cancelled_energy_waiter_keeps_the_mutex_until_core_callbacks_drai
     kept_lock = not second.done() and len(energy.owner.calls) == 1
     energy.owner.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert kept_lock and result["success"]
     assert energy.owner.data["device_consumption"] == [

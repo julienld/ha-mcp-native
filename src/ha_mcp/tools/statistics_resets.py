@@ -2,8 +2,6 @@
 
 from typing import Any
 
-from ha_mcp.runtime.statistics_resets import _replace_resets as _replace_resets
-from ha_mcp.runtime.statistics_resets import _reset_groups as _reset_groups
 from ha_mcp.runtime.statistics_resets import restore_reset_timestamps as _restore_resets
 
 
@@ -24,3 +22,8 @@ async def restore_reset_timestamps(
         return result
 
     return await _restore_resets(read, rows_by_id, metadata, query, resolved_units)
+
+
+__all__ = [
+    "restore_reset_timestamps",
+]

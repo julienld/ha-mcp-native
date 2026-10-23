@@ -295,7 +295,7 @@ class ScriptWriteTools(ScriptConfigTools):
                 )
 
             if config is None:
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.VALIDATION_INVALID_PARAMETER,
                         "Either config or python_transform must be provided",
@@ -345,7 +345,7 @@ class ScriptWriteTools(ScriptConfigTools):
         except ToolFailure as te:
             raise await self._augment_failure(te, bp_warnings) from None
         except Exception as error:  # noqa: BLE001 - facade-specific classification
-            await self._raise_script_write_error(error, script_id, bp_warnings)
+            return await self._raise_script_write_error(error, script_id, bp_warnings)
 
     async def _run_script_control(
         self,

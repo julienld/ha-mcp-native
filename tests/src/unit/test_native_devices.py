@@ -450,8 +450,8 @@ async def test_device_cancellation_keeps_registry_lock_until_integration_callbac
     assert not second_entered.is_set()
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
-    await second
+        _ = await task
+    _ = await second
     assert second_entered.is_set() and "main" in devices.rows
     assert (
         component.async_remove_config_entry_device.await_count == 1

@@ -216,7 +216,7 @@ async def test_calendar_cancellation_drains_the_dispatched_provider_call(
     assert not task.done()
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert finished.is_set()
 
 

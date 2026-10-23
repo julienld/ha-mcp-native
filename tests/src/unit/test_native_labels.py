@@ -407,7 +407,7 @@ async def test_native_label_cancellation_during_area_capture_does_not_dispatch_t
         await asyncio.wait_for(entered.wait(), 2)
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await pending
+            _ = await pending
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)

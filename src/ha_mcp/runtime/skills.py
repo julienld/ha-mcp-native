@@ -90,7 +90,7 @@ class SkillGuideMixin:
         try:
             return target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
-            self._guide_raise(
+            return self._guide_raise(
                 create_error_response(
                     ErrorCode.INTERNAL_ERROR,
                     message=f"Could not read file {file!r} in skill {skill!r}: {e}",

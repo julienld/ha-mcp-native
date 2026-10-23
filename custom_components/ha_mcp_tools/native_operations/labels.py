@@ -309,7 +309,7 @@ class NativeLabels:
                     raise ValueError("The Core label result has no matching identity")
                 return row, warnings, registry
             except Exception as error:  # noqa: BLE001 - save/listener/serializer can fail after mutation
-                registry_outcome_unknown("label", action, error)
+                return registry_outcome_unknown("label", action, error)
 
     @staticmethod
     def _partial(

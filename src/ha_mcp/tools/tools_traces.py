@@ -12,29 +12,11 @@ from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
-from ha_mcp.runtime.trace_results import _categorize_step_path as _categorize_step_path
-from ha_mcp.runtime.trace_results import _classify_trace_steps as _classify_trace_steps
 from ha_mcp.runtime.trace_results import (
-    _diagnostic_suggestion as _diagnostic_suggestion,
-)
-from ha_mcp.runtime.trace_results import (
-    _filter_trace_sections as _filter_trace_sections,
-)
-from ha_mcp.runtime.trace_results import (
-    _format_detailed_trace as _format_detailed_trace,
-)
-from ha_mcp.runtime.trace_results import _format_trace_list as _format_trace_list
-from ha_mcp.runtime.trace_results import (
-    _populate_action_trace as _populate_action_trace,
-)
-from ha_mcp.runtime.trace_results import (
-    _populate_condition_results as _populate_condition_results,
-)
-from ha_mcp.runtime.trace_results import (
-    _populate_trigger_info as _populate_trigger_info,
-)
-from ha_mcp.runtime.trace_results import (
-    _select_action_variables as _select_action_variables,
+    _diagnostic_suggestion,
+    _filter_trace_sections,
+    _format_detailed_trace,
+    _format_trace_list,
 )
 from ha_mcp.runtime.trace_results import trace_target as _pure_trace_target
 from ha_mcp.runtime.trace_tools import TraceFacade
@@ -429,3 +411,10 @@ async def _is_trace_storage_enabled(
     except Exception as e:  # noqa: BLE001
         logger.debug(f"Could not get automation config: {e}")
     return True
+
+
+__all__ = [
+    "TraceTools",
+    "_filter_trace_sections",
+    "register_trace_tools",
+]

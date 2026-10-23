@@ -1,6 +1,6 @@
 """Custom FastMCP transforms for ha-mcp."""
 
-from functools import partial
+from typing import Any
 
 from ha_mcp._lazy_exports import resolve_export
 
@@ -20,7 +20,11 @@ _LAZY_EXPORTS = {
         "ComponentSearchSchemaTransform",
     )
 }
-__getattr__ = partial(resolve_export, __name__, globals(), _LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    return resolve_export(__name__, globals(), _LAZY_EXPORTS, name)
+
 
 __all__ = [
     "Capability",

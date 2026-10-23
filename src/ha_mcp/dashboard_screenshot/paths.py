@@ -17,23 +17,9 @@ from ..tools.helpers import raise_tool_error
 
 DashboardRenderTarget = _routes.DashboardRenderTarget
 dashboard_frontend_path = legacy_errors_sync(_routes.dashboard_frontend_path)
-_configured_view_path = legacy_errors_sync(_routes._configured_view_path)
-_numeric_view_index = legacy_errors_sync(_routes._numeric_view_index)
-_view_path_requires_numeric_fallback = legacy_errors_sync(
-    _routes._view_path_requires_numeric_fallback
-)
-_numeric_fallback_suffix = legacy_errors_sync(_routes._numeric_fallback_suffix)
-_raw_frontend_view_match = legacy_errors_sync(_routes._raw_frontend_view_match)
-_render_path_metadata = legacy_errors_sync(_routes._render_path_metadata)
 dashboard_render_paths = legacy_errors_sync(_routes.dashboard_render_paths)
-_safe_named_render_path = legacy_errors_sync(_routes._safe_named_render_path)
-_fallback_view_target = legacy_errors_sync(_routes._fallback_view_target)
 match_dashboard_view = legacy_errors_sync(_routes.match_dashboard_view)
 resolve_dashboard_view = legacy_errors_sync(_routes.resolve_dashboard_view)
-_JS_DECIMAL_NUMBER = _routes._JS_DECIMAL_NUMBER
-_JS_RADIX_NUMBER = _routes._JS_RADIX_NUMBER
-_RESERVED_VIEW_PATHS = _routes._RESERVED_VIEW_PATHS
-_DECODE_URI_RESERVED_VIEW_CHARS = _routes._DECODE_URI_RESERVED_VIEW_CHARS
 
 
 _UNKNOWN_CONFIG_PREFIX = "Unknown config specified:"
@@ -146,7 +132,7 @@ async def resolve_dashboard_render_target(
                 payload.get("error"), dict
             ):
                 raise error
-            raise_failure(payload)
+            return raise_failure(payload)
 
     try:
         return await _screenshots.resolve_dashboard_render_target(
@@ -157,3 +143,8 @@ async def resolve_dashboard_render_target(
         )
     except ToolFailure as error:
         raise_tool_error(error.data)
+
+
+__all__ = [
+    "resolve_dashboard_render_target",
+]

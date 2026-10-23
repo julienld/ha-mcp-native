@@ -6,24 +6,13 @@ Storage-helper field values are validated by Home Assistant itself (see
 
 from typing import Any
 
-from ...backends.legacy import legacy_errors_sync
 from ...errors import ErrorCode, create_error_response
-from ...runtime.helper_params import (
-    _reject_storage_params_on_flow_helper as _shared_reject_storage_params_on_flow_helper,
-)
-from ...runtime.helper_params import (
-    _storage_helper_params as _storage_helper_params,
-)
 from ..helpers import (
     raise_tool_error,
     validate_identifier_not_empty,
 )
 from .flow import _flow_helper_error_context
 from .schemas import SIMPLE_HELPER_TYPES, _simple_helper_error_context
-
-_reject_storage_params_on_flow_helper = legacy_errors_sync(
-    _shared_reject_storage_params_on_flow_helper
-)
 
 
 async def _validate_set_helper_action(

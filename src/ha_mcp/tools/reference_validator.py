@@ -27,22 +27,12 @@ import asyncio
 import logging
 from typing import Any
 
-from ..runtime.config_reference_rules import _ENTITY_KEYS as _ENTITY_KEYS
-from ..runtime.config_reference_rules import _SERVICE_KEYS as _SERVICE_KEYS
-from ..runtime.config_reference_rules import ExtractedRef as ExtractedRef
-from ..runtime.config_reference_rules import ValidationWarning as ValidationWarning
-from ..runtime.config_reference_rules import WalkerResult as WalkerResult
 from ..runtime.config_reference_rules import (
-    _extract_entity_refs as _extract_entity_refs,
+    build_entity_set,
+    build_service_index,
+    check_refs,
+    extract_refs,
 )
-from ..runtime.config_reference_rules import (
-    _extract_service_ref as _extract_service_ref,
-)
-from ..runtime.config_reference_rules import _is_template as _is_template
-from ..runtime.config_reference_rules import build_entity_set as build_entity_set
-from ..runtime.config_reference_rules import build_service_index as build_service_index
-from ..runtime.config_reference_rules import check_refs as check_refs
-from ..runtime.config_reference_rules import extract_refs as extract_refs
 from .component_config_reads import fetch_reference_data_via_component
 
 logger = logging.getLogger(__name__)
@@ -127,3 +117,8 @@ async def validate_config_references(
         "unvalidated_templates": walker_result["unvalidated_templates"],
         "blueprint_skipped": False,
     }
+
+
+__all__ = [
+    "validate_config_references",
+]

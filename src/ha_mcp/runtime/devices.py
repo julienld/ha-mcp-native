@@ -30,7 +30,7 @@ class DeviceDiscoveryTools(BackendTools):
         )
         if device_id:
             return str(device_id)
-        raise_failure(
+        return raise_failure(
             create_error_response(
                 ErrorCode.ENTITY_NOT_FOUND,
                 f"Entity '{entity_id}' not found or has no associated device",

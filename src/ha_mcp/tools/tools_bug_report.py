@@ -28,41 +28,11 @@ from ..backends.legacy import legacy_errors
 from ..client.supervisor_client import make_supervisor_httpx_client
 from ..config import Settings, get_global_settings
 from ..errors import create_validation_error
-from ..runtime.report_environment import _detect_platform as _detect_platform
+from ..runtime.report_environment import _detect_platform
 from ..runtime.report_rendering import (
-    _AGENT_SIDE_TEMPLATES as _AGENT_SIDE_TEMPLATES,
-)
-from ..runtime.report_rendering import (
-    _ISSUE_TITLE_MAX_CHARS as _ISSUE_TITLE_MAX_CHARS,
-)
-from ..runtime.report_rendering import (
-    _TITLE_PREFIXES as _TITLE_PREFIXES,
-)
-from ..runtime.report_rendering import (
-    KNOWN_CLIENT_ISSUES_HINT as KNOWN_CLIENT_ISSUES_HINT,
-)
-from ..runtime.report_rendering import (
-    MISSING_TOOL_HINT as MISSING_TOOL_HINT,
-)
-from ..runtime.report_rendering import (
-    _build_formatted_report as _build_formatted_report,
-)
-from ..runtime.report_rendering import (
-    _format_logs_for_report as _format_logs_for_report,
-)
-from ..runtime.report_rendering import (
-    _format_startup_logs as _format_startup_logs,
-)
-from ..runtime.report_rendering import (
-    _format_websockets_dependency_value as _format_websockets_dependency_value,
-)
-from ..runtime.report_rendering import (
-    _generate_anonymization_guide as _generate_anonymization_guide,
-)
-from ..runtime.report_rendering import (
-    _issue_title as _issue_title,
-)
-from ..runtime.report_rendering import (
+    _format_logs_for_report,
+    _format_startup_logs,
+    _format_websockets_dependency_value,
     render_report,
 )
 from ..runtime.report_tools import ReportFacade
@@ -795,3 +765,12 @@ class BugReportTools(ReportFacade, LegacyBugReportTools):
 def register_bug_report_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register bug report tools with the MCP server."""
     register_tool_methods(mcp, BugReportTools(client))
+
+
+__all__ = [
+    "BugReportTools",
+    "_format_logs_for_report",
+    "_format_startup_logs",
+    "_format_websockets_dependency_value",
+    "register_bug_report_tools",
+]

@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..backends.legacy_entity_snapshots import (
     capture_entity_device,
     capture_entity_registry,
@@ -27,14 +27,7 @@ from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
 from ..runtime import entity_write_values as _write_values
 from ..runtime.entities import EntityDiscoveryTools
-from ..runtime.entity_records import _format_fetched_entity as _format_fetched_entity
-from ..runtime.entity_records import (
-    _match_registry_by_unique_id as _match_registry_by_unique_id,
-)
-from ..runtime.entity_records import (
-    _merge_entity_enrichment as _merge_entity_enrichment,
-)
-from ..runtime.entity_records import _parse_get_entity_ids as _parse_get_entity_ids
+from ..runtime.entity_records import _format_fetched_entity
 from ..runtime.entity_removal_tools import EntityRemovals, EntityRemovalTools
 from ..runtime.entity_write_tools import EntityWrites, EntityWriteTools
 from ..runtime.entity_write_values import apply_entity_rename
@@ -195,7 +188,7 @@ _validate_enabled_constraint = legacy_errors_sync(
 )
 
 
-class EntityTools(EntityDiscoveryTools):
+class EntityTools(LegacyBackendTools, EntityDiscoveryTools):
     """Entity registry tools: get, update, and remove entities."""
 
     @property
@@ -232,7 +225,7 @@ class EntityTools(EntityDiscoveryTools):
     )
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _get_entity_labels(
         self, entity_id: str
@@ -1426,3 +1419,10 @@ class EntityTools(EntityDiscoveryTools):
 def register_entity_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register entity management tools with the MCP server."""
     register_tool_methods(mcp, EntityTools(client))
+
+
+__all__ = [
+    "EntityTools",
+    "fetch_entity_enrichment_via_component",
+    "register_entity_tools",
+]

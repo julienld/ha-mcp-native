@@ -600,7 +600,7 @@ async def test_native_search_projects_detached_image_and_drains_repeated_cancell
     finally:
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
     assert completed.is_set()
 
 

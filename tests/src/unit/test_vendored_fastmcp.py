@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import ast
 import json
-import logging
 import subprocess
 import sys
 import tomllib
+from logging import Logger, getLogger
 from pathlib import Path
 
 import pytest
@@ -84,7 +84,7 @@ def test_loggers_keep_upstream_names():
 
     assert server.logger.name == "fastmcp.server.server"
     assert streamable_http.logger.name == "mcp.server.streamable_http"
-    assert isinstance(logging.getLogger("fastmcp.server.server"), logging.Logger)
+    assert isinstance(getLogger("fastmcp.server.server"), Logger)
 
 
 def test_private_mcp_logging_does_not_replace_home_assistant_rich():

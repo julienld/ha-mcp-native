@@ -9,7 +9,6 @@ from ..runtime.area_payloads import (
     build_floor_create_payload,
     build_floor_update_payload,
 )
-from ..runtime.area_payloads import resolve_clearable as resolve_clearable
 from ..runtime.area_payloads import (
     validate_cross_kind_params as _validate_cross_kind_params,
 )

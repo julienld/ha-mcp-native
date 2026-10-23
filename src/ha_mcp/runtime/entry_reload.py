@@ -175,3 +175,8 @@ async def _observe_reload_settled(
             # The reload is under way; keep reading for its outcome.
             continue
         return entry
+
+
+__all__ = [
+    "_ENTRY_SUBSCRIBE_TIMEOUT",
+]

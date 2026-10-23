@@ -120,8 +120,7 @@ class NativeReloadWatches:
             or row.domain != domain
             or row.actor != (actor.user_id, actor.client_id)
         ):
-            await hook
-            return
+            return await hook
         row.hook_task = asyncio.current_task()
         try:
             await hook

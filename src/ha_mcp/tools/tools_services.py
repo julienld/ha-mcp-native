@@ -10,7 +10,7 @@ from typing import Any
 
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors
+from ..backends.legacy import LegacyBackendTools, legacy_errors
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
@@ -20,30 +20,6 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import get_websocket_client
 from ..runtime.services import ServiceDiscoveryTools as SharedServiceDiscoveryTools
-from ..runtime.services import (
-    _attach_warnings as _attach_warnings,
-)
-from ..runtime.services import (
-    _build_service_entry as _build_service_entry,
-)
-from ..runtime.services import (
-    _get_entity_type as _get_entity_type,
-)
-from ..runtime.services import (
-    _get_field_type as _get_field_type,
-)
-from ..runtime.services import (
-    _get_number_type as _get_number_type,
-)
-from ..runtime.services import (
-    _get_select_type as _get_select_type,
-)
-from ..runtime.services import (
-    _process_service_fields as _process_service_fields,
-)
-from ..runtime.services import (
-    _process_services as _process_services,
-)
 from .component_api import (
     component_supports,
     get_component_caps,
@@ -64,11 +40,11 @@ logger = logging.getLogger(__name__)
 WS_SERVICES_LIST = "ha_mcp_tools/services_list"
 
 
-class ServiceDiscoveryTools(SharedServiceDiscoveryTools):
+class ServiceDiscoveryTools(LegacyBackendTools, SharedServiceDiscoveryTools):
     """Remote compatibility wrapper around the shared implementation."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     async def _fetch_catalog(
         self, domain: str | None, warnings: list[str]
@@ -227,3 +203,8 @@ async def _get_service_translations(
         if warnings is not None:
             warnings.append(f"service descriptions unavailable: {e}")
         return {}
+
+
+__all__ = [
+    "register_services_tools",
+]

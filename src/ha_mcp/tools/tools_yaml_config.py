@@ -25,19 +25,10 @@ from ..config import get_global_settings
 from ..errors import ErrorCode, create_error_response
 from ..runtime.yaml_tools import YamlConfigTools as YamlContractTools
 from ..runtime.yaml_values import (
-    _HELPER_EQUIVALENT_KEYS as _HELPER_EQUIVALENT_KEYS,
-)
-from ..runtime.yaml_values import (
-    _YAML_PACKAGES_FLAG_BY_KEY as _YAML_PACKAGES_FLAG_BY_KEY,
-)
-from ..runtime.yaml_values import (
-    _YAML_SKILL_FILES as _YAML_SKILL_FILES,
-)
-from ..runtime.yaml_values import (
-    _append_yaml_result_warnings as _append_yaml_result_warnings,
-)
-from ..runtime.yaml_values import (
-    _validate_yaml_action_and_content as _validate_yaml_action_and_content,
+    _YAML_PACKAGES_FLAG_BY_KEY,
+    _YAML_SKILL_FILES,
+    _append_yaml_result_warnings,
+    _validate_yaml_action_and_content,
 )
 from ..strict_bps import BestPracticeKeyParam
 from .auto_backup import with_auto_backup
@@ -376,3 +367,8 @@ def register_yaml_config_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         return
     logger.info("YAML config editing tools enabled")
     register_tool_methods(mcp, YamlConfigTools(client))
+
+
+__all__ = [
+    "register_yaml_config_tools",
+]

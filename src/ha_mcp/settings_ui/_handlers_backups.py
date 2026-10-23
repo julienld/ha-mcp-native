@@ -41,16 +41,8 @@ from ..config import (
     get_global_settings,
 )
 from ..config_backup_validation import (
-    _coerce_bool_field as _coerce_bool_field,
-)
-from ..config_backup_validation import (
-    _coerce_int_field as _coerce_int_field,
-)
-from ..config_backup_validation import (
-    _coerce_str_field as _coerce_str_field,
-)
-from ..config_backup_validation import (
-    _validate_backup_payload as _validate_backup_payload,
+    _coerce_int_field,
+    _validate_backup_payload,
 )
 from ..config_registry import SETTING_BOUNDS
 from ..errors import ErrorCode, create_error_response
@@ -555,3 +547,11 @@ def build_backups_handlers(
         "get_backup_config": get_backup_config,
         "save_backup_config": save_backup_config,
     }
+
+
+__all__ = [
+    "_coerce_int_field",
+    "apply_backup_config",
+    "backup_config_fields",
+    "build_backups_handlers",
+]

@@ -64,10 +64,8 @@ import yaml  # type: ignore[import-untyped]
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.websockets.exceptions import ConnectionClosed
 from ha_mcp.runtime.calendar_values import (
-    _calendar_bound as _calendar_bound,
-)
-from ha_mcp.runtime.calendar_values import (
-    _recurrence_id_window as _recurrence_id_window,
+    _calendar_bound,
+    _recurrence_id_window,
 )
 
 from .backends.legacy_flows import legacy_flow
@@ -85,9 +83,7 @@ from .backup_diff import (
     _build_text_diff_response,
 )
 from .backup_entity_ids import (
-    _restore_entity_ids as _restore_entity_ids,
-)
-from .backup_entity_ids import (
+    _restore_entity_ids,
     update_with_registry_icon,
     with_registry_icon,
 )
@@ -109,101 +105,42 @@ from .client.rest_client import (
 from .runtime import snapshot_flow_restore as _shared_flow_restore
 from .runtime.snapshot_compare import comparison_values, diff_snapshot_values
 from .runtime.snapshot_files import (
-    _FILENAME_RE as _FILENAME_RE,
-)
-from .runtime.snapshot_files import (
-    _MAX_SAME_SECOND as _MAX_SAME_SECOND,
-)
-from .runtime.snapshot_files import (
-    _SAFE_ID_RE as _SAFE_ID_RE,
-)
-from .runtime.snapshot_files import (
-    _TEXT_DOMAINS as _TEXT_DOMAINS,
-)
-from .runtime.snapshot_files import (
-    SCHEMA_VERSION as SCHEMA_VERSION,
-)
-from .runtime.snapshot_files import (
-    BulkDeleteResult as BulkDeleteResult,
-)
-from .runtime.snapshot_files import (
+    _TEXT_DOMAINS,
+    SCHEMA_VERSION,
     SnapshotFilesMixin,
+    SnapshotInUseError,
+    _entity_id_aliases,
+    _flow_entry_id,
+    _flow_label,
+    _flow_type,
+    _is_flow_helper_domain,
+    _now_iso,
+    _now_ts,
+    _require_dict,
+    _require_list,
+    _safe_entity_id,
 )
-from .runtime.snapshot_files import (
-    SnapshotInUseError as SnapshotInUseError,
-)
-from .runtime.snapshot_files import (
-    _entity_id_aliases as _entity_id_aliases,
-)
-from .runtime.snapshot_files import (
-    _flow_entry_id as _flow_entry_id,
-)
-from .runtime.snapshot_files import (
-    _flow_label as _flow_label,
-)
-from .runtime.snapshot_files import (
-    _flow_type as _flow_type,
-)
-from .runtime.snapshot_files import (
-    _id_matches as _id_matches,
-)
-from .runtime.snapshot_files import (
-    _is_flow_helper_domain as _is_flow_helper_domain,
-)
-from .runtime.snapshot_files import (
-    _now_iso as _now_iso,
-)
-from .runtime.snapshot_files import (
-    _now_ts as _now_ts,
-)
-from .runtime.snapshot_files import (
-    _require_dict as _require_dict,
-)
-from .runtime.snapshot_files import (
-    _require_list as _require_list,
-)
-from .runtime.snapshot_files import (
-    _safe_entity_id as _safe_entity_id,
-)
-from .runtime.snapshot_files import (
-    _snapshot_order as _snapshot_order,
-)
-from .runtime.snapshot_flow_restore import _flow_failure_reason as _flow_failure_reason
 from .runtime.snapshot_flow_restore import (
-    _flow_safe_failure_detail as _flow_safe_failure_detail,
+    _flow_failure_reason,
+    _flow_safe_failure_detail,
 )
-from .runtime.snapshot_flow_values import _apply_and_verify as _apply_and_verify
-from .runtime.snapshot_flow_values import _flow_saved_entities as _flow_saved_entities
 from .runtime.snapshot_flow_values import (
-    _snapshot_configs_match as _snapshot_configs_match,
-)
-from .runtime.snapshot_flow_values import _subentry_expectation as _subentry_expectation
-from .runtime.snapshot_flow_values import (
-    _validate_flow_snapshot as _validate_flow_snapshot,
+    _validate_flow_snapshot,
 )
 from .runtime.snapshot_flow_values import _verify_readback as _shared_verify_readback
 from .runtime.snapshot_payloads import (
-    _REGISTRY_READONLY_KEYS as _REGISTRY_READONLY_KEYS,
+    BackupRestoreError,
+    InvalidBackupSnapshotError,
+    MandatoryBackupError,
+    _flow_options,
+    _FlowHelperBackupSkip,
+    _FlowHelperReadError,
+    _snapshot_validation_message,
+    _strip_readonly,
+    _subentry_row,
+    _subentry_target,
+    validate_snapshot_identity,
 )
-from .runtime.snapshot_payloads import BackupRestoreError as BackupRestoreError
-from .runtime.snapshot_payloads import (
-    InvalidBackupSnapshotError as InvalidBackupSnapshotError,
-)
-from .runtime.snapshot_payloads import MandatoryBackupError as MandatoryBackupError
-from .runtime.snapshot_payloads import (
-    _contains_redacted_leaf as _contains_redacted_leaf,
-)
-from .runtime.snapshot_payloads import _flow_options as _flow_options
-from .runtime.snapshot_payloads import _FlowHelperBackupSkip as _FlowHelperBackupSkip
-from .runtime.snapshot_payloads import _FlowHelperReadError as _FlowHelperReadError
-from .runtime.snapshot_payloads import (
-    _snapshot_validation_message as _snapshot_validation_message,
-)
-from .runtime.snapshot_payloads import _strip_readonly as _strip_readonly
-from .runtime.snapshot_payloads import _subentry_data as _subentry_data
-from .runtime.snapshot_payloads import _subentry_row as _subentry_row
-from .runtime.snapshot_payloads import _subentry_target as _subentry_target
-from .runtime.snapshot_payloads import validate_snapshot_identity
 from .runtime.snapshot_restore import ApplyStatus, restore_snapshot_data
 from .utils.data_paths import get_data_dir
 from .utils.owned_executor import await_backup_io as _await_backup_io
@@ -2873,3 +2810,17 @@ class _LegacyRestoreOperations:
             "verification_status": "matched",
             **_flow_recreated_outcome(result, self.entity_id),
         }
+
+
+__all__ = [
+    "BackupManager",
+    "DomainHandler",
+    "SCHEMA_VERSION",
+    "SnapshotInUseError",
+    "_TEXT_DOMAINS",
+    "_entity_id_aliases",
+    "_restore_entity_ids",
+    "_safe_entity_id",
+    "get_backup_manager",
+    "register_default_handlers",
+]

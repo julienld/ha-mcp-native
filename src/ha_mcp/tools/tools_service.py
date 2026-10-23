@@ -14,7 +14,7 @@ from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..backends.remote_events import RemoteEvents
 from ..client.rest_client import (
     HomeAssistantAPIError,
@@ -33,12 +33,7 @@ from ..errors import (
     create_validation_error,
 )
 from ..read_only import require_write_access
-from ..runtime.action_constants import (
-    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING,
-    _NON_ENVELOPE_WARNING,
-    _NON_STATE_CHANGING_DOMAINS,
-    _STATE_CHANGING_SERVICES,
-)
+from ..runtime.action_constants import _NON_ENVELOPE_WARNING
 from ..runtime.action_params import (
     _parse_json_dict_param as _shared_parse_json_dict_param,
 )
@@ -50,10 +45,6 @@ from ..runtime.bulk_params import (
 from ..runtime.bulk_safety import (
     _INFRASTRUCTURE_ERROR_SUGGESTIONS,
     _attach_resolution_to_response,
-    _expand_membership_transitively,
-    _find_group_member_conflicts,
-    _format_member_list,
-    _GroupConflict,
     _selector_only_parameter_message,
     _selector_only_parameter_offender,
     reject_group_member_conflicts,
@@ -185,7 +176,7 @@ def _parse_json_dict_param(data: Any, *, type_error_message: str) -> Any:
             data, type_error_message=type_error_message
         )
     except ToolFailure as exc:
-        raise_tool_error(exc.data)
+        return raise_tool_error(exc.data)
 
 
 logger = logging.getLogger(__name__)
@@ -232,11 +223,11 @@ def _build_service_suggestions(
     ]
 
 
-class ServiceTools(SharedServiceCallTools):
+class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
     """Service call and device operation tools for Home Assistant."""
 
     def __init__(self, client: HomeAssistantClient, device_tools: Any) -> None:
-        self._client = client
+        super().__init__(client)
         self._device_tools = device_tools
 
     _parse_service_data = staticmethod(
@@ -752,7 +743,7 @@ class ServiceTools(SharedServiceCallTools):
             return self._handle_connection_error(error, **kwargs)
         if isinstance(error, (ToolError, ToolFailure)):
             raise error
-        self._raise_unexpected_call_service_error(
+        return self._raise_unexpected_call_service_error(
             error,
             domain=kwargs["domain"],
             service=kwargs["service"],
@@ -1004,15 +995,7 @@ def register_service_tools(
 
 
 __all__ = [
-    "BulkControlOperation",
     "ServiceTools",
-    "_COMPONENT_RESPONSE_UNCONFIRMED_WARNING",
-    "_GroupConflict",
     "_NON_ENVELOPE_WARNING",
-    "_NON_STATE_CHANGING_DOMAINS",
-    "_STATE_CHANGING_SERVICES",
-    "_expand_membership_transitively",
-    "_find_group_member_conflicts",
-    "_format_member_list",
     "register_service_tools",
 ]

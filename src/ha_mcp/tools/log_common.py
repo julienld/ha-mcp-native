@@ -14,9 +14,6 @@ _LOG_LEVEL_RE = _shared._LOG_LEVEL_RE
 VALID_LOG_LEVELS = _shared.VALID_LOG_LEVELS
 _compact_logbook_entries = _shared._compact_logbook_entries
 _coerce_limit = legacy_errors_sync(_shared._coerce_limit)
-_validate_log_level = legacy_errors_sync(_shared._validate_log_level)
-_collect_log_warnings = _shared._collect_log_warnings
-_validate_log_slug = legacy_errors_sync(_shared._validate_log_slug)
 
 
 def _addon_auth_error_suggestions() -> list[str]:
@@ -30,3 +27,9 @@ def _addon_auth_error_suggestions() -> list[str]:
         "Reading logs needs an admin user's token: check that the Long-Lived Access "
         "Token belongs to an admin (Settings → Profile → Long-Lived Access Tokens)",
     ]
+
+
+__all__ = [
+    "_coerce_limit",
+    "_compact_logbook_entries",
+]

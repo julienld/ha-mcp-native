@@ -63,22 +63,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from ha_mcp.tool_api.llm_projection import (
-    _EXCLUSIVE_BOUNDS as _EXCLUSIVE_BOUNDS,
-)
-from ha_mcp.tool_api.llm_projection import (
-    _INSTANCE_VALUES as _INSTANCE_VALUES,
-)
-from ha_mcp.tool_api.llm_projection import (
-    _OPAQUE_KEYWORDS as _OPAQUE_KEYWORDS,
-)
-from ha_mcp.tool_api.llm_projection import (
-    _SCHEMA_MAPS as _SCHEMA_MAPS,
-)
-from ha_mcp.tool_api.llm_projection import (
-    _is_opaque_key as _is_opaque_key,
-)
-from ha_mcp.tool_api.llm_projection import (
-    _to_inclusive_bounds as _to_inclusive_bounds,
+    _EXCLUSIVE_BOUNDS,
+    _INSTANCE_VALUES,
+    _OPAQUE_KEYWORDS,
+    _SCHEMA_MAPS,
+    _is_opaque_key,
+    _to_inclusive_bounds,
 )
 from ha_mcp.tool_api.llm_projection import (
     normalise_schema as _project_normalise_schema,
@@ -95,32 +85,20 @@ from .const import (
 )
 from .llm_api_search import CALL_TOOL_NAME as _CALL_TOOL_NAME
 from .llm_api_search import SEARCH_TOOL_NAME as _SEARCH_TOOL_NAME
-from .llm_api_search import HaMcpSearchTool as HaMcpSearchTool
+from .llm_api_search import HaMcpSearchTool
 from .llm_bridge_options import export_enabled, require_export_enabled
 from .llm_projection import (
-    _FALLBACK_API_PROMPT as _FALLBACK_API_PROMPT,
-)
-from .llm_projection import (
-    _TOOL_SEARCH_PROMPT as _TOOL_SEARCH_PROMPT,
-)
-from .llm_projection import (
+    _FALLBACK_API_PROMPT,
+    _TOOL_SEARCH_PROMPT,
     CALL_TOOL_DESCRIPTION,
     CALL_TOOL_PARAMETERS,
+    _schema_converter,
+    _tool_input_schema,
+    async_unregister_llm_api,
     build_full_tools,
     build_search_tools,
     convert_parameters,
-)
-from .llm_projection import (
-    _schema_converter as _schema_converter,
-)
-from .llm_projection import (
-    _tool_input_schema as _tool_input_schema,
-)
-from .llm_projection import (
-    async_unregister_llm_api as async_unregister_llm_api,
-)
-from .llm_projection import (
-    convert_to_voluptuous as convert_to_voluptuous,
+    convert_to_voluptuous,
 )
 from .llm_tool_exposure import partition_tools
 from .llm_tool_metadata import declare_metadata, tool_hints, tool_result, tool_title
@@ -695,3 +673,19 @@ async def async_register_llm_api(
         "conversation agent's settings to chat with it (text or voice)",
         exposure,
     )
+
+
+__all__ = [
+    "HaMcpLlmApi",
+    "HaMcpSearchTool",
+    "HaMcpTool",
+    "_EXCLUSIVE_BOUNDS",
+    "_INSTANCE_VALUES",
+    "_OPAQUE_KEYWORDS",
+    "_SCHEMA_MAPS",
+    "_is_opaque_key",
+    "_to_inclusive_bounds",
+    "_tool_input_schema",
+    "async_probe_mcp_sdk",
+    "async_register_llm_api",
+]

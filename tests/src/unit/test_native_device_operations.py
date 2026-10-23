@@ -107,7 +107,7 @@ async def test_status_revalidates_after_wait_before_disclosing_the_result(
     allowed = False
     operations.finish(identifier, _confirmed())
     with pytest.raises(ToolFailure) as caught:
-        await task
+        _ = await task
     assert caught.value.code == "AUTH_FORBIDDEN"
     assert "future" not in str(caught.value.data)
 
@@ -165,7 +165,7 @@ async def test_cancelled_status_wait_does_not_cancel_the_shared_operation(
     await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert not operations.entries[identifier].done.is_set()
     operations.finish(identifier, _confirmed())
     assert (await operations.status(actor, AsyncMock(), identifier, 0))["success"]

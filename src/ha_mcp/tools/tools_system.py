@@ -27,7 +27,6 @@ from ha_mcp.runtime.health_results import (
 )
 from ha_mcp.runtime.health_tools import HealthFacade
 from ha_mcp.runtime.system_actions import SystemActionsFacade
-from ha_mcp.runtime.system_values import RELOAD_TARGETS as RELOAD_TARGETS
 
 from ..client.rest_client import HomeAssistantCommandError, HomeAssistantCommandTimeout
 from ..client.websocket_client import get_websocket_client

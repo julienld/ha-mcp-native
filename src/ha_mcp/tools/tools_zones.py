@@ -20,16 +20,12 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
-from ..runtime.zone_records import _build_zone_result as _build_zone_result
 from ..runtime.zone_records import (
-    _shape_component_zone_record as _shape_component_zone_record,
+    _build_zone_result,
+    _shape_component_zone_rows,
+    _with_registry_icons,
+    render_zone_snapshot,
 )
-from ..runtime.zone_records import (
-    _shape_component_zone_rows as _shape_component_zone_rows,
-)
-from ..runtime.zone_records import _with_registry_icons as _with_registry_icons
-from ..runtime.zone_records import _zone_write_response as _zone_write_response
-from ..runtime.zone_records import render_zone_snapshot
 from ..runtime.zone_writes import ZoneWriteTools
 from ..runtime.zones import ZoneReadTools
 from .component_api import (
@@ -316,3 +312,9 @@ class ZoneTools(LegacyBackendTools, ZoneWriteTools):
 def register_zone_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant zone configuration tools."""
     register_tool_methods(mcp, ZoneTools(client))
+
+
+__all__ = [
+    "ZoneTools",
+    "register_zone_tools",
+]

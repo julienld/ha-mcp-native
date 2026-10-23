@@ -55,16 +55,9 @@ from .statistics_resets import restore_reset_timestamps
 from .tool_hints import read_only_hints
 
 _RELATIVE_TIME_UNIT_SECONDS = _query_policy._RELATIVE_TIME_UNIT_SECONDS
-_RELATIVE_FORMAT_HINT = _query_policy._RELATIVE_FORMAT_HINT
 _DEFAULT_START_HOURS_BY_SOURCE = _query_policy._DEFAULT_START_HOURS_BY_SOURCE
 _DEFAULT_HISTORY_LIMIT = _query_policy._DEFAULT_HISTORY_LIMIT
 _MAX_HISTORY_LIMIT = _query_policy._MAX_HISTORY_LIMIT
-_MAX_HISTORY_ENTITIES = _query_policy._MAX_HISTORY_ENTITIES
-_MAX_HISTORY_ENTITY_HOURS = _query_policy._MAX_HISTORY_ENTITY_HOURS
-_MAX_STATISTICS_ENTITIES = _query_policy._MAX_STATISTICS_ENTITIES
-_MAX_SHORT_TERM_STATISTICS_ROWS = _query_policy._MAX_SHORT_TERM_STATISTICS_ROWS
-_MAX_LONG_TERM_STATISTICS_ROWS = _query_policy._MAX_LONG_TERM_STATISTICS_ROWS
-_VALID_STATISTICS_PERIODS = _query_policy._VALID_STATISTICS_PERIODS
 parse_relative_time = _query_policy.parse_relative_time
 _parse_entity_ids = legacy_errors_sync(_query_policy._parse_entity_ids)
 _validate_offset = legacy_errors_sync(_query_policy._validate_offset)
@@ -74,12 +67,6 @@ _validate_calendar_statistics_range = legacy_errors_sync(
     _query_policy._validate_calendar_statistics_range
 )
 _validate_query_workload = legacy_errors_sync(_query_policy._validate_query_workload)
-_history_workload_violation = legacy_errors_sync(
-    _query_policy._history_workload_violation
-)
-_statistics_workload_violation = legacy_errors_sync(
-    _query_policy._statistics_workload_violation
-)
 
 logger = logging.getLogger(__name__)
 
@@ -471,3 +458,10 @@ async def _fetch_statistics(
         effective_offset,
         reset_warnings,
     )
+
+
+__all__ = [
+    "HistoryTools",
+    "_RELATIVE_TIME_UNIT_SECONDS",
+    "register_history_tools",
+]

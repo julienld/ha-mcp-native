@@ -433,7 +433,7 @@ async def test_native_engine_theme_drains_a_cancelled_write_before_releasing_its
     assert not first.done() and not second.done() and len(themes.store.calls) == 1
     themes.store.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     result = await second
     assert (
         result["success"]

@@ -20,12 +20,12 @@ from typing import Any
 
 from .backup_entity_ids import _manager
 from .client.rest_client import HomeAssistantCommandError, HomeAssistantError
-from .runtime.dashboard_snapshots import _storage_row as _storage_row
-from .runtime.dashboard_snapshots import dashboard_snapshot as dashboard_snapshot
 from .runtime.dashboard_snapshots import (
-    valid_dashboard_capture as valid_dashboard_capture,
+    _storage_row,
+    dashboard_snapshot,
+    valid_dashboard_capture,
 )
-from .runtime.snapshot_files import _DASHBOARD_KIND as _DASHBOARD_KIND
+from .runtime.snapshot_files import _DASHBOARD_KIND
 
 # Core's DASHBOARD_BASE_UPDATE_FIELDS: what lovelace/dashboards/update accepts.
 _SETTINGS_FIELDS = ("title", "icon", "require_admin", "show_in_sidebar")
@@ -229,3 +229,13 @@ def dashboard_comparison(current: Any, *, legacy: bool) -> Any:
     if current is None or not legacy:
         return current
     return current["config"]
+
+
+__all__ = [
+    "_DASHBOARD_KIND",
+    "dashboard_comparison",
+    "dashboard_snapshot",
+    "fetch_dashboard",
+    "restore_dashboard",
+    "valid_dashboard_capture",
+]

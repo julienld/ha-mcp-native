@@ -173,5 +173,5 @@ async def test_cancelled_read_drains_the_owned_provider_before_return(cameras):
     assert not task.done()
     world.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert len(world.calls) == 1

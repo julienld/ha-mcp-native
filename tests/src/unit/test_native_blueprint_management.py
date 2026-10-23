@@ -314,7 +314,7 @@ async def test_two_cancellations_drain_Core_writer_before_releasing_blueprint_lo
     assert not first.done() and len(owner.calls) == 1
     owner.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
     assert (await second)["success"] and len(owner.calls) == 2
     assert "Second" in (owner.blueprint_folder / "shared.yaml").read_text()
 
@@ -395,7 +395,7 @@ async def test_blueprint_revocation_after_dispatch_does_not_return_file_contents
     active[0] = False
     owner.release.set()
     with pytest.raises(ToolFailure) as raised:
-        await pending
+        _ = await pending
     assert raised.value.status == "outcome_unknown" and "Private contents" not in str(
         raised.value.data
     )

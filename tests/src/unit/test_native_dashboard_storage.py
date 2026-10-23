@@ -228,7 +228,7 @@ async def test_dashboard_save_cancellation_drains_core_persistence(dashboards):
     assert not task.done()
     owner.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert len(owner.calls) == 1 and storage.completed
 
 

@@ -146,7 +146,7 @@ def _apply_response_transform(response: Any, expr: str) -> Any:
         return safe_execute_expression(expr, {"response": response}, "response")
     except PythonSandboxError as e:
         message, suggestions = format_sandbox_error(e, expr, variable_name="response")
-        raise_failure(
+        return raise_failure(
             create_error_response(
                 ErrorCode.VALIDATION_FAILED,
                 message,

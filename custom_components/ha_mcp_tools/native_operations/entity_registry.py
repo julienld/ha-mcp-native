@@ -439,7 +439,7 @@ class NativeEntityRegistry:
                     )
                 return result
             except Exception as error:  # noqa: BLE001 - earlier restore phases may have committed
-                registry_outcome_unknown(
+                return registry_outcome_unknown(
                     "entity",
                     "restore",
                     error,

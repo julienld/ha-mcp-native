@@ -28,9 +28,6 @@ from ..runtime.helper_removal_storage import (
 from ..runtime.integration_reads import IntegrationReadTools
 from ..runtime.integration_removals import IntegrationRemovalTools
 from ..runtime.integration_writes import IntegrationWriteTools
-from ..runtime.integration_writes import (
-    _reject_set_integration_mode_conflicts as _shared_reject_integration_modes,
-)
 from ..tool_api import ToolFailure
 from .component_api import (
     component_supports,
@@ -62,8 +59,6 @@ _REGISTRY_RETRY_BASE_DELAY = 0.5
 _raise_registry_read_failure = cast(
     Callable[..., NoReturn], legacy_flow(_shared_registry_read_failure)
 )
-
-_reject_set_integration_mode_conflicts = legacy_flow(_shared_reject_integration_modes)
 
 
 # The ``ha_mcp_tools`` component command that serves config entries (identity +
@@ -166,11 +161,6 @@ async def _fetch_entries_via_component(
         )
         return None
     return entries
-
-
-_split_component_entry_row = legacy_helper_flow(
-    _shared_inspection._split_component_entry_row
-)
 
 
 class IntegrationTools(
@@ -533,3 +523,9 @@ class IntegrationTools(
 def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register integration management tools with the MCP server."""
     register_tool_methods(mcp, IntegrationTools(client))
+
+
+__all__ = [
+    "IntegrationTools",
+    "register_integration_tools",
+]

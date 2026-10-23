@@ -28,3 +28,8 @@ def _detect_platform() -> dict[str, str]:
         "architecture": platform.machine(),
         "python_version": platform.python_version(),
     }
+
+
+__all__ = [
+    "_CONFIG_TOGGLE_FIELDS",
+]

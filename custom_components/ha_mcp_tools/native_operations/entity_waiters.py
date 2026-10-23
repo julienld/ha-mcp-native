@@ -33,7 +33,7 @@ async def _wait_for(
                 try:
                     await asyncio.wait_for(wake.wait(), timeout=0.3)
                 except TimeoutError:
-                    pass
+                    continue
     except TimeoutError:
         return None
     finally:

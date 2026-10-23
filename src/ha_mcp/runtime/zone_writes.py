@@ -50,12 +50,34 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
         async with self._schema_context("zone", "create"):
             return await self._create_simple(*args)
 
-    async def _update_zone(self, *args: Any) -> dict[str, Any]:
+    async def _update_zone(
+        self,
+        helper_type: str,
+        entity_id: str,
+        storage_id: str,
+        name: str | None,
+        icon: str | None,
+        area_id: str | None,
+        labels: list[str] | None,
+        category: str | None,
+        wait: bool,
+        MandatoryBPS: bool,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
         # The public zone adapter historically orders entity_id before storage_id.
-        helper_type, entity_id, storage_id, *remaining = args
         async with self._schema_context("zone", "update"):
             return await self._update_simple(
-                helper_type, storage_id, entity_id, *remaining
+                helper_type,
+                storage_id,
+                entity_id,
+                name,
+                icon,
+                area_id,
+                labels,
+                category,
+                wait,
+                MandatoryBPS,
+                fields,
             )
 
     async def _remove_stored_zone(
@@ -249,7 +271,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
                 if value is not None
             }
             if name is not None and not name.strip():
-                raise_failure(
+                return raise_failure(
                     create_validation_error(
                         "name cannot be blank.", context={"zone_id": zone_id}
                     )
@@ -269,7 +291,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
                     if value is not None
                 ]
                 if not updated:
-                    raise_failure(
+                    return raise_failure(
                         create_validation_error(
                             "No fields to update. Provide at least one field to change.",
                             context={"zone_id": zone_id},
@@ -303,7 +325,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
                 return response
 
             if name is None or latitude is None or longitude is None:
-                raise_failure(
+                return raise_failure(
                     create_validation_error(
                         "name, latitude, and longitude are required when creating a zone.",
                     )
@@ -324,7 +346,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
         except ToolFailure:
             raise
         except Exception as e:  # noqa: BLE001
-            self._map_zone_write_error(e, zone_id, operation)
+            return self._map_zone_write_error(e, zone_id, operation)
 
     async def ha_remove_zone(
         self,
@@ -363,7 +385,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
             entity_id, storage_id, _ = await self._resolve_zone(zone_id)
             result = await self._remove_stored_zone(storage_id, entity_id)
             if not result.get("success"):
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         zone_failure_code(result),
                         f"Failed to remove zone {entity_id or storage_id}: "
@@ -405,7 +427,7 @@ class ZoneWriteTools(ZoneReadTools, HelperStorageTools):
         except ToolFailure:
             raise
         except Exception as e:  # noqa: BLE001
-            self._map_zone_write_error(e, zone_id, None)
+            return self._map_zone_write_error(e, zone_id, None)
 
 
 def zone_failure_code(result: dict[str, Any]) -> ErrorCode:

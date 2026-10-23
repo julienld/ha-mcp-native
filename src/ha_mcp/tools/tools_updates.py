@@ -23,49 +23,24 @@ from ..errors import ErrorCode, create_error_response
 from ..runtime.update_plans import repair_items, single_update_id, update_targets
 from ..runtime.update_tools import UpdateToolsFacade
 from ..runtime.update_values import (
-    _categorize_update as _categorize_update,
-)
-from ..runtime.update_values import (
-    _extract_blog_content as _extract_blog_content,
-)
-from ..runtime.update_values import (
-    _get_monthly_versions_between as _get_monthly_versions_between,
-)
-from ..runtime.update_values import (
-    _parse_breaking_changes_html as _parse_breaking_changes_html,
-)
-from ..runtime.update_values import (
-    _parse_patch_breaking_changes as _parse_patch_breaking_changes,
-)
-from ..runtime.update_values import (
-    _parse_version as _parse_version,
-)
-from ..runtime.update_values import (
-    _strip_html as _strip_html,
-)
-from ..runtime.update_values import (
-    _supports_release_notes as _supports_release_notes,
-)
-from ..runtime.update_values import (
+    _categorize_update,
+    _extract_blog_content,
+    _get_monthly_versions_between,
+    _parse_breaking_changes_html,
+    _parse_patch_breaking_changes,
+    _parse_version,
+    _strip_html,
+    _supports_release_notes,
     update_batch_result,
     update_details,
     update_listing,
 )
 from ..tool_api import ToolFailure
 from ..utils.release_notes import (
-    _fetch_core_release_notes as _fetch_core_release_notes,
-)
-from ..utils.release_notes import (
-    _fetch_github_release_notes as _fetch_github_release_notes,
-)
-from ..utils.release_notes import (
-    _fetch_release_data as _fetch_release_data,
-)
-from ..utils.release_notes import (
-    _fetch_release_data_for_version as _fetch_release_data_for_version,
-)
-from ..utils.release_notes import (
-    _try_raw_cdn as _try_raw_cdn,
+    _fetch_core_release_notes,
+    _fetch_github_release_notes,
+    _fetch_release_data,
+    _try_raw_cdn,
 )
 from .helpers import (
     exception_to_structured_error,
@@ -98,7 +73,7 @@ class UpdateTools(UpdateToolsFacade):
 
     def __init__(self, client: Any) -> None:
         self._client = client
-        self._updates = self
+        super().__init__(updates=self)
 
     async def _list_updates(self, include_skipped: bool) -> dict[str, Any]:
         """Internal helper to list all update entities."""
@@ -482,3 +457,18 @@ class UpdateTools(UpdateToolsFacade):
 def register_update_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant update management tools."""
     register_tool_methods(mcp, UpdateTools(client))
+
+
+__all__ = [
+    "UpdateTools",
+    "_categorize_update",
+    "_extract_blog_content",
+    "_get_monthly_versions_between",
+    "_parse_breaking_changes_html",
+    "_parse_patch_breaking_changes",
+    "_parse_version",
+    "_strip_html",
+    "_supports_release_notes",
+    "_try_raw_cdn",
+    "register_update_tools",
+]

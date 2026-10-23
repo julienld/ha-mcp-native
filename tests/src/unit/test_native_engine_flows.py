@@ -14,7 +14,7 @@ import pytest
 from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
-from . import test_component_ws_search as _component_stubs  # noqa: F401
+importlib.import_module(f"{__package__}.test_component_ws_search")
 
 
 class UnknownFlow(Exception):
@@ -82,7 +82,7 @@ async def test_entry_lock_wait_is_cancellable_and_owned_abort_ignores_readonly(
     assert owner.async_init.await_count == 1 and not second.done()
     second.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await second
+        _ = await second
     assert (
         backend.starting == 0 and registry_update_lock("config_entry", "entry").locked()
     )
@@ -125,7 +125,7 @@ async def test_waiting_flow_rechecks_expected_revision_after_prior_flow_commits(
         "config.flow.configure", {"flow_id": "owned", "user_input": {}}, actor
     )
     with pytest.raises(ToolFailure, match="changed after its snapshot"):
-        await waiting
+        _ = await waiting
     assert owner.async_init.await_count == 1 and backend.starting == 0
     assert (
         not backend.owned and not registry_update_lock("config_entry", "entry").locked()
@@ -184,7 +184,7 @@ async def test_cancellation_drains_core_step_and_keeps_result_ownership(
     assert not waiter.done()
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        _ = await waiter
     assert bool(backend.owned) is not resume
     await backend.stop()
     assert not backend.owned

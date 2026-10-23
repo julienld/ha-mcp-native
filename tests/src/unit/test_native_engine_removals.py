@@ -158,7 +158,7 @@ async def test_native_storage_remove_drains_double_cancellation(
     assert not task.done()
     finish.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert collection.deletes == 1 and collection.data == {}
 
 

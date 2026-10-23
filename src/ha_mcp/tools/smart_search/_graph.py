@@ -33,40 +33,11 @@ from typing import Any
 
 from ...errors import get_error_code, get_error_message
 from ...runtime.search_references import (
-    _GRAPH_HIT_SCORE as _GRAPH_HIT_SCORE,
-)
-from ...runtime.search_references import (
-    _ITEM_TYPE_TO_BUCKET as _ITEM_TYPE_TO_BUCKET,
-)
-from ...runtime.search_references import (
-    _KNOWN_ITEM_TYPES as _KNOWN_ITEM_TYPES,
-)
-from ...runtime.search_references import (
-    _UNMODELLED_CONSUMER_TYPES as _UNMODELLED_CONSUMER_TYPES,
-)
-from ...runtime.search_references import (
-    _UP_RELATION_TYPES as _UP_RELATION_TYPES,
-)
-from ...runtime.search_references import (
-    BUCKET_TO_ITEM_TYPE as BUCKET_TO_ITEM_TYPE,
-)
-from ...runtime.search_references import (
-    GRAPH_ITEM_TYPES as GRAPH_ITEM_TYPES,
-)
-from ...runtime.search_references import (
-    GraphResult as GraphResult,
-)
-from ...runtime.search_references import (
-    _graph_partial_reasons as _graph_partial_reasons,
-)
-from ...runtime.search_references import (
-    _graph_record as _graph_record,
-)
-from ...runtime.search_references import (
-    _merge_graph_hits as _merge_graph_hits,
-)
-from ...runtime.search_references import (
-    _parse_related as _parse_related,
+    GRAPH_ITEM_TYPES,
+    GraphResult,
+    _graph_partial_reasons,
+    _merge_graph_hits,
+    _parse_related,
 )
 from ..component_api import UNKNOWN_COMMAND_CODE
 
@@ -335,3 +306,12 @@ def _graph_applies(query_lower: str, search_types: list[str]) -> bool:
     if not is_entity_id_shaped(query_lower):
         return False
     return any(item_type in search_types for item_type in GRAPH_ITEM_TYPES)
+
+
+__all__ = [
+    "_graph_partial_reasons",
+    "_merge_graph_hits",
+    "fetch_related_buckets",
+    "is_entity_id_shaped",
+    "reset_unsupported_cache",
+]

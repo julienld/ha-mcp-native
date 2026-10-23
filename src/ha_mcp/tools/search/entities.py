@@ -8,31 +8,11 @@ import asyncio
 import logging
 from typing import Any
 
-from ...backends.legacy import legacy_errors_sync
 from ...errors import create_validation_error
 from ...runtime.search_records import (
-    _ALLOWED_RESULT_FIELDS as _ALLOWED_RESULT_FIELDS,
-)
-from ...runtime.search_records import (
-    _ENRICHMENT_FIELDS as _ENRICHMENT_FIELDS,
-)
-from ...runtime.search_records import (
-    _ENTITY_RECORD_KEYS as _ENTITY_RECORD_KEYS,
-)
-from ...runtime.search_records import (
-    _MEMBERSHIP_FIELDS as _MEMBERSHIP_FIELDS,
-)
-from ...runtime.search_records import (
-    _add_membership_fields as _add_membership_fields,
-)
-from ...runtime.search_records import (
-    _requested_enrichment as _requested_enrichment,
-)
-from ...runtime.search_records import (
-    _requested_membership as _requested_membership,
-)
-from ...runtime.search_records import (
-    _validate_result_field_names as _shared_validate_result_field_names,
+    _add_membership_fields,
+    _requested_enrichment,
+    _requested_membership,
 )
 from ...utils.device_registry_semantics import (
     build_device_registry_snapshot,
@@ -57,8 +37,6 @@ from .response import (
 )
 
 logger = logging.getLogger(__name__)
-
-_validate_result_field_names = legacy_errors_sync(_shared_validate_result_field_names)
 
 
 # The documented per-record entity surface (result_fields= "Available keys").
@@ -670,3 +648,9 @@ class EntityEnrichmentMixin(SearchToolsBase):
                 alias_err,
             )
         return None
+
+
+__all__ = [
+    "EntityEnrichmentMixin",
+    "_requested_membership",
+]

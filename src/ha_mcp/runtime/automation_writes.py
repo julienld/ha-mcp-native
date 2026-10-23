@@ -359,7 +359,7 @@ class AutomationWriteTools(AutomationRuntimeTools):
                 return response
 
             if config is None:
-                raise_failure(
+                return raise_failure(
                     create_error_response(
                         ErrorCode.VALIDATION_INVALID_PARAMETER,
                         "Either config or python_transform must be provided",
@@ -432,7 +432,9 @@ class AutomationWriteTools(AutomationRuntimeTools):
         except ToolFailure as failure:
             raise await self._augment_failure(failure, bp_warnings) from None
         except Exception as error:  # noqa: BLE001 - facade-specific classification
-            await self._raise_automation_write_error(error, identifier, bp_warnings)
+            return await self._raise_automation_write_error(
+                error, identifier, bp_warnings
+            )
 
     async def _run_python_transform(
         self,

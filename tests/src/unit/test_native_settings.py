@@ -299,10 +299,10 @@ async def test_cancelled_ui_waiter_does_not_cancel_owned_file_io(
     await asyncio.sleep(0)
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        _ = await waiter
     assert not future.cancelled()
     stopping = asyncio.create_task(ui.async_stop())
     await asyncio.sleep(0)
     assert not stopping.done()
     future.set_result(None)
-    await stopping
+    _ = await stopping

@@ -264,5 +264,5 @@ async def test_native_overview_retains_its_worker_until_repeated_cancellation_dr
     finally:
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
     assert completed.is_set()

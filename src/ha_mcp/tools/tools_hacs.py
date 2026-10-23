@@ -15,7 +15,7 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 from ha_mcp.tool_api import ToolFailure
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
@@ -31,9 +31,6 @@ from ..runtime.hacs_results import (
     search_data,
 )
 from ..runtime.hacs_tools import HacsFacade
-from ..runtime.hacs_values import (
-    _reject_foreign_params as _shared_reject_foreign_params,
-)
 from .hacs_registration import (
     CATEGORY_MAP,
     HACS_ADD_REGISTRATION_TIMEOUT,
@@ -625,9 +622,6 @@ class HacsTools:
     )(log_tool_usage(_hacs_legacy_errors(HacsFacade.ha_manage_hacs)))
 
 
-_reject_foreign_params = legacy_errors_sync(_shared_reject_foreign_params)
-
-
 def register_hacs_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register HACS integration tools with the MCP server."""
     register_tool_methods(mcp, HacsTools(client))
@@ -666,3 +660,9 @@ async def _resolve_hacs_repo_id(ws_client: Any, repository_id: str) -> tuple[str
         )
     )
     return None  # unreachable: raise_tool_error always raises
+
+
+__all__ = [
+    "HacsTools",
+    "register_hacs_tools",
+]

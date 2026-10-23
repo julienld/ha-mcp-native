@@ -15,7 +15,6 @@ reject_reconfigure_only_parameters = legacy_flow(
     _shared.reject_reconfigure_only_parameters
 )
 _reconfigure_preflight_token = _shared._reconfigure_preflight_token
-_reconfigure_preview_response = _shared._reconfigure_preview_response
 
 
 class ReconfigureRunner(_shared.ReconfigureRunner):
@@ -33,3 +32,9 @@ class ReconfigureRunner(_shared.ReconfigureRunner):
 
     run = legacy_flow(_shared.ReconfigureRunner.run)
     handle_mode = legacy_flow(_shared.ReconfigureRunner.handle_mode)
+
+
+__all__ = [
+    "ReconfigureRunner",
+    "_reconfigure_preflight_token",
+]

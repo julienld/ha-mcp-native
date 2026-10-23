@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from functools import lru_cache
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
@@ -19,7 +20,7 @@ def default_statistic_types(owner: Callable[..., Any]) -> frozenset[str]:
     Core 2026.10's WS default is all supported fields. Resolve that bounded
     Literal from the installed owner instead of duplicating an enum here.
     """
-    try:
+    with suppress(KeyError, IndexError, NameError, TypeError):
         annotation = get_type_hints(owner)["types"]
         inner = get_args(annotation)[0]
         values = get_args(inner)
@@ -30,8 +31,6 @@ def default_statistic_types(owner: Callable[..., Any]) -> frozenset[str]:
             and all(isinstance(value, str) for value in values)
         ):
             return frozenset(values)
-    except (KeyError, IndexError, NameError, TypeError):
-        pass
     raise UnsupportedOperation("Core statistics default types cannot be resolved")
 
 

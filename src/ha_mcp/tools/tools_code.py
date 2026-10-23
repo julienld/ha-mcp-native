@@ -45,14 +45,10 @@ from ..runtime.code_persistence import (
 from ..runtime.code_registry import SavedToolsRegistry
 from ..runtime.code_runner import run_sandboxed_code
 from ..runtime.code_session import CodeSession
-from ..runtime.code_validation import BLOCKED_TOOLS, SAVE_NAME_PATTERN
-from ..runtime.code_validation import _classify_sandbox_error as _classify_sandbox_error
-from ..runtime.code_validation import _sandbox_error as _sandbox_error
 from ..runtime.code_validation import (
-    _validate_custom_tool_code_inputs as _shared_validate_inputs,
-)
-from ..runtime.code_validation import (
-    _validate_custom_tool_modes as _shared_validate_modes,
+    BLOCKED_TOOLS,
+    _classify_sandbox_error,
+    _sandbox_error,
 )
 from ..tool_api import ToolFailure
 from .backup_access import snapshot_route_refusal
@@ -63,9 +59,6 @@ from .util_helpers import BLOCKED_WS_WRITE_COMMANDS
 logger = logging.getLogger(__name__)
 _MAX_SAVED_TOOLS = MAX_SAVED_TOOLS
 _SAVED_TOOLS_SCHEMA_VERSION = SAVED_TOOLS_SCHEMA_VERSION
-_SAVE_NAME_PATTERN = SAVE_NAME_PATTERN
-_validate_custom_tool_modes = legacy_errors_sync(_shared_validate_modes)
-_validate_custom_tool_code_inputs = legacy_errors_sync(_shared_validate_inputs)
 
 # In-memory cache for saved custom tools, optionally persisted to disk.
 #
@@ -683,3 +676,11 @@ def register_code_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             "Custom Tool", destructive=True, idempotent=False, open_world=False
         ),
     )(log_tool_usage(legacy_errors(session.ha_manage_custom_tool)))
+
+
+__all__ = [
+    "_MAX_SAVED_TOOLS",
+    "_SAVED_TOOLS_SCHEMA_VERSION",
+    "_classify_sandbox_error",
+    "register_code_tools",
+]

@@ -209,3 +209,8 @@ def _apply_gate_to_policy(policy: Any, tool: str, gated: bool) -> tuple[Any, boo
         )
         return updated, True
     return policy, False
+
+
+__all__ = [
+    "_HUMAN_ONLY_SETTINGS",
+]

@@ -44,100 +44,23 @@ from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
 
 from .config import get_global_settings
 from .runtime.redaction import (
-    _MIN_KNOWN_SECRET_LEN as _MIN_KNOWN_SECRET_LEN,
-)
-from .runtime.redaction import (
-    _PEM_PRIVATE_KEY_MARKER as _PEM_PRIVATE_KEY_MARKER,
-)
-from .runtime.redaction import (
-    _SENTINELS as _SENTINELS,
-)
-from .runtime.redaction import (
-    REDACTED_EMPTY as REDACTED_EMPTY,
-)
-from .runtime.redaction import (
-    REDACTED_KNOWN as REDACTED_KNOWN,
-)
-from .runtime.redaction import (
-    REDACTED_SET as REDACTED_SET,
-)
-from .runtime.redaction import (
-    _clear_known_secret_values as _clear_known_secret_values,
-)
-from .runtime.redaction import (
-    _collect_sentinel_paths as _collect_sentinel_paths,
-)
-from .runtime.redaction import (
-    _iter_schema_entries as _iter_schema_entries,
-)
-from .runtime.redaction import (
-    _known_secrets as _known_secrets,
-)
-from .runtime.redaction import (
-    _known_secrets_lock as _known_secrets_lock,
-)
-from .runtime.redaction import (
-    _redact_flow_schema_in_place as _redact_flow_schema_in_place,
-)
-from .runtime.redaction import (
-    _redact_nested_sections as _redact_nested_sections,
-)
-from .runtime.redaction import (
-    carries_sentinel as carries_sentinel,
-)
-from .runtime.redaction import (
-    collect_addon_secret_values as collect_addon_secret_values,
-)
-from .runtime.redaction import (
-    contains_pem_private_key as contains_pem_private_key,
-)
-from .runtime.redaction import (
-    harvest_secret_strings as harvest_secret_strings,
-)
-from .runtime.redaction import (
-    is_password_flow_field as is_password_flow_field,
-)
-from .runtime.redaction import (
-    is_sentinel as is_sentinel,
-)
-from .runtime.redaction import (
-    known_secret_values as known_secret_values,
-)
-from .runtime.redaction import (
-    known_values_for_option_item as known_values_for_option_item,
-)
-from .runtime.redaction import (
-    logger as logger,
-)
-from .runtime.redaction import (
-    redact_addon_options as redact_addon_options,
-)
-from .runtime.redaction import (
-    redact_flow_schema as redact_flow_schema,
-)
-from .runtime.redaction import (
-    redact_options_by_flow_schema as redact_options_by_flow_schema,
-)
-from .runtime.redaction import (
-    register_known_secret_values as register_known_secret_values,
-)
-from .runtime.redaction import (
-    scrub_obj as scrub_obj,
-)
-from .runtime.redaction import (
-    scrub_text as scrub_text,
-)
-from .runtime.redaction import (
-    sentinel_for as sentinel_for,
-)
-from .runtime.redaction import (
-    sentinel_option_keys as sentinel_option_keys,
-)
-from .runtime.redaction import (
-    sentinel_replacement as sentinel_replacement,
-)
-from .runtime.redaction import (
-    with_serialized_variants as with_serialized_variants,
+    REDACTED_EMPTY,
+    REDACTED_KNOWN,
+    REDACTED_SET,
+    _clear_known_secret_values,
+    collect_addon_secret_values,
+    is_password_flow_field,
+    is_sentinel,
+    known_secret_values,
+    redact_addon_options,
+    redact_flow_schema,
+    redact_options_by_flow_schema,
+    register_known_secret_values,
+    scrub_obj,
+    scrub_text,
+    sentinel_for,
+    sentinel_option_keys,
+    with_serialized_variants,
 )
 
 
@@ -190,3 +113,22 @@ class RedactSecretsMiddleware(Middleware):
         if structured is not None:
             result.structured_content = scrub_obj(structured, secrets)
         return result
+
+
+__all__ = [
+    "REDACTED_EMPTY",
+    "REDACTED_KNOWN",
+    "REDACTED_SET",
+    "RedactSecretsMiddleware",
+    "_clear_known_secret_values",
+    "collect_addon_secret_values",
+    "is_password_flow_field",
+    "is_sentinel",
+    "redact_addon_options",
+    "redact_flow_schema",
+    "redact_options_by_flow_schema",
+    "redaction_enabled",
+    "register_known_secret_values",
+    "sentinel_for",
+    "sentinel_option_keys",
+]

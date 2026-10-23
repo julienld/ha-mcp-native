@@ -24,10 +24,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..client.rest_client import HomeAssistantClient
-from ..runtime.module_selection import MODULE_PRESETS as MODULE_PRESETS
-from ..runtime.module_selection import (
-    MODULE_SPLIT_EXPANSIONS as MODULE_SPLIT_EXPANSIONS,
-)
 from ..runtime.module_selection import parse_enabled_modules
 
 logger = logging.getLogger(__name__)
@@ -288,3 +284,8 @@ class ToolsRegistry:
             len(failed),
             ", ".join(name for name, _ in failed),
         )
+
+
+__all__ = [
+    "ToolsRegistry",
+]

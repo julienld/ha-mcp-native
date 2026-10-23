@@ -11,13 +11,9 @@ import logging
 import time
 from typing import Any
 
-from ha_mcp.runtime.hacs_values import CATEGORY_DISPLAY as CATEGORY_DISPLAY
-from ha_mcp.runtime.hacs_values import CATEGORY_MAP as CATEGORY_MAP
 from ha_mcp.runtime.hacs_values import (
-    _filter_and_score_repos as _filter_and_score_repos,
-)
-from ha_mcp.runtime.hacs_values import (
-    _score_repo_against_query as _score_repo_against_query,
+    CATEGORY_MAP,
+    _filter_and_score_repos,
 )
 
 from ..client.rest_client import (
@@ -333,3 +329,11 @@ async def send_hacs_repository_refresh(
         _wait_timeout=HACS_REFRESH_TIMEOUT,
     )
     return response
+
+
+__all__ = [
+    "CATEGORY_MAP",
+    "_filter_and_score_repos",
+    "send_hacs_repository_refresh",
+    "wait_for_repo_registration",
+]

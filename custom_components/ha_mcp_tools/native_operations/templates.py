@@ -65,7 +65,9 @@ class NativeTemplates(CoreOperationOwner):
         result = await self._render(payload, context)
         if result.get("success"):
             return render_success(template, result)
-        raise_render_failure(template, report_errors, result, result.get("diagnosis"))
+        return raise_render_failure(
+            template, report_errors, result, result.get("diagnosis")
+        )
 
     async def _render(
         self, payload: dict[str, Any], context: CallContext
@@ -184,7 +186,7 @@ class NativeTemplates(CoreOperationOwner):
             except ToolFailure as error:
                 if isinstance(error, UnsupportedOperation):
                     raise
-                raise_failure(
+                return raise_failure(
                     condition_failure(
                         arguments["condition"], str(error), "invalid_format"
                     )
@@ -194,11 +196,11 @@ class NativeTemplates(CoreOperationOwner):
             )
             condition = await owner.async_from_config(self.hass, validated)
         except _INVALID_ERRORS as error:
-            raise_failure(
+            return raise_failure(
                 condition_failure(arguments["condition"], str(error), "invalid_format")
             )
         except HomeAssistantError as error:
-            raise_failure(
+            return raise_failure(
                 condition_failure(
                     arguments["condition"], str(error), "home_assistant_error"
                 )
@@ -221,7 +223,7 @@ class NativeTemplates(CoreOperationOwner):
                 result["template_errors"] = errors
             return result
         except HomeAssistantError as error:
-            raise_failure(
+            return raise_failure(
                 condition_failure(
                     arguments["condition"], str(error), "home_assistant_error"
                 )

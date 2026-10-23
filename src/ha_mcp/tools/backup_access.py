@@ -12,12 +12,9 @@ from ha_mcp.runtime import backup_controls as _backup_controls
 from ..config import Settings, get_global_settings
 from ..errors import ErrorCode, create_error_response
 from ..runtime.action_constants import (
-    _SNAPSHOT_SERVICE_ACTIONS as _SNAPSHOT_SERVICE_ACTIONS,
+    _SNAPSHOT_SERVICE_ACTIONS,
 )
 from .helpers import raise_tool_error
-
-_VALID_COMBOS = _backup_controls._VALID_COMBOS
-
 
 gate_backup_combo = legacy_errors_sync(_backup_controls.gate_backup_combo)
 
@@ -171,3 +168,10 @@ def snapshot_route_refusal(
         suggestions = error.get("suggestions") or [error.get("suggestion", "")]
         return " ".join([error["message"], *suggestions]).strip()
     return None
+
+
+__all__ = [
+    "guard_snapshot_route",
+    "require_backup_access",
+    "snapshot_route_refusal",
+]

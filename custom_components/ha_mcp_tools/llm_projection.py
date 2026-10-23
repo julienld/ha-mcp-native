@@ -171,3 +171,14 @@ def async_unregister_llm_api(hass: HomeAssistant) -> None:
         return
     for unsub in unsubs:
         unsub()
+
+
+__all__ = [
+    "_FALLBACK_API_PROMPT",
+    "_TOOL_SEARCH_PROMPT",
+    "async_unregister_llm_api",
+    "build_full_tools",
+    "build_search_tools",
+    "convert_parameters",
+    "convert_to_voluptuous",
+]

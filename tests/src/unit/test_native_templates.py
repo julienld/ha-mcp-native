@@ -298,5 +298,5 @@ async def test_cancellation_drains_core_guard_and_never_starts_a_late_tracker(
     assert not task.done()
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert not rendering.state.track_calls and not owner.cleanups

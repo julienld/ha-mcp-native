@@ -10,7 +10,6 @@ from typing import Any
 from ha_mcp.backends.legacy_flows import legacy_helper_flow
 from ha_mcp.runtime.errors import websocket_error_message
 from ha_mcp.runtime.health_results import (
-    _REPAIR_PROJECTION_FIELDS,
     filter_active_repairs,
     project_repair_fields,
     summarize_theme_listing,
@@ -112,7 +111,7 @@ def is_connection_error_message(error_msg: Any) -> bool:
 
 
 __all__ = [
-    "_REPAIR_PROJECTION_FIELDS",
+    "BLOCKED_WS_WRITE_COMMANDS",
     "_SERVICE_TO_STATE",
     "filter_active_repairs",
     "is_connection_error_message",

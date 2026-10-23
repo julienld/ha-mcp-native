@@ -286,7 +286,7 @@ class SceneReadTools(ConfigReadTools):
                 "scene_id": result["storage_key"],
                 "config": result["config"],
             }
-        raise_scene_config_missing(scene_id, result)
+        return raise_scene_config_missing(scene_id, result)
 
     async def _resolve_scene_entity_id(
         self, scene_id: str, *, allow_component: bool = False

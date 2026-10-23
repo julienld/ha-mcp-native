@@ -23,7 +23,6 @@ import httpx
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.backends.legacy import legacy_errors_sync
-from ha_mcp.runtime.dashboard_routes import _FORBIDDEN_PATH_BITS as _FORBIDDEN_PATH_BITS
 from ha_mcp.runtime.dashboard_routes import (
     _normalize_dashboard_path as _pure_dashboard_path,
 )
@@ -967,3 +966,10 @@ async def capture_dashboard_images(
     if batch_error is not None:
         _reraise_with_guard_warnings(batch_error, guard.warnings)
     return _complete_capture_batch(captures, partial_failures, guard.warnings)
+
+
+__all__ = [
+    "DashboardImageCapture",
+    "capture_dashboard_images",
+    "validate_capture_parameters",
+]

@@ -157,4 +157,4 @@ async def test_parallel_stats_drain_before_auth_failure_leaves_tool(apps: Any) -
     finally:
         release.set()
         with pytest.raises(ToolFailure):
-            await task
+            _ = await task

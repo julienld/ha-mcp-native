@@ -6,9 +6,6 @@ on it without creating an import cycle.
 """
 
 from ha_mcp.config import get_global_settings
-from ha_mcp.runtime.overview_values import (
-    _simplify_states_summary as _simplify_states_summary,
-)
 
 # Default concurrency limit for parallel operations
 DEFAULT_CONCURRENCY_LIMIT = 20

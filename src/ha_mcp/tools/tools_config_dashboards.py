@@ -13,63 +13,19 @@ from typing import Any, Literal, NoReturn, cast, overload
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import ToolResult, tool
 from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
-from ha_mcp.runtime.dashboard_search import _BADGE_CARD_TYPE as _BADGE_CARD_TYPE
-from ha_mcp.runtime.dashboard_search import _MAX_CARD_DEPTH as _MAX_CARD_DEPTH
-from ha_mcp.runtime.dashboard_search import _MAX_NODE_DEPTH as _MAX_NODE_DEPTH
-from ha_mcp.runtime.dashboard_search import _NESTED_CARD_KEY as _NESTED_CARD_KEY
-from ha_mcp.runtime.dashboard_search import _NESTED_CARDS_KEY as _NESTED_CARDS_KEY
 from ha_mcp.runtime.dashboard_search import (
-    _NESTED_CUSTOM_FIELDS_KEY as _NESTED_CUSTOM_FIELDS_KEY,
+    _MAX_CARD_DEPTH,
+    _SEARCH_MATCH_CAP,
+    _find_cards_matching,
+    _SearchCriteria,
+    _SearchGaps,
+    _unread_dashboards_warning,
+    build_search_result,
 )
-from ha_mcp.runtime.dashboard_search import _NESTED_STATES_KEY as _NESTED_STATES_KEY
-from ha_mcp.runtime.dashboard_search import _NON_CARD_CHILD_KEYS as _NON_CARD_CHILD_KEYS
-from ha_mcp.runtime.dashboard_search import _SEARCH_MATCH_CAP as _SEARCH_MATCH_CAP
-from ha_mcp.runtime.dashboard_search import _badge_matches as _badge_matches
-from ha_mcp.runtime.dashboard_search import _card_matches as _card_matches
-from ha_mcp.runtime.dashboard_search import _card_search_match as _card_search_match
-from ha_mcp.runtime.dashboard_search import _card_slots as _card_slots
-from ha_mcp.runtime.dashboard_search import _CardSplit as _CardSplit
-from ha_mcp.runtime.dashboard_search import _CardWalkFrame as _CardWalkFrame
-from ha_mcp.runtime.dashboard_search import _entity_matches as _entity_matches
-from ha_mcp.runtime.dashboard_search import (
-    _find_badge_matches_in_view as _find_badge_matches_in_view,
-)
-from ha_mcp.runtime.dashboard_search import _find_cards_in_docs as _find_cards_in_docs
-from ha_mcp.runtime.dashboard_search import _find_cards_matching as _find_cards_matching
-from ha_mcp.runtime.dashboard_search import (
-    _find_header_card_matches as _find_header_card_matches,
-)
-from ha_mcp.runtime.dashboard_search import (
-    _find_view_card_matches as _find_view_card_matches,
-)
-from ha_mcp.runtime.dashboard_search import _jq_key as _jq_key
-from ha_mcp.runtime.dashboard_search import _log_non_str_key as _log_non_str_key
-from ha_mcp.runtime.dashboard_search import _note_uncovered as _note_uncovered
-from ha_mcp.runtime.dashboard_search import _py_key as _py_key
-from ha_mcp.runtime.dashboard_search import _query_hits as _query_hits
-from ha_mcp.runtime.dashboard_search import _search_warnings as _search_warnings
-from ha_mcp.runtime.dashboard_search import _SearchCriteria as _SearchCriteria
-from ha_mcp.runtime.dashboard_search import _SearchGaps as _SearchGaps
-from ha_mcp.runtime.dashboard_search import _split_badge as _split_badge
-from ha_mcp.runtime.dashboard_search import _split_card_entry as _split_card_entry
-from ha_mcp.runtime.dashboard_search import _split_card_node as _split_card_node
-from ha_mcp.runtime.dashboard_search import (
-    _unread_dashboards_warning as _unread_dashboards_warning,
-)
-from ha_mcp.runtime.dashboard_search import _view_card_lists as _view_card_lists
-from ha_mcp.runtime.dashboard_search import _walk_card as _walk_card
-from ha_mcp.runtime.dashboard_search import build_search_result
 from ha_mcp.runtime.dashboard_tools import DashboardTools as DashboardContractTools
 from ha_mcp.runtime.dashboard_values import (
-    _LARGE_DASHBOARD_CONFIG_SIZE as _LARGE_DASHBOARD_CONFIG_SIZE,
-)
-from ha_mcp.runtime.dashboard_values import (
-    _attach_dashboard_render_paths as _attach_dashboard_render_paths,
-)
-from ha_mcp.runtime.dashboard_values import (
-    _large_dashboard_replacement_warning as _large_dashboard_replacement_warning,
-)
-from ha_mcp.runtime.dashboard_values import (
+    _attach_dashboard_render_paths,
+    _large_dashboard_replacement_warning,
     apply_dashboard_python_transform,
     edit_dashboard_result,
     get_dashboard_result,
@@ -2633,3 +2589,14 @@ class DashboardConfigTools(DashboardContractTools, LegacyDashboards):
 def register_config_dashboard_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant dashboard configuration tools."""
     register_tool_methods(mcp, DashboardConfigTools(client))
+
+
+__all__ = [
+    "DashboardConfigTools",
+    "_MAX_CARD_DEPTH",
+    "_SEARCH_MATCH_CAP",
+    "_SearchGaps",
+    "_find_cards_matching",
+    "fetch_dashboards_list",
+    "register_config_dashboard_tools",
+]

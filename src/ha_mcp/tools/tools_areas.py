@@ -12,10 +12,9 @@ from typing import Any, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
-from ..backends.legacy import legacy_errors, legacy_errors_sync
+from ..backends.legacy import LegacyBackendTools, legacy_errors, legacy_errors_sync
 from ..backends.legacy_config_errors import raise_legacy_classified
 from ..errors import ErrorCode, create_error_response
-from ..runtime.area_config import _label_id_set as _label_id_set
 from ..runtime.area_writes import AreaWriteTools
 from ..runtime.registries import AreaDiscoveryTools
 from .auto_backup import with_auto_backup
@@ -32,11 +31,11 @@ from .tool_hints import read_only_hints, write_hints
 logger = logging.getLogger(__name__)
 
 
-class AreaTools(AreaWriteTools):
+class AreaTools(LegacyBackendTools, AreaWriteTools):
     """Area and floor management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
-        self._client = client
+        super().__init__(client)
 
     ha_list_floors_areas = tool(
         name="ha_list_floors_areas",
@@ -205,3 +204,9 @@ class AreaTools(AreaWriteTools):
 def register_area_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     """Register Home Assistant area and floor management tools."""
     register_tool_methods(mcp, AreaTools(client))
+
+
+__all__ = [
+    "AreaTools",
+    "register_area_tools",
+]
