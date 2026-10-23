@@ -69,7 +69,7 @@ class BackupFacade:
             Field(
                 default=None,
                 description="(edits.create / edits.list / edits.delete) Snapshot target ID; required for edits.create. "
-                "For entity_registry, use the durable registry UUID reported by ha_get_entity or a backup listing. "
+                "For entity_registry creation, pass an HA entity ID or registry UUID; create/list return the saved UUID. "
                 "List/delete match the saved ID exactly, without resolving entity aliases.",
             ),
         ] = None,
@@ -140,7 +140,7 @@ class BackupFacade:
 
         **Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.
 
-        **Entity edit history:** new automatic captures from `ha_set_entity` and `ha_remove_entity` use `domain="entity_registry"` and the durable registry UUID as `entity_id`. They contain registry settings, including name, area, hidden state and options, and follow the same registration across entity-ID renames. Use the registry UUID reported by `ha_get_entity` for an explicit registry capture, or reuse the ID returned by `edits.create` / `edits.list` for exact list/delete filters. Historical `domain="entity"` snapshots remain readable and restore only temporary state and attributes, not registry settings or physical device state. Their old domain/entity-ID filters still select those old snapshots; they do not also select new registry history. List without filters to discover both types, then use the returned `backup_name` to view or restore one snapshot.
+        **Entity edit history:** new automatic captures from `ha_set_entity` and `ha_remove_entity` use `domain="entity_registry"` and the durable registry UUID as `entity_id`. They contain registry settings, including name, area, hidden state and options, and follow the same registration across entity-ID renames. An explicit registry capture accepts an HA entity ID (e.g. `light.example`) or registry UUID; reuse the saved UUID returned by `edits.create` / `edits.list` for exact list/delete filters. Historical `domain="entity"` snapshots remain readable and restore only temporary state and attributes, not registry settings or physical device state. Their old domain/entity-ID filters still select those old snapshots; they do not also select new registry history. List without filters to discover both types, then use the returned `backup_name` to view or restore one snapshot.
 
         **Examples:**
         - Snapshot before risky op: `ha_manage_backup(scope="snapshot", action="create", name="Before_Big_Change")`
