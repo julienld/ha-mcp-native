@@ -30,6 +30,7 @@ def channels(resources, monkeypatch):
         native_server.NativeServerManager
     )
     manager.hass, manager.backend = source.hass, source.backend
+    manager.entry = SimpleNamespace(options={"enable_llm_api": True})
     manager.engine = engine
     manager.policy = NativePolicy(
         flags={"enable_tool_search": True},

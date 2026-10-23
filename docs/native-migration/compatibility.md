@@ -125,7 +125,7 @@ MCP-specific rich content at the Core boundary; advertise that explicitly.
 
 ## Bound the arbitrary transport escape hatches
 
-`ha_call_service(ws_command=...)` currently accepts arbitrary one-shot native
+The remote runtime's `ha_call_service(ws_command=...)` accepts arbitrary one-shot
 commands, apart from streaming/two-phase operations, service invokers, component
 commands, protected writes and reserved envelopes. A native backend cannot
 support an unknown third-party command by calling its owning Core API unless
@@ -133,9 +133,13 @@ that owner has a registered semantic operation. Calling raw handlers with a fake
 connection would re-create the WebSocket server in-process and bypass its
 intended boundary.
 
-The native path therefore needs an explicit capability map. Mapped operations
-call real owners with their validators; an unmapped command returns a structured
-unsupported-capability error before any side effect. It must never fall back to
+The current native runtime rejects **every** non-null `ws_command`, including
+commands whose dedicated tools already have native owners. It returns a structured
+unsupported-capability error before Home Assistant command dispatch. No capability map is
+implemented. Native MCP and Assist discovery disclose this limitation while
+preserving the parameter schema. A future bounded map could call existing owners
+with their validators; it requires a separate compatibility decision and tests.
+The native runtime must never fall back to
 localhost WebSocket or REST after a write may have started. The remote backend
 can retain its existing arbitrary transport support. Keeping the public
 parameter while narrowing native capabilities is **partial compatibility** and

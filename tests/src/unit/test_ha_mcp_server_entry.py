@@ -174,7 +174,11 @@ class TestSetupEntry:
         assert entry.data[DATA_WEBHOOK_ID].startswith("mcp_")
         domain_data = hass.data[DOMAIN]
         # Options snapshot taken so data writes don't self-reload.
-        assert domain_data[DATA_LAST_OPTIONS] == {"server_port": 9584}
+        assert domain_data[DATA_LAST_OPTIONS] == {
+            "server_port": 9584,
+            "enable_llm_api": False,
+            "enable_native_llm_import": False,
+        }
         # Only the bring-up runs in the background: the server arrives with
         # the component release (#2427), so there is no version refresh.
         assert entry.async_create_background_task.call_count == 1

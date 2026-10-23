@@ -33,6 +33,7 @@ from .native_resource_tools import build_resource_tools
 from .native_screenshot_tools import screenshot_definition
 from .native_search_tools import search_definition
 from .native_security_policy_tools import security_policy_definition
+from .native_service_tools import service_definition
 from .native_system_tools import system_definitions
 from .native_theme_tools import theme_definition
 from .native_trace_tools import trace_definition
@@ -42,7 +43,9 @@ from .native_yaml_tools import yaml_definitions
 
 def build_native_catalog(manager: Any) -> list[ToolDefinition]:
     bridge = [
-        definition
+        service_definition(definition)
+        if definition.name == "ha_call_service"
+        else definition
         for definition in build_initial_catalog(manager.backend)
         if definition.name != "ha_config_get_label"
     ]
