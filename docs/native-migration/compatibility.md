@@ -185,6 +185,17 @@ snapshots retain their original state-and-attributes meaning. New
 as the key, so an `entity_id` rename does not redirect a restore to another
 registration. No global snapshot format version changes.
 
+This changes the observable metadata of new automatic entity captures in both
+runtimes: `domain="entity", entity_id="light.example"` still selects historical
+state snapshots, but does not select new registry snapshots. For registry
+history, use `domain="entity_registry"` and the durable registry UUID returned
+as `entity_id` by the backup listing. An explicit registry capture can use the
+registry UUID reported by `ha_get_entity`. API and settings-UI list/delete
+filters match the saved domain and ID exactly; they do not expand entity aliases
+or combine the two snapshot types. Clear the filters to discover both histories,
+then select a returned filename for view/restore. Existing snapshots are not
+renamed or relabelled, and a bulk-delete filter does not silently broaden.
+
 Registry restoration changes the user settings and option domains through the
 actual registry API. It compares the current row with the same typed before-image
 saved as its safety copy and refuses concurrent edits. It updates an existing

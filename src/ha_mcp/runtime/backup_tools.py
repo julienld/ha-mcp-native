@@ -59,16 +59,18 @@ class BackupFacade:
             str | None,
             Field(
                 default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by domain (e.g. 'automation', 'helper_timer'). "
-                "Required for edits.create.",
+                description="(edits.create / edits.list / edits.delete) Snapshot domain (e.g. 'automation', 'helper_timer'). "
+                "'entity' stores state/attributes; 'entity_registry' stores registry settings. "
+                "Required for edits.create; list/delete match the domain exactly.",
             ),
         ] = None,
         entity_id: Annotated[
             str | None,
             Field(
                 default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by entity ID. "
-                "Required for edits.create.",
+                description="(edits.create / edits.list / edits.delete) Snapshot target ID; required for edits.create. "
+                "For entity_registry, use the durable registry UUID reported by ha_get_entity or a backup listing. "
+                "List/delete match the saved ID exactly, without resolving entity aliases.",
             ),
         ] = None,
         backup_name: Annotated[
@@ -137,6 +139,8 @@ class BackupFacade:
         **`enable_auto_backup` and `scope="edits"`:** the automatic-on-write capture (every wrapped tool call) is gated by `enable_auto_backup=true` — if the listing is empty, check the toggle (web settings UI or `ENABLE_AUTO_BACKUP=true` env var). The explicit `(edits, create)` action bypasses the toggle since the request is explicit; `list` / `view` / `restore` / `delete` operate on whatever's already on disk regardless of the toggle's current state.
 
         **Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.
+
+        **Entity edit history:** new automatic captures from `ha_set_entity` and `ha_remove_entity` use `domain="entity_registry"` and the durable registry UUID as `entity_id`. They contain registry settings, including name, area, hidden state and options, and follow the same registration across entity-ID renames. Use the registry UUID reported by `ha_get_entity` for an explicit registry capture, or reuse the ID returned by `edits.create` / `edits.list` for exact list/delete filters. Historical `domain="entity"` snapshots remain readable and restore only temporary state and attributes, not registry settings or physical device state. Their old domain/entity-ID filters still select those old snapshots; they do not also select new registry history. List without filters to discover both types, then use the returned `backup_name` to view or restore one snapshot.
 
         **Examples:**
         - Snapshot before risky op: `ha_manage_backup(scope="snapshot", action="create", name="Before_Big_Change")`
