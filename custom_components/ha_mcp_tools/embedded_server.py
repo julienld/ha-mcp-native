@@ -554,18 +554,14 @@ class EmbeddedServerManager:
         return DIST_NAME_STABLE if target == DIST_NAME_DEV else DIST_NAME_DEV
 
     def _maybe_purge_stale_modules(self, ready_version: str | None) -> None:
-        """Preserve native class identity; refresh only a legacy-only generation.
+        """Reuse unchanged modules and preserve native class identity.
 
-        Native component classes keep SDK bases and tool-result types after
-        entry unload. A same-version switch must reuse those modules. Once
-        native bindings exist, changed/unknown versions require a Core restart,
-        and package replacement is refused earlier by the managed installer.
-
-        A legacy-only process retains its update workflow: do not purge while
-        an orphan or another worker is importing; reuse a known equal version
-        without an override; otherwise reload the worker's package modules.
-        An override may change source without changing its version. Purging
-        the worker cannot hot-reload references retained by HA components.
+        Native bindings survive unload: changed/unknown versions require a
+        Core restart; package replacement is refused before installation.
+        Legacy may reuse even a first component import, but replacements and
+        overrides must purge (source can change under the same version).
+        Never purge around live orphan/importing workers. A legacy purge cannot
+        refresh references retained by HA components; Native then needs restart.
         """
         native_version = native_bound_version()
         if native_version is not None:
@@ -598,8 +594,12 @@ class EmbeddedServerManager:
         elif (
             not self._pip_spec_override
             and ready_version is not None
-            and _CACHED_IMPORT_VERSION is not None
-            and ready_version == _CACHED_IMPORT_VERSION
+            and ready_version
+            == (
+                getattr(sys.modules.get("ha_mcp"), "__version__", None)
+                if _CACHED_IMPORT_VERSION is None
+                else _CACHED_IMPORT_VERSION
+            )
         ):
             _LOGGER.debug(
                 "Cached ha_mcp modules already match installed version %s; "
@@ -617,14 +617,13 @@ class EmbeddedServerManager:
     async def _async_run_tracked_install_job(
         self, func: Callable[[], object]
     ) -> object:
-        """Run a package-mutating executor job, tracked process-wide.
+        """Track package mutation process-wide until its executor job finishes.
 
-        Registration happens BEFORE dispatch and completion is signalled on
-        the executor thread in a finally, so a bring-up cancelled mid-job
-        (install or uninstall) leaves behind a waitable job instead of an
-        invisible one.
+        Register before dispatch; signal completion from the executor's finally.
+        A cancelled bring-up leaves a waitable job for the next manager.
         """
-        global _PENDING_INSTALL_DONE
+        global _PENDING_INSTALL_DONE, _CACHED_IMPORT_VERSION
+        _CACHED_IMPORT_VERSION = ""  # Replacement can keep the same version.
         done = threading.Event()
         with _PENDING_INSTALL_LOCK:
             _PENDING_INSTALL_DONE = done
@@ -1109,6 +1108,8 @@ class EmbeddedServerManager:
 
     async def _async_process_requirements_fast(self) -> None:
         """Fast path: let HA's requirements manager satisfy the override spec."""
+        global _CACHED_IMPORT_VERSION
+        _CACHED_IMPORT_VERSION = ""
         try:
             await async_process_requirements(
                 self._hass,
@@ -1960,11 +1961,10 @@ _PENDING_INSTALL_LOCK = threading.Lock()
 _PENDING_INSTALL_DONE: threading.Event | None = None
 
 
-# Version of the ha_mcp generation currently cached in sys.modules — set by
-# the worker right after its first import lands, cleared by the purge. Process-wide
-# (the module cache it describes is process-wide too). Lets a retry with an
-# unchanged install keep the warm cache instead of paying the full cold import
-# again (issue #1904).
+# Process-wide worker import version: reuse unchanged modules on retries (#1904).
+# None permits checking the component's first import; an empty string forbids
+# that fallback after any package-mutating dispatch (even failure/cancellation)
+# until purge clears it. Only the worker records a successfully imported version.
 _CACHED_IMPORT_VERSION: str | None = None
 
 
