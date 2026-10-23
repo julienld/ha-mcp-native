@@ -103,6 +103,7 @@ from .client.rest_client import (
     HomeAssistantError,
 )
 from .runtime import snapshot_flow_restore as _shared_flow_restore
+from .runtime.entity_snapshot_values import entity_registry_identity
 from .runtime.snapshot_compare import comparison_values, diff_snapshot_values
 from .runtime.snapshot_files import (
     _TEXT_DOMAINS,
@@ -600,7 +601,9 @@ class BackupManager(SnapshotFilesMixin):
         if handler is None:
             return None
 
-        if _is_flow_helper_domain(domain) and "." in entity_id:
+        if "." in entity_id and (
+            _is_flow_helper_domain(domain) or domain == "entity_registry"
+        ):
             config = await self._fetch_config_for_snapshot(
                 handler,
                 entity_id,
@@ -610,8 +613,12 @@ class BackupManager(SnapshotFilesMixin):
             )
             if config is _SNAPSHOT_SKIP:
                 return None
-            entity_id = _flow_entry_id(entity_id, config, _flow_type(domain))
-            # Resolve before bookkeeping, but read options again under the lock:
+            entity_id = (
+                entity_registry_identity(config)["id"]
+                if domain == "entity_registry"
+                else _flow_entry_id(entity_id, config, _flow_type(domain))
+            )
+            # Resolve before bookkeeping, but read the target again under the lock:
             # another write may complete while this alias capture waits.
 
         async def fetch() -> Any:
