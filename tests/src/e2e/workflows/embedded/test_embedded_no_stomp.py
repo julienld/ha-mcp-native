@@ -337,9 +337,21 @@ def _assert_native_managed_install(
     version = build["library_version"]
     assert runtime["ha-mcp"] == version
     wheel = f"ha_mcp-{version}-py3-none-any.whl"
+    digest = build["files"][wheel]
+    # uv retains the fragment for file URLs (unlike the published HTTPS
+    # receipt). Verify the staged manifest and pass its exact URL through.
+    wheel_url = f"file:///config/{wheel}#sha256={digest}"
+    manifest = json.loads(
+        (config / "custom_components/ha_mcp_tools/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["requirements"].count("ha-mcp @ " + wheel_url) == 1, (
+        "Native manifest does not declare the exact paired local wheel and hash"
+    )
     expected = {
-        "wheel_url": f"file:///config/{wheel}",
-        "wheel_sha256": build["files"][wheel],
+        "wheel_url": wheel_url,
+        "wheel_sha256": digest,
     }
     # Reuse the published-install receipt verifier. Besides PEP 610 provenance,
     # it checks installed payload hashes if uv omitted the archive hash.

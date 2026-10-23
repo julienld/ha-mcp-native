@@ -46,6 +46,7 @@ async def history(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
             ]
         },
         guardrails=False,
+        rejection_code="VALIDATION_INVALID_PARAMETER",
     )
 
     async def execute(function: Any, *args: Any) -> Any:
@@ -97,7 +98,7 @@ async def history(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
             payload["types"] = set(payload["types"])
         if payload.get("future_switch") == "reject":
             raise ToolFailure(
-                "VALIDATION_INVALID_PARAMETER",
+                world.rejection_code,
                 "Core rejected future_switch",
                 status="not_started",
             )
@@ -360,6 +361,17 @@ async def test_revocation_during_metadata_prevents_statistics_disclosure(
     result = await _get(history, source="statistics")
     assert result.is_error and result.data["error"]["code"] == "AUTH_FORBIDDEN"
     assert "future_metric" not in str(result.data)
+
+
+async def test_core_schema_rejection_keeps_public_recorder_parameter_classification(
+    history: Any,
+) -> None:
+    history.world.rejection_code = "VALIDATION_FAILED"
+    result = await _get(
+        history, source="statistics", core_options={"future_switch": "reject"}
+    )
+    assert result.data["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+    assert result.status == "not_started" and history.calls == []
 
 
 async def test_recorder_thread_is_drained_before_repeated_cancellation_returns(

@@ -59,13 +59,16 @@ def _parameters(hass: Any, command: str, arguments: dict[str, Any]) -> dict[str,
         if not error.code.startswith("VALIDATION_") or not isinstance(detail, dict):
             raise
         message = f"Invalid recorder parameters: {error}"
+        code = (
+            "VALIDATION_INVALID_PARAMETER"
+            if error.code == "VALIDATION_FAILED"
+            else error.code
+        )
         payload = {
             **error.data,
-            "error": {**detail, "message": message},
+            "error": {**detail, "code": code, "message": message},
         }
-        raise ToolFailure(
-            error.code, message, data=payload, status=error.status
-        ) from error
+        raise ToolFailure(code, message, data=payload, status=error.status) from error
 
 
 class RecorderQueries:
