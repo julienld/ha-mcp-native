@@ -485,9 +485,11 @@ class NativeEntityWrites(NativeEntityRegistry):
                         "Core did not confirm the requested entity rename"
                     )
             except Exception as error:  # noqa: BLE001 - Core save/listeners may already have committed
-                registry_outcome_unknown(
-                    "entity", "update", error, context=self._phase_context(plan)
-                )
+                context = self._phase_context(plan)
+                if isinstance(error, ValueError):
+                    # Keep Core's actionable constraint without inferring no effects.
+                    context["core_error"] = str(error)
+                registry_outcome_unknown("entity", "update", error, context=context)
             phase = payload.get("options_domain", "registry")
             plan.confirmed.append(phase)
             if "options_domain" in payload:
