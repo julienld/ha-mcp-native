@@ -43,9 +43,15 @@ def isolated_environment(directory: Path) -> dict[str, str]:
 
 
 def run_logged(command: list[str], *, env: dict[str, str], log: Path) -> None:
+    # Core's uv subprocess inherits cwd. Keep it outside the source checkout
+    # so its dependency installation does not discover our project policy.
+    # PYTHONPATH still locates this harness; explicit user UV_* settings remain.
+    directory = Path(env["VIRTUAL_ENV"]).resolve().parent
+    if directory.is_relative_to(ROOT.resolve()):
+        raise RuntimeError("Minimal Core work directory must be outside the checkout")
     result = subprocess.run(
         command,
-        cwd=ROOT,
+        cwd=directory,
         env=env,
         capture_output=True,
         text=True,

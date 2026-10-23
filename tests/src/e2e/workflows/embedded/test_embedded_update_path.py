@@ -1,8 +1,7 @@
 """End-to-end test for the in-process server UPDATE path (issues #1783, #1785).
 
-Reproduces the exact production sequence those issues regressed on: a Home
-Assistant container running the ``ha_mcp_tools`` custom component with the ha-mcp
-server installed **from PyPI** (the newest published stable), then the
+Reproduces the production update sequence those issues regressed on: a Home
+Assistant container running the ``ha_mcp_tools`` custom component, then the
 component's REAL in-process update mechanism — the options-flow ``pip_spec``
 override, which reloads the entry, force-installs the new requirement, and
 restarts the worker thread — swaps the server for a wheel built from THIS
@@ -17,24 +16,24 @@ Two scenarios run, parametrized over the component source (see the
   to the server this checkout produces.
 - ``component@working-tree``: the component as it stands in THIS checkout. Proves
   the PR itself doesn't regress the component's own update machinery (purge,
-  reload, force-install) — caught on the introducing PR instead of surfacing
-  later, once ``stable`` moves to include it.
+  reload, force-install). Core first installs its paired checkout library with
+  a ``post998`` baseline version; the update target has version ``post999``.
+  The published older library cannot supply the new component's shared imports.
 
-Both start the server from PyPI and drive the same update to the checkout wheel;
-they differ only in which component code performs the update.
+The stable-component scenario still starts from PyPI. Both scenarios drive the
+same options-flow update and require the new version to serve the full catalog.
 
 Why a dedicated, module-scoped container (like ``test_embedded_server.py``) and
 NOT the shared session fixture: the session embedded backend installs the
 working-tree component and seeds the checkout wheel as the INITIAL pip spec — the
 server is already the new code before any update runs, which is the opposite of
-the PyPI-server starting state this lane exists to prove.
+the distinct baseline starting state this lane exists to prove.
 
 Why the sentinel version: the checkout's static version equals the current PyPI
 stable, so a plain rebuild would be version-invisible — the update could "succeed"
 while still serving the first-imported PyPI code and no assertion could tell. The
-fixture temporarily rewrites the ``[project]`` version to ``<base>.post999`` for
-the build (restoring the file in ``finally``), so a distinct version proves which
-code is live afterwards.
+fixture temporarily rewrites the ``[project]`` version for each build (restoring
+the file in ``finally``), so a distinct version proves which code is live afterwards.
 
 Why the MCP ``initialize`` handshake's ``serverInfo.version`` is the version
 surface (not the ``update`` entity's ``installed_version`` attribute):
@@ -79,6 +78,7 @@ import pytest
 import requests
 from test_constants import HA_TEST_IMAGE, TEST_TOKEN
 
+from ..._conftest_seed import pair_component_library
 from ...utilities.streamable_http import parse_mcp_response
 
 _UPDATE_PATH_ENV = "E2E_UPDATE_PATH"
@@ -218,11 +218,13 @@ def _export_released_component(dest_dir: Path) -> Path:
     return component
 
 
-def _build_sentinel_wheel(dest_dir: Path) -> tuple[Path, str]:
+def _build_sentinel_wheel(
+    dest_dir: Path, *, post_release: int = 999
+) -> tuple[Path, str]:
     """Build a ha-mcp wheel from THIS checkout carrying a distinct sentinel version.
 
     The checkout's static version equals the current PyPI stable, so the version
-    is temporarily rewritten to ``<base>.post999`` for the build to make the wheel
+    is temporarily rewritten to ``<base>.post<post_release>`` to make the wheel
     identifiable at runtime. The original ``pyproject.toml`` bytes are read first
     and restored in ``finally`` — even if the build raises — so the tree is never
     left mutated. Returns ``(wheel_path, sentinel_version)``.
@@ -233,7 +235,7 @@ def _build_sentinel_wheel(dest_dir: Path) -> tuple[Path, str]:
     """
     original = _PYPROJECT.read_bytes()
     base_version = str(tomllib.loads(original.decode("utf-8"))["project"]["version"])
-    sentinel = f"{base_version}.post999"
+    sentinel = f"{base_version}.post{post_release}"
     patched, count = re.subn(
         rb'(?m)^version\s*=\s*"[^"]+"',
         f'version = "{sentinel}"'.encode(),
@@ -263,18 +265,35 @@ def _build_sentinel_wheel(dest_dir: Path) -> tuple[Path, str]:
     return wheels[0], sentinel
 
 
-def _seed_config(config_path: Path, component_src: Path) -> None:
-    """Install the RELEASED component + seed a server entry that installs from PyPI.
+def _stage_update_baseline(
+    work_dir: Path, config_path: Path, *, paired: bool
+) -> tuple[str | None, str | None]:
+    if not paired:
+        return None, None
+    wheel, version = _build_sentinel_wheel(work_dir / "baseline", post_release=998)
+    shutil.copy2(wheel, config_path / wheel.name)
+    return wheel.name, version
 
-    The seeded ``pip_spec`` is EMPTY: ``_resolve_pip_spec`` then resolves the bare
-    ``ha-mcp`` distribution, so the first bring-up installs the newest PyPI stable
-    — exactly a fresh production install, and the starting point for the update.
+
+def _seed_config(
+    config_path: Path, component_src: Path, *, initial_wheel_name: str | None = None
+) -> None:
+    """Seed a released/PyPI pair or the working component's matching local library.
+
+    Without a local baseline, ``pip_spec`` stays empty and the released component
+    resolves its published package exactly as before. A working component needs
+    its matching local library in the manifest before Core imports it.
     """
     shutil.copytree(_INITIAL_STATE, config_path, dirs_exist_ok=True)
 
     dest = config_path / "custom_components" / _DOMAIN
     dest.mkdir(parents=True, exist_ok=True)
     shutil.copytree(component_src, dest, dirs_exist_ok=True)
+    initial_requirement = (
+        pair_component_library(config_path, initial_wheel_name)
+        if initial_wheel_name is not None
+        else ""
+    )
 
     storage_file = config_path / ".storage" / "core.config_entries"
     data = json.loads(storage_file.read_text())
@@ -295,8 +314,8 @@ def _seed_config(config_path: Path, component_src: Path) -> None:
             "minor_version": 1,
             "modified_at": "2025-09-07T23:56:28.040747+00:00",
             "options": {
-                # Empty => bare ``ha-mcp`` dist => newest PyPI stable on bring-up.
-                _OPT_PIP_SPEC: "",
+                # Released component: PyPI. Working component: paired local baseline.
+                _OPT_PIP_SPEC: initial_requirement,
                 _OPT_CHANNEL: "stable",
                 _OPT_AUTO_UPDATE: True,
                 _OPT_SERVER_PORT: _SERVER_PORT,
@@ -516,7 +535,7 @@ def _submit_options_update(
     ids=["component@stable", "component@working-tree"],
 )
 def update_path_ha(request):
-    """Boot a dedicated HA container: component + PyPI server, phase-1 ready.
+    """Boot a dedicated HA container with a compatible phase-1 baseline.
 
     Parametrized over the component source (rationale in the module docstring):
 
@@ -528,7 +547,7 @@ def update_path_ha(request):
       own component update machinery still works.
 
     Both containers run sequentially in one job. Yields a context dict once the
-    PyPI-installed in-process server answers its webhook; the sentinel wheel is
+    baseline in-process server answers its webhook; the sentinel wheel is
     already staged under ``/config`` for the test's options-flow update.
     """
     docker_error = _docker_probe_error()
@@ -559,6 +578,9 @@ def update_path_ha(request):
                 pytest.fail(f"working-tree component not found at {component_src}")
 
         try:
+            initial_wheel_name, baseline_version = _stage_update_baseline(
+                work_dir, config_path, paired=request.param == "head"
+            )
             wheel, sentinel = _build_sentinel_wheel(work_dir / "wheel")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
             # FAIL, not skip: a wheel that cannot be built is a real regression
@@ -568,7 +590,7 @@ def update_path_ha(request):
             pytest.fail(f"could not build the sentinel wheel: {err}\nstderr:\n{stderr}")
 
         shutil.copy2(wheel, config_path / wheel.name)
-        _seed_config(config_path, component_src)
+        _seed_config(config_path, component_src, initial_wheel_name=initial_wheel_name)
 
         container = (
             DockerContainer(HA_TEST_IMAGE)
@@ -599,10 +621,15 @@ def update_path_ha(request):
         # its baseline is not a usable transition anchor.
         if phase1_version in (None, "unknown"):
             raise AssertionError(
-                "the PyPI-installed in-process server never reported a usable "
+                "the baseline in-process server never reported a usable "
                 f"version within {_PHASE1_READY_TIMEOUT_S}s (got "
                 f"{phase1_version!r}). Container logs:\n{_dump_logs(container)}"
                 f"{_dump_ha_log(config_path)}"
+            )
+        if baseline_version is not None:
+            assert phase1_version == baseline_version, (
+                f"Working component started {phase1_version!r}, expected its paired "
+                f"baseline {baseline_version!r}. {_dump_ha_log(config_path)}"
             )
         yield {
             "base_url": base_url,
@@ -631,12 +658,12 @@ class TestEmbeddedUpdatePath:
         phase1_version = update_path_ha["phase1_version"]
         container = update_path_ha["container"]
 
-        # (1) Phase 1: the component brought the PyPI server up (fixture
+        # (1) Phase 1: the component brought its baseline server up (fixture
         # guaranteed) and it reports a REAL baseline version — not None, not the
         # "unknown" fallback — that is NOT already the sentinel build about to be
         # installed, so the update is a real, observable transition, not a no-op.
         assert phase1_version not in (None, "unknown") and phase1_version != sentinel, (
-            f"phase-1 server reported {phase1_version!r}; expected a real PyPI "
+            f"phase-1 server reported {phase1_version!r}; expected a real "
             f"baseline version distinct from the sentinel {sentinel!r} (did a "
             "sentinel-versioned wheel leak onto PyPI, or did the server fail to "
             "import a real version?)"
@@ -671,7 +698,7 @@ class TestEmbeddedUpdatePath:
         # (2) + (4) The server comes back up AND reports the sentinel version —
         # proof the freshly force-installed wheel is the code now serving (the
         # component purges cached ha_mcp before the worker restarts, so this
-        # reflects the on-disk install, not the first-imported PyPI build).
+        # reflects the on-disk install, not the first-imported baseline build).
         version, session_id = _wait_for_server(
             base_url, _PHASE2_READY_TIMEOUT_S, expected_version=sentinel
         )

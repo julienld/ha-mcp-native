@@ -14,6 +14,31 @@ from tests.native import minimal_install, minimal_probes, minimal_qualification
 from tests.native.minimal_support import changes, sanitize
 
 
+def test_core_worker_does_not_discover_checkout_uv_policy(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text('[tool.uv]\nexclude-newer = "7 days"\n')
+    work = tmp_path / "isolated-core"
+    work.mkdir()
+    monkeypatch.setattr(minimal_qualification, "ROOT", checkout)
+    monkeypatch.setenv("UV_EXCLUDE_NEWER", "7 days")
+    env = minimal_qualification.isolated_environment(work / "venv")
+    probe = """
+import os
+from pathlib import Path
+
+current = Path.cwd()
+assert not any((parent / 'pyproject.toml').exists() for parent in (current, *current.parents)), 'Core inherited the checkout policy'
+assert os.environ['UV_EXCLUDE_NEWER'] == '7 days', 'Explicit user policy was removed'
+print('Core process has its own working directory and keeps explicit user policy')
+"""
+    log = tmp_path / "worker.log"
+
+    minimal_qualification.run_logged([sys.executable, "-c", probe], env=env, log=log)
+
+    assert "keeps explicit user policy" in log.read_text()
+
+
 @pytest.fixture
 def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     baseline = {

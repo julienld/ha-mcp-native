@@ -59,7 +59,7 @@ from ._conftest_seed import (
 logger = logging.getLogger(__name__)
 
 
-# Boot budgets for the embedded path. The wheel + its dependency tree is
+# Boot budgets for paths with the component's checkout library. Its wheel is
 # preinstalled in the container entrypoint BEFORE HA's /init (so bring-up is
 # fast + deterministic), which delays /api/ liveness by the pip window — hence a
 # much larger API-ready timeout than the default 60s. ``_EMBEDDED_BRINGUP_TIMEOUT``
@@ -227,18 +227,18 @@ def _prepare_testcontainer_config(
             seed_entry=not no_tools_entry,
         )
 
-    # Embedded backend: build the checkout's wheel into /config, install the
-    # in-process MCP server entry, seed its config entry + feature-flag overrides.
-    # Runs before _setup_config_permissions so the wheel, integration, and the
-    # .ha_mcp data dir all get the same readable perms as the rest of the
-    # config. The wheel's dep tree is preinstalled in the container entrypoint.
-    if embedded:
+    # The component imports shared ha_mcp code even when MCP runs externally.
+    # Pair its source with the checkout library, never the published manifest
+    # pin. Only the embedded topology also receives a server config entry.
+    if embedded or not no_tools_entry:
         wheel = (
             stage_native_runtime(repo_root, config_path)
-            if native_runtime_selected()
+            if embedded and native_runtime_selected()
             else _build_embedded_server_wheel(config_path)
         )
         embedded_wheel_name = wheel.name
+    if embedded:
+        assert embedded_wheel_name is not None
         _install_embedded_server(config_path, embedded_wheel_name)
 
     # Pre-#1579 legacy backups for the legacy-restore e2e: seed before boot so
@@ -315,7 +315,7 @@ def _build_ha_testcontainer(
     # an HA boot with missing dependencies.
     preinit_cmds: list[str] = []
 
-    # The embedded lane's wheel supplies the server; see is_server_requirement.
+    # The checkout wheel supplies the component library in either topology.
     manifest_reqs = _collect_manifest_requirements(
         config_path, skip_server=embedded_wheel_name is not None
     )
@@ -352,7 +352,7 @@ def _build_ha_testcontainer(
             'source = pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt"; '
             f'shutil.copyfile(source, "/config/{EMBEDDED_HA_CONSTRAINTS_COPY}")\''
         )
-    elif embedded and embedded_wheel_name is not None:
+    elif embedded_wheel_name is not None:
         # Preinstall the ha-mcp wheel + its whole dependency tree (fastmcp etc.)
         # BEFORE HA's /init, so the in-process MCP server bring-up is fast and
         # deterministic — its force-install of the local wheel then finds every
@@ -387,7 +387,7 @@ def _build_ha_testcontainer(
             f"pip list --format=freeze > /config/{EMBEDDED_FREEZE_AFTER}"
         )
         logger.info(
-            "📦 Embedded backend: preinstalling ha-mcp wheel %s (+deps) before "
+            "📦 Component library: preinstalling ha-mcp wheel %s (+deps) before "
             "HA boots",
             embedded_wheel_name,
         )
@@ -453,6 +453,8 @@ def _wait_for_testcontainer_ready(
     embedded: bool,
     CORE_STATE_TIMEOUT: int,
     SUN_WAIT: int,
+    *,
+    package_preinstalled: bool = False,
 ) -> str | None:
     """Run every testcontainer readiness gate; return the embedded webhook URL or None."""
     # Check if container is actually running
@@ -481,10 +483,12 @@ def _wait_for_testcontainer_ready(
     # a function-local for the entire ha_container_with_fresh_config,
     # which previously caused UnboundLocalError in the HAOS branch.
 
-    # The embedded backend's entrypoint preinstalls the ha-mcp wheel + its
+    # The component's entrypoint preinstalls the checkout ha-mcp wheel + its
     # dependency tree before HA's /init, so /api/ liveness is delayed by that
     # pip window and needs a much larger budget than the default 60s.
-    api_ready_timeout = _EMBEDDED_API_READY_TIMEOUT if embedded else 60
+    api_ready_timeout = (
+        _EMBEDDED_API_READY_TIMEOUT if embedded or package_preinstalled else 60
+    )
     logger.info("🔄 Waiting for Home Assistant API to become ready...")
     if not _wait_for_ha_api_ready(base_url, headers, timeout=api_ready_timeout):
         _dump_ha_readiness_diagnostics(
