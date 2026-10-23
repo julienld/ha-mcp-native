@@ -317,7 +317,21 @@ class AreaWriteTools(AreaConfigTools):
                 )
             )
 
-        except ToolFailure:
+        except ToolFailure as error:
+            if error.code == "RESOURCE_NOT_FOUND" and error.status == "not_started":
+                # Native preflight keeps its precise owner failure; this public
+                # delete tool historically exposes SERVICE_CALL_FAILED.
+                message = f"Failed to remove {kind}: {error}"
+                raise ToolFailure(
+                    ErrorCode.SERVICE_CALL_FAILED.value,
+                    message,
+                    data=create_error_response(
+                        ErrorCode.SERVICE_CALL_FAILED,
+                        message,
+                        context={"kind": kind, id_key: id},
+                    ),
+                    status=error.status,
+                ) from error
             raise
         except Exception as e:  # noqa: BLE001
             self._map_area_write_error(

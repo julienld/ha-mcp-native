@@ -367,3 +367,20 @@ async def test_native_area_unchanged_state_after_dispatched_noop_does_not_prove_
         result.data
     )
     assert _serialize(areas.entries["existing"]) == before and len(areas.calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["area", "floor"])
+async def test_removing_absent_area_or_floor_keeps_public_failure_without_dispatch(
+    native: Any, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """The native preflight must preserve the existing MCP deletion error code."""
+    engine, _, areas, floors, _ = _setup(native, monkeypatch)
+    result = await engine.call(
+        "ha_remove_area_or_floor",
+        {"kind": kind, "id": "missing"},
+        CallContext("actor"),
+    )
+    assert result.is_error and result.data["error"]["code"] == "SERVICE_CALL_FAILED"
+    assert "not found" in result.data["error"]["message"].lower()
+    assert result.status == "not_started"
+    assert not areas.calls and not floors.calls
