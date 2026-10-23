@@ -161,6 +161,109 @@ def _count_attach_calls(tree: ast.AST) -> int:
     return count
 
 
+def _count_success_returns(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, module: ast.Module
+) -> int:
+    """Count response-producing returns that require skill content."""
+    no_return_types = {
+        alias.asname or alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {"typing", "typing_extensions"}
+        for alias in node.names
+        if alias.name in {"NoReturn", "Never"}
+    }
+    owner = next(
+        (
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.ClassDef)
+            and any(
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and (method.name, method.lineno) == (function.name, function.lineno)
+                for method in node.body
+            )
+        ),
+        None,
+    )
+    failure_methods = {
+        method.name
+        for method in (owner.body if owner is not None else [])
+        if isinstance(method, ast.AsyncFunctionDef)
+        and isinstance(method.returns, ast.Name)
+        and method.returns.id in no_return_types
+    }
+    count = 0
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Return) or not isinstance(
+            node.value, (ast.Dict, ast.Name, ast.Await)
+        ):
+            continue
+        value = node.value
+        if isinstance(value, ast.Await) and isinstance(value.value, ast.Call):
+            target = value.value.func
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr in failure_methods
+            ):
+                # Explicitly returning an awaited NoReturn method propagates its
+                # exception; it cannot be a success branch needing an attachment.
+                continue
+        count += 1
+    return count
+
+
+@pytest.mark.parametrize(
+    ("annotation", "returned", "expected"),
+    [
+        ("NoReturn", "await self.reject()", 0),
+        ("dict[str, object]", "await self.reject()", 1),
+        ("NoReturn", "await self.unknown()", 1),
+        ("NoReturn", "await other.reject()", 1),
+        ("FakeNoReturn", "await self.reject()", 1),
+        ("NoReturn | dict[str, object]", "await self.reject()", 1),
+        ("NoReturn", "{'success': True}", 1),
+    ],
+)
+def test_skill_coverage_distinguishes_failure_from_unattached_success(
+    annotation: str, returned: str, expected: int
+) -> None:
+    """An error return needs no skill; genuine or unresolved responses still do."""
+    tree = ast.parse(
+        f"""
+from typing import NoReturn
+class Writer:
+    async def reject(self) -> {annotation}:
+        raise RuntimeError('failed')
+    async def write(self):
+        return {returned}
+"""
+    )
+    function = _find_function_by_name(tree, "write")
+    assert function is not None
+    assert _count_success_returns(function, tree) == expected
+    assert _count_attach_calls(tree) == 0
+
+
+def test_other_class_failure_annotation_cannot_hide_a_success_return() -> None:
+    tree = ast.parse(
+        """
+from typing import NoReturn
+class Other:
+    async def reject(self) -> NoReturn:
+        raise RuntimeError('failed')
+class Writer:
+    async def write(self):
+        return await self.reject()
+"""
+    )
+    function = _find_function_by_name(tree, "write")
+    assert function is not None
+    assert _count_success_returns(function, tree) == 1
+
+
 def _MandatoryBPS_field(tree: ast.AST, tool_name: str) -> tuple[ast.Call | None, str]:
     """Find the ``Field(...)`` call wrapping the function's
     ``MandatoryBPS`` parameter and return the Call node.
@@ -337,15 +440,8 @@ def test_write_tool_attaches_skill_content_somewhere(
     )
     total_attaches = _count_attach_calls(attach_tree)
 
-    # Count return statements that return a dict literal or a variable name
-    # — these are the success paths.
-    success_returns = sum(
-        1
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Return)
-        and node.value is not None
-        and isinstance(node.value, (ast.Dict, ast.Name, ast.Await))
-    )
+    owner_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    success_returns = _count_success_returns(fn, owner_tree)
 
     # Heuristic: attach calls in the module should equal or exceed the
     # number of success return paths in the public method. Holds because

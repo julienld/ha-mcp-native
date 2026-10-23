@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from ha_mcp.backends.legacy import legacy_errors_sync
-from ha_mcp.runtime.dashboard_card_values import describe_card_result
+from ha_mcp.runtime.dashboard_card_values import _flatten, describe_card_result
 
 from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
@@ -64,5 +64,6 @@ async def describe_card_response(client: Any, card_type: str | None) -> dict[str
 
 
 __all__ = [
+    "_flatten",
     "describe_card_response",
 ]

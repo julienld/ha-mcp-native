@@ -190,7 +190,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
             ("tools/tools_services.py", "ha_list_services", "result"),
         ],
         "return_harvest": [
-            ("tools/tools_services.py", "_process_services"),
+            ("runtime/services.py", "_process_services"),
             ("tools/response_helpers.py", "build_pagination_metadata"),
         ],
     },
@@ -372,10 +372,7 @@ def _keys_from_update(node: ast.AST, var_name: str) -> set[str]:
 def _harvest_var_keys(rel_path: str, func_name: str, var_name: str) -> set[str]:
     """Top-level keys assigned to ``var_name`` inside ``func_name``."""
     module = _read_module(rel_path)
-    try:
-        func = _find_function(module, func_name)
-    except LookupError:
-        return set()
+    func = _find_function(module, func_name)
     keys: set[str] = set()
 
     for node in ast.walk(func):
@@ -417,10 +414,7 @@ def _harvest_var_keys(rel_path: str, func_name: str, var_name: str) -> set[str]:
 def _harvest_return_keys(rel_path: str, func_name: str) -> set[str]:
     """Top-level string-literal keys from every ``return {...}`` in the function."""
     module = _read_module(rel_path)
-    try:
-        func = _find_function(module, func_name)
-    except LookupError:
-        return set()
+    func = _find_function(module, func_name)
     keys: set[str] = set()
     for node in ast.walk(func):
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
@@ -485,10 +479,7 @@ def _harvest_marker_dicts(
     Pass 1 are unioned in.
     """
     module = _read_module(rel_path)
-    try:
-        func = _find_function(module, func_name)
-    except LookupError:
-        return set()
+    func = _find_function(module, func_name)
 
     keys: set[str] = set()
     marker_vars: set[str] = set()
@@ -591,6 +582,19 @@ def test_fields_description_lists_every_emitted_key(spec: dict[str, Any]) -> Non
 # ---------------------------------------------------------------------------
 # Meta-tests: pin the scanner's own invariants so they can't silently drift.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "harvest", [_harvest_var_keys, _harvest_return_keys, _harvest_marker_dicts]
+)
+def test_missing_response_builder_cannot_silently_shrink_coverage(harvest: Any) -> None:
+    arguments: tuple[Any, ...] = ()
+    if harvest is _harvest_var_keys:
+        arguments = ("result",)
+    elif harvest is _harvest_marker_dicts:
+        arguments = (frozenset({"success"}),)
+    with pytest.raises(LookupError, match="missing_response_builder"):
+        harvest("runtime/services.py", "missing_response_builder", *arguments)
 
 
 def test_entities_branch_emissions_are_either_stripped_or_documented() -> None:
