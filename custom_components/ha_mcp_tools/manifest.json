@@ -1,0 +1,55 @@
+{
+    "domain": "ha_mcp_tools",
+    "name": "HA-MCP Custom Component",
+    "after_dependencies": [
+        "backup",
+        "cloud",
+        "energy",
+        "frontend",
+        "http",
+        "logbook",
+        "lovelace",
+        "network",
+        "recorder"
+    ],
+    "codeowners": [
+        "@homeassistant-ai"
+    ],
+    "config_flow": true,
+    "dependencies": [
+        "webhook"
+    ],
+    "documentation": "https://github.com/julienld/ha-mcp-native",
+    "iot_class": "local_push",
+    "issue_tracker": "https://github.com/julienld/ha-mcp-native/issues",
+    "requirements": [
+        "ruamel.yaml>=0.18.0",
+        "voluptuous-openapi>=0.4.1",
+        "ha-mcp @ https://github.com/julienld/ha-mcp-native/releases/download/9.0.0.dev3/ha_mcp-9.0.0.dev3-py3-none-any.whl#sha256=b08894eb3db9b7f3ffdfa170856d56c086cd1202990449a4f73fb2eb8f5c4341",
+        "exceptiongroup>=1.2.2",
+        "griffelib>=2.0.0",
+        "httpx2>=2.10.0",
+        "jsonref>=1.1.0",
+        "jsonschema>=4.20.0",
+        "opentelemetry-api>=1.28.0",
+        "platformdirs>=4.0.0",
+        "py-key-value-aio>=0.4.4,<0.5.0",
+        "cachetools>=5.0.0",
+        "pydantic-settings>=2.0.0",
+        "python-multipart>=0.0.26",
+        "markdown-it-py>=2.2.0",
+        "pygments>=2.13.0,<3.0.0",
+        "sse-starlette>=3.0.0",
+        "starlette>=1.0.1",
+        "typing-inspection>=0.4.1",
+        "uncalled-for>=0.4.0",
+        "uvicorn>=0.35; sys_platform != 'emscripten'",
+        "socksio==1.*",
+        "pydantic>=2.13.4,<3",
+        "email-validator>=2.0.0",
+        "python-dotenv>=1.2.4,<2",
+        "truststore>=0.10.4,<0.11",
+        "pydantic-monty==0.0.18"
+    ],
+    "version": "9.0.0.dev3"
+}

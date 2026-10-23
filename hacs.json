@@ -1,0 +1,8 @@
+{
+  "name": "HA-MCP Native Candidate",
+  "homeassistant": "2026.10.2",
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "ha_mcp_tools.zip",
+  "hide_default_branch": true
+}
