@@ -41,13 +41,19 @@ class NativeBlueprints:
     authorize: Authorize = field(kw_only=True, repr=False)
     backup: Capture | None = field(default=None, kw_only=True, repr=False)
 
-    def store(self, domain: str) -> BlueprintOwner:
+    @staticmethod
+    def _validate_domain(domain: str) -> None:
         if domain not in {"automation", "script"}:
-            raise ToolFailure(
+            failure = ToolFailure(
                 "VALIDATION_INVALID_PARAMETER",
                 f"Invalid domain {domain!r}: blueprint domain must be automation or script",
                 status="not_started",
             )
+            failure.data.update(domain=domain, valid_domains=["automation", "script"])
+            raise failure
+
+    def store(self, domain: str) -> BlueprintOwner:
+        self._validate_domain(domain)
         return BlueprintOwner(self.hass, self.actor, domain, authorize=self.authorize)
 
     @staticmethod
@@ -91,12 +97,7 @@ class NativeBlueprints:
             return await self.import_url(
                 self.validated(self.required(url, "url", action), "url"), overwrite
             )
-        if domain not in {"automation", "script"}:
-            raise ToolFailure(
-                "VALIDATION_INVALID_PARAMETER",
-                f"Invalid domain {domain!r}: blueprint domain must be automation or script",
-                status="not_started",
-            )
+        self._validate_domain(domain)
         if action == "list" and domain not in self.hass.data.get("blueprint", {}):
             return blueprint_list_result({}, domain)
         store = self.store(domain)

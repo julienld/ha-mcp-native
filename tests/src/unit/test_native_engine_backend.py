@@ -80,6 +80,12 @@ def native(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(module, "Context", SimpleNamespace)
     monkeypatch.setattr(module, "vol", _REAL_VOL)
     monkeypatch.setattr(wsapi, "vol", _REAL_VOL)
+    validation = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.command_validation"
+    )
+    # Collection may have imported this owner while voluptuous was stubbed.
+    # The fake world's real schemas and caught exception must use one class.
+    monkeypatch.setattr(validation, "_INVALID_ERRORS", (ValueError, _REAL_VOL.Invalid))
     operations = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.services"
     )

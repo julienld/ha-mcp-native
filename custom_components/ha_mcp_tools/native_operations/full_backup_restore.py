@@ -13,6 +13,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.owned_executor import await_owned_io
 
 from .full_backups import NativeFullBackups
+from .registry_failures import with_recovery_hint
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +83,11 @@ async def schedule_full_restore(
             status="not_started",
         )
     if row is None:
-        raise ToolFailure(
-            "RESOURCE_NOT_FOUND", "Target backup not found", status="not_started"
+        raise with_recovery_hint(
+            ToolFailure(
+                "RESOURCE_NOT_FOUND", "Target backup not found", status="not_started"
+            ),
+            "Use ha_manage_backup(scope='snapshot', action='list') to inspect available backups and select a current backup_id",
         )
     image = json.loads(json_bytes(row))
     agent_id, agent, password = access.credentials()

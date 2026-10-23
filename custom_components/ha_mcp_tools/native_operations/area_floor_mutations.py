@@ -57,6 +57,29 @@ def _owner_payload(
     return data
 
 
+def _validate_area_sensors(
+    hass: HomeAssistant, data: dict[str, Any], previous: dict[str, Any] | None
+) -> None:
+    # Core 2026.10's async_create/async_update call these before modifying the
+    # registry. Reuse that preflight so a refusal is not an uncertain write.
+    module = importlib.import_module("homeassistant.helpers.area_registry")
+    for kind in ("humidity", "temperature"):
+        field = f"{kind}_entity_id"
+        if (entity_id := data.get(field)) is None:
+            continue
+        if previous is not None and previous.get(field) == entity_id:
+            continue
+        validator = getattr(module, f"_validate_{kind}_entity", None)
+        if not callable(validator):
+            raise UnsupportedOperation(f"registry.area.{kind}_sensor_validator")
+        try:
+            validator(hass, entity_id)
+        except ValueError as error:
+            raise ToolFailure(
+                "SERVICE_CALL_FAILED", str(error), status="not_started"
+            ) from error
+
+
 async def _mutate(
     hass: HomeAssistant, arguments: dict[str, Any], domain: str, action: str
 ) -> dict[str, Any]:
@@ -74,6 +97,8 @@ async def _mutate(
     if action != "create" and before is None:
         registry_target_missing(domain, data[f"{domain}_id"])
     data = _owner_payload(hass, domain, data)
+    if domain == "area" and action != "delete":
+        _validate_area_sensors(hass, data, before)
     operation = getattr(registry, f"async_{action}", None)
     if not callable(operation):
         raise UnsupportedOperation(f"registry.{domain}.{action}")

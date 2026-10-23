@@ -34,6 +34,7 @@ async def test_blueprint_invalid_domain_explains_the_invalid_parameter(
     with pytest.raises(ToolFailure, match="Invalid domain") as failed:
         await service.manage(action, domain="sensor", path="missing.yaml")
     assert failed.value.code == "VALIDATION_INVALID_PARAMETER"
+    assert failed.value.data["valid_domains"] == ["automation", "script"]
     assert failed.value.status == "not_started" and not owner.calls
 
 
@@ -119,25 +120,36 @@ async def test_missing_update_has_a_discovery_hint(updates: Any) -> None:
     assert "ha_manage_updates" in result.data["error"]["suggestion"]
 
 
-async def test_unknown_repair_keeps_the_public_per_item_code(repairs: Any) -> None:
+@pytest.mark.parametrize(
+    ("action", "code"),
+    [
+        ("ignore_repair", "RESOURCE_NOT_FOUND"),
+        ("unignore_repair", "SERVICE_CALL_FAILED"),
+    ],
+)
+async def test_unknown_repair_keeps_the_public_per_item_code(
+    repairs: Any, action: str, code: str
+) -> None:
     result = await invoke(
         repairs.world,
-        action="unignore_repair",
+        action=action,
         repairs=[
             {"domain": "fixture", "issue_id": "missing"},
             {"domain": "fixture", "issue_id": "a"},
         ],
     )
-    assert result.data["results"][0]["error"]["code"] == "SERVICE_CALL_FAILED"
+    assert result.data["results"][0]["error"]["code"] == code
     assert result.data["results"][1]["success"] is True
-    assert repairs.calls == [("fixture", "a", False)]
+    assert repairs.calls == [("fixture", "a", action == "ignore_repair")]
 
 
 async def test_missing_restore_archive_reports_not_found_before_safety_backup(
     restore: Any,
 ) -> None:
-    with pytest.raises(ToolFailure, match="not found"):
+    with pytest.raises(ToolFailure, match="not found") as failed:
         await restore.restore(restore.manager, CallContext("actor"), "absent", False)
+    assert "ha_manage_backup" in failed.value.data["error"]["suggestion"]
+    assert "available backups" in failed.value.data["error"]["suggestion"]
     restore.owner.async_create_backup.assert_not_awaited()
     restore.owner.async_restore_backup.assert_not_awaited()
 
