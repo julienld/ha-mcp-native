@@ -1,10 +1,11 @@
 ARG HA_IMAGE=ghcr.io/home-assistant/home-assistant:2026.10.2
 FROM ${HA_IMAGE} AS published
 ARG SOURCE_REVISION
+ARG RELEASE_REPOSITORY=julienld/ha-mcp-native
 # Deliberately no wheel COPY or pip install: Core must fetch the public URL.
 COPY scripts/native_published_assets.py /opt/native_published_assets.py
 COPY dist/native/native-build.json dist/native/published-verification.json dist/native/ha_mcp_tools.zip /opt/native-assets/
-RUN python /opt/native_published_assets.py prepare-image --assets /opt/native-assets --destination /opt/native/custom_components/ha_mcp_tools --source-revision "${SOURCE_REVISION}"
+RUN python /opt/native_published_assets.py prepare-image --assets /opt/native-assets --destination /opt/native/custom_components/ha_mcp_tools --source-revision "${SOURCE_REVISION}" --repository "${RELEASE_REPOSITORY}"
 COPY tests/native/fixtures/native_fixture /opt/native/custom_components/native_fixture
 RUN python - <<'PY'
 import sys

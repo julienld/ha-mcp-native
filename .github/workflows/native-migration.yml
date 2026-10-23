@@ -81,11 +81,11 @@ jobs:
         env:
           NATIVE_VERSION: 9.0.0.dev${{ github.run_number }}
           NATIVE_TAG: native-ci-${{ github.run_id }}
-        run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG"
+        run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG" --github "$GITHUB_REPOSITORY"
       - name: Qualify dependencies and imports on minimal Core
         run: |
           mkdir -p tests/native/out
-          docker run --rm -v "$PWD:/work" -w /work --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.2 -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.2 -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
       - name: Validate library against Home Assistant constraints
         run: docker build -f tests/native/Dockerfile -t ha-mcp-native-candidate .
       - name: Exercise candidate on the real HA HTTP server
@@ -131,9 +131,9 @@ jobs:
           version: "0.13.0"
           python-version: '3.14'
       - name: Verify publicly available assets against this checkout
-        run: uv run --locked -s scripts/native_published_assets.py fetch --tag "$PUBLISHED_TAG"
+        run: uv run --locked -s scripts/native_published_assets.py fetch --tag "$PUBLISHED_TAG" --repository "$GITHUB_REPOSITORY"
       - name: Build Core without preinstalling the published wheel
-        run: docker build --target published --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+        run: docker build --target published --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)" --build-arg "RELEASE_REPOSITORY=$GITHUB_REPOSITORY" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
       - name: Exercise managed installation and the complete existing Core bench
         run: uv run -s tests/native/run_container.py --published-tag "$PUBLISHED_TAG"
       - name: Preserve published-install qualification evidence

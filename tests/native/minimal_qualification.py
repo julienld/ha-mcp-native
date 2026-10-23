@@ -14,6 +14,8 @@ import venv
 from pathlib import Path
 from typing import Any
 
+from scripts.native_published_assets import REPOSITORY
+
 from .minimal_support import sanitize, save
 
 CORE_VERSION = "2026.10.2"
@@ -56,7 +58,9 @@ def run_logged(command: list[str], *, env: dict[str, str], log: Path) -> None:
         raise RuntimeError(f"Minimal qualification command failed; see {log.name}")
 
 
-def qualify(assets: Path, work: Path, output: Path) -> None:
+def qualify(
+    assets: Path, work: Path, output: Path, *, repository: str = REPOSITORY
+) -> None:
     if sys.platform != "linux" or sys.version_info < (3, 14, 2):
         raise RuntimeError(
             "The real minimal Core qualification needs Linux Python 3.14.2+"
@@ -126,6 +130,8 @@ def qualify(assets: Path, work: Path, output: Path) -> None:
                 str(work.resolve()),
                 "--output",
                 str(output.resolve()),
+                "--repository",
+                repository,
             ],
             env=env,
             log=log,
@@ -145,8 +151,9 @@ def main() -> None:
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--work-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repository", default=REPOSITORY)
     args = parser.parse_args()
-    qualify(args.assets, args.work_directory, args.output)
+    qualify(args.assets, args.work_directory, args.output, repository=args.repository)
 
 
 if __name__ == "__main__":

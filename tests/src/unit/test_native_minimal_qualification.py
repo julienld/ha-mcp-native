@@ -35,7 +35,7 @@ def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         additions={},
     )
 
-    def prepare(_assets: Path, component: Path) -> Any:
+    def prepare(_assets: Path, component: Path, *, repository: str) -> Any:
         component.mkdir(parents=True)
         (component / "manifest.json").write_text(
             json.dumps(

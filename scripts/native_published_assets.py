@@ -39,13 +39,24 @@ def validate_tag(tag: str) -> None:
         raise ValueError("Expected a single release tag without path separators")
 
 
-def _asset_url(tag: str, filename: str) -> str:
+def validate_repository(repository: str) -> None:
+    if (
+        re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repository
+        )
+        is None
+    ):
+        raise ValueError("Expected a GitHub repository in owner/name form")
+
+
+def _asset_url(tag: str, filename: str, repository: str = REPOSITORY) -> str:
     validate_tag(tag)
+    validate_repository(repository)
     if Path(filename).name != filename or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9._-]*", filename
     ):
         raise ValueError("Invalid asset basename")
-    return f"https://github.com/{REPOSITORY}/releases/download/{tag}/{filename}"
+    return f"https://github.com/{repository}/releases/download/{tag}/{filename}"
 
 
 def _redirect_allowed(url: str) -> None:
@@ -77,9 +88,16 @@ class AssetRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, file, code, message, headers, newurl)
 
 
-def download(tag: str, filename: str, destination: Path, maximum: int) -> None:
+def download(
+    tag: str,
+    filename: str,
+    destination: Path,
+    maximum: int,
+    *,
+    repository: str = REPOSITORY,
+) -> None:
     request = urllib.request.Request(
-        _asset_url(tag, filename),
+        _asset_url(tag, filename, repository),
         headers={
             "User-Agent": "ha-mcp-native-release-qualification",
             "Accept": "application/octet-stream",
@@ -120,14 +138,17 @@ def release_contract(
     tag: str,
     revision: str,
     submodules: dict[str, str] | None = None,
+    *,
+    repository: str = REPOSITORY,
 ) -> dict[str, str]:
     validate_tag(tag)
+    validate_repository(repository)
     if not isinstance(proof, dict):
         raise ValueError("Expected a release metadata object")
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("Expected the full checked-out source revision")
     if (proof.get("repository"), proof.get("tag"), proof.get("revision")) != (
-        REPOSITORY,
+        repository,
         tag,
         revision,
     ):
@@ -145,7 +166,10 @@ def release_contract(
         or proof.get("component_protocol_version") != version.split(".dev")[0]
     ):
         raise ValueError("Component and wheel version provenance disagree")
-    if proof.get("dependency_profile") != "native wheel without active dependency edges; individual Core-managed requirements":
+    if (
+        proof.get("dependency_profile")
+        != "native wheel without active dependency edges; individual Core-managed requirements"
+    ):
         raise ValueError("Expected the native dependency profile")
     declared = proof.get("submodules")
     if (
@@ -170,7 +194,7 @@ def release_contract(
         )
     ):
         raise ValueError("Expected exact wheel and component SHA-256 entries")
-    url = _asset_url(tag, wheel)
+    url = _asset_url(tag, wheel, repository)
     dependency = f"ha-mcp @ {url}#sha256={files[wheel]}"
     if proof.get("dependency") != dependency:
         raise ValueError(
@@ -274,19 +298,40 @@ def checkout_provenance(checkout: Path) -> tuple[str, dict[str, str]]:
     return revision, submodules
 
 
-def fetch(checkout: Path, output: Path, tag: str) -> dict[str, Any]:
+def fetch(
+    checkout: Path, output: Path, tag: str, *, repository: str = REPOSITORY
+) -> dict[str, Any]:
     validate_tag(tag)
+    validate_repository(repository)
     revision, submodules = checkout_provenance(checkout)
     output.mkdir(parents=True, exist_ok=False)
-    download(tag, "native-build.json", output / "native-build.json", MAX_JSON)
+    download(
+        tag,
+        "native-build.json",
+        output / "native-build.json",
+        MAX_JSON,
+        repository=repository,
+    )
     proof = json.loads((output / "native-build.json").read_bytes())
-    contract = release_contract(proof, tag, revision, submodules)
-    download(tag, contract["wheel"], output / contract["wheel"], MAX_WHEEL)
-    download(tag, "ha_mcp_tools.zip", output / "ha_mcp_tools.zip", MAX_ZIP)
+    contract = release_contract(proof, tag, revision, submodules, repository=repository)
+    download(
+        tag,
+        contract["wheel"],
+        output / contract["wheel"],
+        MAX_WHEEL,
+        repository=repository,
+    )
+    download(
+        tag,
+        "ha_mcp_tools.zip",
+        output / "ha_mcp_tools.zip",
+        MAX_ZIP,
+        repository=repository,
+    )
     verify_wheel(output / contract["wheel"], proof, contract)
     manifest_hash = verify_component(output / "ha_mcp_tools.zip", proof, contract)
     verified = {
-        "repository": REPOSITORY,
+        "repository": repository,
         "source_revision": revision,
         "tag": tag,
         "wheel_url": contract["url"],
@@ -301,18 +346,20 @@ def fetch(checkout: Path, output: Path, tag: str) -> dict[str, Any]:
     return verified
 
 
-def prepare_image(assets: Path, destination: Path, revision: str) -> None:
+def prepare_image(
+    assets: Path, destination: Path, revision: str, *, repository: str = REPOSITORY
+) -> None:
     if any(
         (assets / name).stat().st_size > MAX_JSON
         for name in ("native-build.json", "published-verification.json")
     ):
         raise ValueError("Image metadata exceeds its size limit")
     proof = json.loads((assets / "native-build.json").read_bytes())
-    contract = release_contract(proof, proof["tag"], revision)
+    contract = release_contract(proof, proof["tag"], revision, repository=repository)
     manifest_hash = verify_component(assets / "ha_mcp_tools.zip", proof, contract)
     host = json.loads((assets / "published-verification.json").read_bytes())
     expected = {
-        "repository": REPOSITORY,
+        "repository": repository,
         "source_revision": revision,
         "tag": proof["tag"],
         "wheel_url": contract["url"],
@@ -333,17 +380,29 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     fetching = commands.add_parser("fetch")
     fetching.add_argument("--tag", required=True)
+    fetching.add_argument("--repository", default=REPOSITORY)
     fetching.add_argument("--checkout", type=Path, default=Path.cwd())
     fetching.add_argument("--output", type=Path, default=Path("dist/native"))
     image = commands.add_parser("prepare-image")
     image.add_argument("--assets", type=Path, required=True)
     image.add_argument("--destination", type=Path, required=True)
     image.add_argument("--source-revision", required=True)
+    image.add_argument("--repository", default=REPOSITORY)
     args = parser.parse_args()
     if args.command == "fetch":
-        print(json.dumps(fetch(args.checkout, args.output, args.tag), indent=2))
+        print(
+            json.dumps(
+                fetch(args.checkout, args.output, args.tag, repository=args.repository),
+                indent=2,
+            )
+        )
     else:
-        prepare_image(args.assets, args.destination, args.source_revision)
+        prepare_image(
+            args.assets,
+            args.destination,
+            args.source_revision,
+            repository=args.repository,
+        )
 
 
 if __name__ == "__main__":

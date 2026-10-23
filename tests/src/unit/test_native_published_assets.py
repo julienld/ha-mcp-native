@@ -76,7 +76,9 @@ def public_release(tmp_path, published_assets):
 def fixture_download(monkeypatch, published_assets, release):
     calls = []
 
-    def download(tag, filename, destination, maximum):
+    def download(
+        tag, filename, destination, maximum, *, repository=published_assets.REPOSITORY
+    ):
         assert tag == release.tag
         content = (release.folder / filename).read_bytes()
         assert len(content) <= maximum
@@ -90,6 +92,94 @@ def fixture_download(monkeypatch, published_assets, release):
         lambda _: ("a" * 40, {"src/vendor": "b" * 40}),
     )
     return calls
+
+
+def test_explicit_repository_is_used_for_download_and_provenance(
+    tmp_path, monkeypatch, published_assets, public_release
+):
+    repository = "homeassistant-ai/ha-mcp"
+    public_release.proof["repository"] = repository
+    public_release.proof["dependency"] = public_release.proof["dependency"].replace(
+        "julienld/ha-mcp-native", repository
+    )
+    manifest = json.loads(public_release.manifest)
+    manifest["requirements"][0] = public_release.proof["dependency"]
+    public_release.manifest = json.dumps(manifest).encode()
+    with zipfile.ZipFile(public_release.folder / "ha_mcp_tools.zip", "w") as archive:
+        archive.writestr("manifest.json", public_release.manifest)
+    public_release.proof["files"]["ha_mcp_tools.zip"] = published_assets.digest(
+        public_release.folder / "ha_mcp_tools.zip"
+    )
+    (public_release.folder / "native-build.json").write_text(
+        json.dumps(public_release.proof)
+    )
+    calls = fixture_download(monkeypatch, published_assets, public_release)
+    output = tmp_path / "downloaded"
+    receipt = published_assets.fetch(
+        tmp_path, output, public_release.tag, repository=repository
+    )
+    assert receipt["repository"] == repository
+    assert f"github.com/{repository}/" in receipt["wheel_url"]
+    assert len(calls) == 3
+    destination = tmp_path / "component"
+    published_assets.prepare_image(output, destination, "a" * 40, repository=repository)
+    assert (destination / "manifest.json").read_bytes() == public_release.manifest
+    with pytest.raises(ValueError, match="repository"):
+        published_assets.prepare_image(output, tmp_path / "wrong", "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "../else",
+        "owner/repo/extra",
+        "https://github.com/a/b",
+        "owner/repo?query",
+        "owner/..",
+    ],
+)
+def test_invalid_repository_rejected_before_downloading(
+    tmp_path, monkeypatch, published_assets, repository
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Malformed repository reached I/O")
+
+    monkeypatch.setattr(published_assets, "download", unexpected)
+    monkeypatch.setattr(published_assets, "checkout_provenance", unexpected)
+    with pytest.raises(ValueError, match="repository"):
+        published_assets.fetch(
+            tmp_path, tmp_path / "download", "v1", repository=repository
+        )
+
+
+def test_explicit_repository_sets_public_request_url(
+    tmp_path, monkeypatch, published_assets
+):
+    requests = []
+    response = io.BytesIO(b"metadata")
+    response.url = "https://release-assets.githubusercontent.com/asset"
+    response.headers = {}
+
+    def open_asset(request, *, timeout):
+        requests.append(request)
+        return response
+
+    monkeypatch.setattr(
+        published_assets.urllib.request,
+        "build_opener",
+        lambda _: SimpleNamespace(open=open_asset),
+    )
+    published_assets.download(
+        "v1",
+        "native-build.json",
+        tmp_path / "asset",
+        1024,
+        repository="homeassistant-ai/ha-mcp",
+    )
+    assert (
+        requests[0].full_url
+        == "https://github.com/homeassistant-ai/ha-mcp/releases/download/v1/native-build.json"
+    )
 
 
 def test_public_archive_reaches_image_unchanged_without_preinstalled_wheel(

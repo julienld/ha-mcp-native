@@ -39,7 +39,7 @@ from group_checks import exercise_groups
 from hacs_checks import exercise_hacs_absence
 from health_checks import exercise_health
 from history_checks import exercise_history
-from interop_checks import exercise_llm
+from interop_checks import exercise_llm, exercise_llm_defaults
 from legacy_rollback_checks import exercise_legacy_rollback
 from log_checks import exercise_logs
 from oauth_checks import exercise_oauth
@@ -454,6 +454,7 @@ async def exercise(checks: Checks, *, published_tag: str | None = None) -> dict:
     catalog = (await checks.rpc("tools/list"))["result"]["tools"]
     assert {"ha_get_state", "ha_list_services"} <= {tool["name"] for tool in catalog}
     checks.passed("existing_webhook_URL_and_modern_MCP")
+    await exercise_llm_defaults(checks)
     await checks.control("guard", {})
     await exercise_oauth(checks)
     state = await checks.call("ha_get_state", {"entity_id": "sensor.native_fixture"})

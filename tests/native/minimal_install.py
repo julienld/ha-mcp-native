@@ -14,6 +14,7 @@ from subprocess import SubprocessError
 from typing import Any
 
 from scripts.native_published_assets import (
+    REPOSITORY,
     release_contract,
     verify_component,
     verify_wheel,
@@ -62,10 +63,12 @@ def paired_requirement(
 
 
 def prepare_component(
-    assets: Path, component: Path
+    assets: Path, component: Path, *, repository: str = REPOSITORY
 ) -> tuple[dict[str, Any], dict[str, str], Path, str]:
     build = json.loads((assets / "native-build.json").read_bytes())
-    contract = release_contract(build, build["tag"], build["revision"])
+    contract = release_contract(
+        build, build["tag"], build["revision"], repository=repository
+    )
     wheel = assets / contract["wheel"]
     verify_wheel(wheel, build, contract)
     manifest_hash = verify_component(assets / "ha_mcp_tools.zip", build, contract)
@@ -102,12 +105,16 @@ async def install_declared_dependencies(
         await hass.async_stop(force=True)
 
 
-def install(assets: Path, work: Path, output: Path) -> None:
+def install(
+    assets: Path, work: Path, output: Path, *, repository: str = REPOSITORY
+) -> None:
     assert_isolated()
     proof = json.loads(output.read_text(encoding="utf-8"))
     config = work / "config"
     component = config / "custom_components/ha_mcp_tools"
-    build, contract, wheel, manifest_hash = prepare_component(assets, component)
+    build, contract, wheel, manifest_hash = prepare_component(
+        assets, component, repository=repository
+    )
     manifest = json.loads((component / "manifest.json").read_bytes())
     before = environment()
     if {"ha-mcp", "ha-mcp-dev"} & before["versions"].keys():
@@ -194,8 +201,14 @@ def main() -> None:
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--work-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repository", default=REPOSITORY)
     args = parser.parse_args()
-    install(args.assets.resolve(), args.work_directory.resolve(), args.output.resolve())
+    install(
+        args.assets.resolve(),
+        args.work_directory.resolve(),
+        args.output.resolve(),
+        repository=args.repository,
+    )
 
 
 if __name__ == "__main__":

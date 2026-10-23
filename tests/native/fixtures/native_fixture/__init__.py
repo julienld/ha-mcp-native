@@ -284,6 +284,8 @@ class FixtureView(HomeAssistantView):
                 entry,
                 options={
                     **entry.options,
+                    "enable_llm_api": body.get("export", True),
+                    "enable_native_llm_import": body.get("import", True),
                     "llm_api_exposure": "both",
                     "native_import_apis": [DOMAIN],
                 },
