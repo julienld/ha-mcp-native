@@ -67,6 +67,9 @@ The runner checks `/dev/kvm` readability/writability and reports CPU, memory
 and free disk. Public `ubuntu-22.04` runners use the existing two-worker
 layout (two guests at 4 GiB each). The first fork run must build its image;
 the fork cannot restore the upstream repository's cache.
+The native qualification branch saves its own successful bake before runtime
+staging: a cache created by the six-lane PR workflow belongs to that PR's
+merge ref and cannot be restored from `qualify/haos-native`.
 
 The first fork execution on 2026-10-23
 ([external lane log](https://github.com/julienld/ha-mcp-native/actions/runs/39899033319/job/120236105621),
