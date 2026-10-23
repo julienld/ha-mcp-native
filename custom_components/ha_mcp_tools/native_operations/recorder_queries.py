@@ -113,7 +113,7 @@ class RecorderQueries:
                 entity_id
             ):
                 raise ToolFailure(
-                    "VALIDATION_INVALID_PARAMETER",
+                    "SERVICE_CALL_FAILED",
                     "Invalid entity_ids",
                     status="not_started",
                 )

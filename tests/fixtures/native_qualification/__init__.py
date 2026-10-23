@@ -33,21 +33,37 @@ class RuntimeProbe(HomeAssistantView):
                 Path(hass.config.path("native-build.json")).read_text(encoding="utf-8")
             )
         )
-        return self.json(
-            {
-                "manager": type(manager).__name__,
-                "runtime": entry.options.get("runtime_mode") if entry else None,
-                "running": bool(manager and manager.is_running),
-                "on_core_loop": task is not None and task.get_loop() is hass.loop,
-                "legacy_listener": hasattr(manager, "port"),
-                "legacy_thread": any(
-                    thread.name == "ha-mcp-server" for thread in threading.enumerate()
-                ),
-                "admin_token_present": bool(entry and entry.data.get("admin_token")),
-                "library_version": native_bound_version(),
-                "revision": proof["revision"],
-            }
-        )
+        observed = {
+            "entry_id": entry.entry_id if entry else None,
+            "manager": type(manager).__name__,
+            "runtime": entry.options.get("runtime_mode") if entry else None,
+            "running": bool(manager and manager.is_running),
+            "on_core_loop": task is not None and task.get_loop() is hass.loop,
+            "legacy_listener": hasattr(manager, "port"),
+            "legacy_thread": any(
+                thread.name == "ha-mcp-server" for thread in threading.enumerate()
+            ),
+            "admin_token_present": bool(entry and entry.data.get("admin_token")),
+            "library_version": native_bound_version(),
+            "revision": proof["revision"],
+        }
+        if request.query.get("llm") == "1":
+            from homeassistant.helpers import llm
+
+            from custom_components.ha_mcp_tools.llm_bridge_options import export_enabled
+
+            prefix = f"ha_mcp_tools-{entry.entry_id}" if entry else None
+            observed["llm_api_export_enabled"] = bool(
+                entry and export_enabled(entry.options)
+            )
+            apis = [
+                api
+                for api in llm.async_get_apis(hass)
+                if prefix and api.id in {prefix, prefix + "-toolsearch"}
+            ]
+            observed["llm_api_ids"] = [api.id for api in apis]
+            observed["llm_api_types"] = [type(api).__name__ for api in apis]
+        return self.json(observed)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:

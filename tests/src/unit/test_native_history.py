@@ -275,6 +275,14 @@ async def test_history_policy_blocks_before_recorder_and_can_be_disabled(
     assert len(history.calls) == 1
 
 
+async def test_empty_history_entity_keeps_the_public_failure_before_query(
+    history: Any,
+) -> None:
+    result = await _get(history, entity_ids="")
+    assert result.is_error and result.data["error"]["code"] == "SERVICE_CALL_FAILED"
+    assert result.status == "not_started" and history.calls == []
+
+
 async def test_statistics_uses_core_types_metadata_and_stored_unit_reset_query(
     history: Any,
 ) -> None:
