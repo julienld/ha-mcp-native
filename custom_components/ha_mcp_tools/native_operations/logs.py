@@ -29,6 +29,7 @@ from ha_mcp.utils.owned_executor import await_owned_io
 
 from .log_files import NativeLogFiles
 from .registry_access import Authorize, authorize_actor, registry_failure
+from .registry_failures import with_recovery_hint
 
 
 @dataclass(slots=True)
@@ -156,13 +157,23 @@ class NativeLogs(LogQuery, LogResults, LogbookResults):
             limit, default=DEFAULT_LOG_LIMIT, suggestion_example="100"
         )
         lines = max(effective, SUPERVISOR_SEARCH_WINDOW_LINES) if search else effective
-        text = await await_owned_io(
-            NativeLogFiles(self).supervisor(
-                slug if source == "system_service" else None,
-                slug if source == "supervisor" else None,
-                max(lines, MIN_LOG_WINDOW_LINES),
+        try:
+            text = await await_owned_io(
+                NativeLogFiles(self).supervisor(
+                    slug if source == "system_service" else None,
+                    slug if source == "supervisor" else None,
+                    max(lines, MIN_LOG_WINDOW_LINES),
+                )
             )
-        )
+        except ToolFailure as error:
+            error.data.update(source=source, slug=slug)
+            with_recovery_hint(
+                error,
+                "Use ha_get_app() to check installed app slugs and verify Supervisor is available on this installation"
+                if source == "supervisor"
+                else "Verify Supervisor is available and use a supported system service slug",
+            )
+            raise
         result: dict[str, Any] = await await_owned_io(
             self.hass.async_add_executor_job(
                 supervisor_log_result, text, source, slug, effective, search, order

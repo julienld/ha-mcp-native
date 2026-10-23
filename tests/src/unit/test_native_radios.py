@@ -300,23 +300,6 @@ async def test_invalid_core_schema_has_no_driver_effect(matter):
     matter.client.set_wifi_credentials.assert_not_awaited()
 
 
-async def test_thread_read_does_not_initialize_or_cancel_shared_dataset_loading(
-    radios, monkeypatch
-):
-    pending = asyncio.get_running_loop().create_future()
-    radios.hass.config.components.add("thread")
-    radios.hass.data["thread.datasets"] = pending
-    monkeypatch.setitem(
-        sys.modules,
-        "homeassistant.components.thread.dataset_store",
-        SimpleNamespace(DATA_STORE="thread.datasets"),
-    )
-    result = await call(radios, "thread", "list_datasets")
-    assert result.is_error and result.data["error"]["code"] == "RADIO_UNAVAILABLE"
-    assert not pending.done()
-    pending.cancel()
-
-
 async def test_zha_network_status_never_starts_a_topology_scan(radios, monkeypatch):
     topology = SimpleNamespace(
         scan=AsyncMock(side_effect=AssertionError("Unexpected scan"))
@@ -438,7 +421,9 @@ async def test_thread_dataset_typed_before_image_is_checked_after_authorization(
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.components.thread.dataset_store",
-        SimpleNamespace(DATA_STORE="thread.datasets"),
+        SimpleNamespace(
+            DATA_STORE="thread.datasets", async_get_store=AsyncMock(return_value=owner)
+        ),
     )
     original = radios.access.RadioSession.effect
 
@@ -472,7 +457,9 @@ async def test_otbr_revocation_after_disable_never_sends_dataset_or_reenable(
     monkeypatch.setitem(
         sys.modules,
         "homeassistant.components.thread.dataset_store",
-        SimpleNamespace(DATA_STORE="thread.datasets"),
+        SimpleNamespace(
+            DATA_STORE="thread.datasets", async_get_store=AsyncMock(return_value=store)
+        ),
     )
     monkeypatch.setitem(
         sys.modules,

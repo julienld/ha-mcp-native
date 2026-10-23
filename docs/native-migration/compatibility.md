@@ -319,7 +319,18 @@ Native Radio uses the installed ZHA, Z-Wave JS, Matter and Thread/OTBR owners,
 with their original validators, published registries and provider methods.
 Public arguments and safety annotations remain unchanged. Missing hardware is
 explicitly unavailable; the component never falls back to a remote HA client.
-Cold or pending Thread storage is refused without initiating a migration.
+Thread dataset reads and writes use Core's public
+[`dataset_store.async_get_store` singleton](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/components/thread/dataset_store.py#L576)
+after the integration is loaded. Since 2026-10-23 this also waits for
+cold or pending storage, matching Core's own list/delete/preferred paths rather
+than requiring the user to open the Thread UI first. Core owns deserialization,
+any normal storage migration and singleton publication; HA-MCP creates no second
+store and never invokes a WebSocket handler. Cancellation drains the owned wait
+without cancelling another caller's shared initialization. Actor and owner
+identity are revalidated before data is returned or a dataset is changed.
+`list_datasets` remains a read of configuration: lazy Core storage initialization
+does not configure a radio, form a network or change the preferred dataset.
+Physical Thread/OTBR behavior still requires hardware qualification.
 Thread discovery is bounded and reports partial results after releasing its
 listener; long-running actions await the provider's available receipt, which
 does not guarantee completion of physical commissioning or network changes.

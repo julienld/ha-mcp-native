@@ -210,6 +210,19 @@ async def _get(logs: Any, **arguments: Any) -> Any:
     )
 
 
+async def test_absent_supervisor_preserves_requested_slug_and_recovery_guidance(
+    logs: Any,
+) -> None:
+    result = await _get(logs, source="supervisor", slug="nonexistent_addon_slug")
+    assert result.is_error and result.status == "not_started"
+    assert result.data["source"] == "supervisor"
+    assert result.data["slug"] == "nonexistent_addon_slug"
+    suggestions = result.data["error"]["suggestions"]
+    assert any("ha_get_app" in hint for hint in suggestions)
+    assert any("Supervisor" in hint for hint in suggestions)
+    assert not logs.world.requests
+
+
 async def test_system_log_preserves_core_counts_and_bounds_messages_off_loop(
     logs: Any,
 ) -> None:

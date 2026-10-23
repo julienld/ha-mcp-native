@@ -99,7 +99,7 @@ async def _set_network(session: RadioSession, owner: Any, identifier: str) -> No
 
     from .radio_thread import dataset_owner
 
-    store = dataset_owner(session)
+    store = await dataset_owner(session)
     row = store.async_get(identifier)
     if row is None:
         raise ToolFailure(
@@ -138,7 +138,7 @@ async def _create_network(session: RadioSession, owner: Any) -> None:
 
     from .radio_thread import dataset_owner
 
-    store = dataset_owner(session)
+    store = await dataset_owner(session)
     channel = (
         await session.read(lambda: get_allowed_channel(session.hass, owner.url))
         or DEFAULT_CHANNEL

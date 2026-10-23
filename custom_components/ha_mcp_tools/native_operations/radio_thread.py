@@ -1,4 +1,4 @@
-"""Thread dataset owners and bounded discovery; cold storage stays Core-owned."""
+"""Thread datasets use Core's lazy singleton; discovery remains bounded."""
 
 import asyncio
 from dataclasses import asdict
@@ -6,25 +6,26 @@ from typing import Any
 
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
+from ha_mcp.utils.owned_executor import await_owned_io
 
 from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession
 from .registry_access import registry_json
 
 
-def dataset_owner(session: RadioSession) -> Any:
-    DATA_STORE = loaded_integration_module(
-        session.hass, "thread.dataset_store"
-    ).DATA_STORE
-
-    owner = session.hass.data.get(DATA_STORE)
-    if owner is None or isinstance(owner, asyncio.Future):
+async def dataset_owner(session: RadioSession) -> Any:
+    module = loaded_integration_module(session.hass, "thread.dataset_store")
+    session.pins.append(lambda: "thread" in session.hass.config.components)
+    owner = await session.read(
+        lambda: await_owned_io(module.async_get_store(session.hass))
+    )
+    if session.hass.data.get(module.DATA_STORE) is not owner:
         raise ToolFailure(
-            "RADIO_UNAVAILABLE",
-            "Core has not initialized the Thread dataset store; open Thread configuration before retrying",
+            "CONFIG_CONFLICT",
+            "Core Thread dataset owner changed while loading",
             status="not_started",
         )
-    session.retain(lambda: session.hass.data.get(DATA_STORE), owner)
+    session.retain(lambda: session.hass.data.get(module.DATA_STORE), owner)
     return owner
 
 
@@ -44,7 +45,7 @@ async def handle_thread(
         return await handle_otbr(session, action, args)
     if action == "discover_routers":
         return await _discover(session)
-    owner = dataset_owner(session)
+    owner = await dataset_owner(session)
     command = "add_dataset_tlv" if action == "add_dataset" else action
     fields = ("source", "tlv") if action == "add_dataset" else ("dataset_id",)
     payload = session.validate(
@@ -76,7 +77,7 @@ async def handle_thread(
     if action == "delete_dataset" and owner.preferred_dataset == payload["dataset_id"]:
         raise ToolFailure(
             "VALIDATION_INVALID_PARAMETER",
-            "Select another preferred Thread dataset before deleting this one",
+            "Invalid attempt to remove preferred dataset; select another preferred Thread dataset before deleting this one",
             status="not_started",
         )
 
