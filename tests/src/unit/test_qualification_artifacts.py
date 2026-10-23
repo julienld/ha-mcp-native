@@ -6,11 +6,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from qualification_artifacts import (
+
+from tests.qualification_artifacts import (
     stage_candidate_component,
     verify_candidate_artifacts,
 )
-from src.haos_candidate import _configure_entry
+from tests.src.haos_candidate import _configure_entry
 
 
 @pytest.fixture

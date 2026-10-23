@@ -1,5 +1,7 @@
 """Verify nonempty SQLite history/statistics through the native MCP endpoint."""
 
+import asyncio
+import time
 from math import isclose
 from typing import Any
 
@@ -45,20 +47,25 @@ async def exercise_history(checks: Any) -> None:
     assert isclose(page["data"]["entities"][0]["statistics"][0]["state"], 3000.0), page
     checks.passed("native_recorder_statistics_pagination_preserves_Core_schema")
 
-    history = await checks.call(
-        "ha_get_history",
-        {
-            "entity_ids": seeded["state_entity_id"],
-            "start_time": seeded["state_start"],
-            "order": "asc",
-            "minimal_response": False,
-            "significant_changes_only": False,
-        },
-    )
-    states = history["data"]["entities"][0]["states"]
-    assert len(states) >= 2 and [row["state"] for row in states][-2:] == ["1", "2"], (
-        history
-    )
+    deadline = time.monotonic() + 15
+    while True:
+        history = await checks.call(
+            "ha_get_history",
+            {
+                "entity_ids": seeded["state_entity_id"],
+                "start_time": seeded["state_start"],
+                "order": "asc",
+                "minimal_response": False,
+                "significant_changes_only": False,
+            },
+        )
+        states = history["data"]["entities"][0]["states"]
+        if len(states) >= 2 and [row["state"] for row in states][-2:] == ["1", "2"]:
+            break
+        # Recorder may have dequeued a write before its commit is visible.
+        # Repeat only the public read, never the seeded state mutations.
+        assert time.monotonic() < deadline, history
+        await asyncio.sleep(0.1)
     assert states[-1]["attributes"]["unit_of_measurement"] == "kWh", history
     assert "last_updated" in states[-1] and "lu" not in states[-1], history
     checks.passed(

@@ -108,6 +108,10 @@ ha-mcp-web = "ha_mcp.__main__:main_web"
 ha-mcp-oauth = "ha_mcp.__main__:main_oauth"
 ha-mcp-oidc = "ha_mcp.__main__:main_oidc"
 
+[tool.uv]
+# Keep isolated CI/app builds consistent with the committed lock's P7D policy.
+exclude-newer = "7 days"
+
 [tool.uv.build-backend]
 # Explicit because publish-dev.yml renames the project to ha-mcp-dev, which
 # would otherwise make the module name ha_mcp_dev.

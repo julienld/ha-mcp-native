@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from qualification_artifacts import (
     native_runtime_selected,
     stage_candidate_component,

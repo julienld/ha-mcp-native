@@ -68,6 +68,17 @@ and free disk. Public `ubuntu-22.04` runners use the existing two-worker
 layout (two guests at 4 GiB each). The first fork run must build its image;
 the fork cannot restore the upstream repository's cache.
 
+The first fork execution on 2026-10-23
+([external lane log](https://github.com/julienld/ha-mcp-native/actions/runs/39899033319/job/120236105621),
+commit `c29dc6b551d69e1a30d4f90b8c70c8edef821b9d`) confirmed writable KVM,
+4 vCPUs, 15 GiB RAM and 110 GiB free disk after cleanup. HAOS 18.3 booted
+Core 2026.10.2 and Supervisor 2026.10.3 and completed onboarding. The bake
+then failed while building the local dev app: `uv sync --locked` detected
+that the lock's seven-day package-age policy was absent from the isolated
+build configuration. Keep `tool.uv.exclude-newer = "7 days"` in the project
+to match `uv.lock`'s `P7D`; inheriting only a developer's user configuration
+breaks fresh runners. No MCP runtime tests ran in that attempt.
+
 ## Version pinning
 
 `build_image.py` has three Renovate-managed stable inputs:

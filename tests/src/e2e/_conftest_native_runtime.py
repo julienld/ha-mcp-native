@@ -6,10 +6,15 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import requests
+
+# pytest's console entry point can load this before tests/ is on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from qualification_artifacts import (
     build_candidate_artifacts,
     native_runtime_selected,

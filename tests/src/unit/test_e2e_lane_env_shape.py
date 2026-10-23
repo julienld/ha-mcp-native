@@ -255,6 +255,7 @@ _E2E_SUITE_TARGET = re.compile(r"(?:tests/)?src/e2e/([^\s\"']*)")
 # workflow restructure, a renamed input) fails here rather than reporting an
 # empty sweep as full coverage.
 _MIN_DISCOVERED_LANES = 23
+_PYTEST_INVOCATION = re.compile(r"\buv run(?: --(?:frozen|locked|no-sync))* pytest\b")
 
 
 def _job(workflow: str, job_id: str) -> dict[str, Any]:
@@ -274,7 +275,8 @@ def _pytest_step(workflow: str, job_id: str) -> dict[str, Any]:
     steps = [
         step
         for step in job.get("steps", [])
-        if isinstance(step, dict) and "uv run pytest" in str(step.get("run", ""))
+        if isinstance(step, dict)
+        and _PYTEST_INVOCATION.search(str(step.get("run", "")))
     ]
     assert len(steps) == 1, (
         f"{workflow}::{job_id} must have exactly one pytest step, found "
@@ -308,7 +310,7 @@ def _job_pytest_run(workflow: str, job_id: str) -> str:
         _uncommented(str(step.get("run", "")))
         for step in _job(workflow, job_id).get("steps", [])
         if isinstance(step, dict)
-        and "uv run pytest" in _uncommented(str(step.get("run", "")))
+        and _PYTEST_INVOCATION.search(_uncommented(str(step.get("run", ""))))
     )
 
 
@@ -407,7 +409,7 @@ def _discover_e2e_lanes(directory: Path | None = None) -> set[tuple[str, str]]:
                 if not isinstance(step, dict):
                     continue
                 run = str(step.get("run", ""))
-                if "uv run pytest" in run and _E2E_TARGET.search(run):
+                if _PYTEST_INVOCATION.search(run) and _E2E_TARGET.search(run):
                     discovered.add((workflow, job_id))
                     break
     return discovered
