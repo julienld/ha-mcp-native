@@ -41,6 +41,22 @@ from .dashboard_storage import DashboardState, DashboardStorage
 from .registry_access import admit_registry_write, authorize_actor
 
 
+def _metadata_preparation_failure(
+    error: ToolFailure, created: bool, metadata_updated: bool
+) -> ToolFailure:
+    data: dict[str, Any] = copy.deepcopy(error.data)
+    prior = "Dashboard was created" if created else "Dashboard metadata was updated"
+    message = f"{prior}; configuration update: {error}"
+    data["error"]["message"] = message
+    data.update(
+        write_committed=True,
+        config_write_committed=False,
+        dashboard_created=created,
+        metadata_updated=metadata_updated,
+    )
+    return ToolFailure(error.code, message, data=data, status="confirmed")
+
+
 @dataclass(slots=True)
 class NativeDashboards:
     manager: Any
@@ -276,6 +292,14 @@ class NativeDashboards:
                 create_error_response(
                     ErrorCode.VALIDATION_INVALID_PARAMETER,
                     "patch cannot be combined with dashboard metadata (title, icon, require_admin, show_in_sidebar)",
+                    suggestions=[
+                        "Update metadata in a separate ha_config_set_dashboard call without patch, config or python_transform",
+                    ],
+                    context={
+                        "action": action,
+                        "url_path": url_path,
+                        "write_committed": False,
+                    },
                 )
             )
         if return_screenshot and view_path is not None and not view_path.strip():
@@ -405,11 +429,29 @@ class NativeDashboards:
             canonical, _owner = self.storage.resolve(url_path)
             async with registry_update_lock("dashboard", canonical):
                 before = await self.storage.read(canonical)
-                candidate = await self._candidate(
-                    before, config, python_transform, patch, config_hash, action
+                metadata_phase = await self._stage_metadata(
+                    before, config, metadata, action
                 )
+                try:
+                    candidate = await self._candidate(
+                        before, config, python_transform, patch, config_hash, action
+                    )
+                except ToolFailure as error:
+                    if metadata_phase is not None and (
+                        metadata_phase[1] or before.owner is None
+                    ):
+                        raise _metadata_preparation_failure(
+                            error, before.owner is None, metadata_phase[1]
+                        ) from error
+                    raise
                 result, after = await self._apply(
-                    before, candidate, metadata, action, python_transform, url_path
+                    before,
+                    candidate,
+                    metadata,
+                    action,
+                    python_transform,
+                    url_path,
+                    metadata_phase,
                 )
                 if after.config is not None:
                     if advice := await self.advice.warnings(after.config):
@@ -425,7 +467,24 @@ class NativeDashboards:
                     after_write=True,
                 )
         except Exception as error:
+            if isinstance(error, ToolFailure) and error.status == "confirmed":
+                raise
             raise self.storage.failure(error) from error
+
+    async def _stage_metadata(
+        self, before: DashboardState, config: Any, metadata: dict[str, Any], action: str
+    ) -> tuple[DashboardState, bool, list[str]] | None:
+        # Preserve the public full-set order: a registry change can succeed
+        # even when subsequent config validation refuses its stale body.
+        if action != "set" or (before.owner is not None and not metadata):
+            return None
+        if before.owner is not None:
+            self.storage._storage(before.owner)
+        warnings = await self._capture(before, "ha_config_set_dashboard")
+        current, updated = await self._metadata_change(
+            before, config, metadata, action, warnings
+        )
+        return current, updated, warnings
 
     async def _apply(
         self,
@@ -435,6 +494,7 @@ class NativeDashboards:
         action: str,
         python_transform: str | None,
         identifier: str,
+        metadata_phase: tuple[DashboardState, bool, list[str]] | None,
     ) -> tuple[dict[str, Any], DashboardState]:
         resolved = (
             identifier if identifier not in (before.url_path, "default") else None
@@ -467,10 +527,13 @@ class NativeDashboards:
             )
         if before.owner is not None:
             self.storage._storage(before.owner)
-        warnings = await self._capture(before, "ha_config_set_dashboard")
-        current, metadata_updated = await self._metadata_change(
-            before, candidate, metadata, action, warnings
-        )
+        if metadata_phase is None:
+            warnings = await self._capture(before, "ha_config_set_dashboard")
+            current, metadata_updated = await self._metadata_change(
+                before, candidate, metadata, action, warnings
+            )
+        else:
+            current, metadata_updated, warnings = metadata_phase
         if candidate is not None:
             current = await self.storage.save(current, candidate)
             warnings.extend(current.warnings)

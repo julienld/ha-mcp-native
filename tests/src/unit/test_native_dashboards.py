@@ -133,14 +133,13 @@ async def test_dashboard_public_metadata_body_patch_transform_and_delete(service
     )
 
 
-async def test_dashboard_hash_conflict_precedes_metadata_and_capture(service):
+async def test_dashboard_config_only_hash_conflict_precedes_capture(service):
     manager, engine, owner, *_ = service
     result = await engine.call(
         "ha_config_set_dashboard",
         {
             "url_path": "my-dash",
             "config": {"views": []},
-            "title": "Should not write",
             "config_hash": "stale",
         },
         CallContext("owner"),

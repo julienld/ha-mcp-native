@@ -43,6 +43,7 @@ class DashboardAdvice:
     async def describe(self, card_type: str | None) -> dict[str, Any]:
         from ..card_descriptions import async_describe_card
 
+        card_type = card_type or None
         items = (
             await self.resource_items()
             if not card_type or card_type.startswith("custom:")
