@@ -150,7 +150,7 @@ def mcp_result(result: ToolResult, *, allow_continuation: bool = True) -> Any:
                 ImageContent(
                     type="image",
                     data=base64.b64encode(image.data).decode("ascii"),
-                    mimeType=image.mime_type,
+                    mime_type=image.mime_type,
                 )
                 for image in result.images
             ),

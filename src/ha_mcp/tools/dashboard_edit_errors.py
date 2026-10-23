@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -14,7 +15,9 @@ from ha_mcp.runtime.dashboard_errors import (
 from ..errors import get_error_code, get_error_message
 from .helpers import extract_tool_error_message
 
-raise_dashboard_edit_error = legacy_errors_sync(_pure_edit_error)
+raise_dashboard_edit_error: Callable[..., NoReturn] = legacy_errors_sync(
+    _pure_edit_error
+)
 
 
 def raise_dashboard_edit_fetch_error(

@@ -6,7 +6,7 @@ Home Assistant script configurations.
 """
 
 import logging
-from typing import Any, NoReturn, cast
+from typing import Any, Literal, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
@@ -15,6 +15,7 @@ from ..backends.legacy import legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
+    HomeAssistantClient,
     HomeAssistantConnectionError,
 )
 from ..errors import ErrorCode, create_error_response
@@ -77,7 +78,7 @@ class ConfigScriptTools(ScriptWriteTools):
 
     """Script configuration management tools for Home Assistant."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: HomeAssistantClient) -> None:
         self._client = client
 
     ha_config_get_script = tool(
@@ -172,7 +173,7 @@ class ConfigScriptTools(ScriptWriteTools):
         to caller exception handlers.
         """
         try:
-            return cast(dict[str, Any], await self._client.get_script_config(script_id))
+            return await self._client.get_script_config(script_id)
         except HomeAssistantAPIError as e:
             if e.status_code == 404:
                 await self._raise_script_not_found(script_id)
@@ -254,7 +255,7 @@ class ConfigScriptTools(ScriptWriteTools):
         return await validate_config_references(self._client, config)
 
     async def _resolve_written_entity(
-        self, storage_key: str, domain: str, **options: Any
+        self, storage_key: str, domain: Literal["scene", "script"], **options: Any
     ) -> str:
         return await resolve_entity_id_after_write(
             self._client, storage_key, domain, **options

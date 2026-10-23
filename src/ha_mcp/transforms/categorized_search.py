@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.server.context import Context
+from ha_mcp._vendor.fastmcp.server.dependencies import get_context
 from ha_mcp._vendor.fastmcp.server.transforms import Transform
 from ha_mcp._vendor.fastmcp.server.transforms.search.bm25 import BM25SearchTransform
 from ha_mcp._vendor.fastmcp.tools import Tool
@@ -518,8 +519,11 @@ class CategorizedSearchTransform(BM25SearchTransform):
             if _categorize_tool(tool) == "read" or self._has_reads(tool.name)
         ]
 
-    async def get_tool_catalog(self, ctx: Context) -> Sequence[Tool]:
-        return self._filter_context_catalogue(await super().get_tool_catalog(ctx))
+    async def get_tool_catalog(
+        self, ctx: Context, *, run_middleware: bool = True
+    ) -> Sequence[Tool]:
+        catalog = await super().get_tool_catalog(ctx, run_middleware=run_middleware)
+        return self._filter_context_catalogue(catalog)
 
     @staticmethod
     def _catalog_hash(tools: Sequence[Tool]) -> str:
@@ -573,13 +577,14 @@ class CategorizedSearchTransform(BM25SearchTransform):
         async def search_tools(
             query: Annotated[str, SEARCH_QUERY_DESCRIPTION] = "",
             tools: Annotated[list[str] | None, SEARCH_TOOLS_DESCRIPTION] = None,
-            ctx: Context = None,
+            ctx: Context | None = None,
         ) -> list[dict[str, Any]]:
             """Search for tools using English keywords.
 
             Returns compact matches ranked by relevance; pass ``tools`` to
             get the full definitions of named tools.
             """
+            ctx = ctx if ctx is not None else get_context()
             catalog = await transform.get_tool_catalog(ctx)
             if tools:
                 return await transform._render_full(catalog, tools, ctx)
@@ -795,8 +800,9 @@ class CategorizedSearchTransform(BM25SearchTransform):
             arguments: Annotated[
                 dict[str, Any] | str | None, "Arguments to pass to the tool"
             ] = None,
-            ctx: Context = None,
+            ctx: Context | None = None,
         ) -> Any:
+            ctx = ctx if ctx is not None else get_context()
             # Rebuild category cache if catalog has changed
             await transform._rebuild_category_cache(ctx)
 

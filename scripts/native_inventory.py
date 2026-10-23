@@ -139,9 +139,9 @@ def _wire_literals(node: ast.AST) -> list[str]:
                     ):
                         found.add(value.value)
         if isinstance(item, ast.Constant) and isinstance(item.value, str):
-            value = item.value
-            if value.startswith(("/api/", "ha_mcp_tools/")) and "\n" not in value:
-                found.add(value)
+            literal = item.value
+            if literal.startswith(("/api/", "ha_mcp_tools/")) and "\n" not in literal:
+                found.add(literal)
     return sorted(found)
 
 
@@ -423,7 +423,7 @@ def _catalog_call_name(node: ast.AST) -> ast.AST | None:
 
 
 def _literal_batch_names(generator: ast.comprehension | ast.For, name: str) -> set[str]:
-    names = set()
+    names: set[str] = set()
     if not isinstance(generator.target, (ast.Tuple, ast.List)) or not isinstance(
         generator.iter, (ast.Tuple, ast.List)
     ):
@@ -533,7 +533,7 @@ async def _capture_registered_tools() -> list[dict[str, Any]]:
     from ha_mcp.tools import registry
 
     mcp = FastMCP("native-migration-catalog")
-    modules = {
+    modules: dict[str, str | None] = {
         item.name: None
         for item in pkgutil.iter_modules(tools_package.__path__)
         if item.name.startswith("tools_")
@@ -568,6 +568,10 @@ async def _capture_server_extras() -> list[dict[str, Any]]:
 
     server = HomeAssistantSmartMCPServer()
     tool = await server.mcp.get_tool("ha_get_skill_guide")
+    if tool is None:
+        raise ValueError(
+            "The registered server catalogue is missing ha_get_skill_guide"
+        )
     contract = tool.to_mcp_tool().model_dump(
         mode="json", by_alias=True, exclude_none=True
     )

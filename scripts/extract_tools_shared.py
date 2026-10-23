@@ -6,7 +6,11 @@ import ast
 import copy
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
+
+
+class _WithSourcePath(Protocol):
+    _source_path: Path
 
 
 class SharedToolExtractor:
@@ -48,7 +52,7 @@ class SharedToolExtractor:
     ) -> tuple[ast.AsyncFunctionDef, Any] | None:
         for member in owner.body:
             if isinstance(member, ast.AsyncFunctionDef) and member.name == method_name:
-                member._source_path = path
+                cast(_WithSourcePath, member)._source_path = path
                 return member, self.module_scope(path)
         for base in owner.bases:
             if isinstance(base, ast.Name):
@@ -90,7 +94,7 @@ class SharedToolExtractor:
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and node.name == name
             ):
-                node._source_path = path
+                cast(_WithSourcePath, node)._source_path = path
                 return node
             if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id == name
@@ -165,7 +169,9 @@ class SharedToolExtractor:
         )
 
     @staticmethod
-    def _instance_owner(path: Path, registration: ast.AST, name: str) -> str | None:
+    def _instance_owner(
+        path: Path, registration: ast.Assign | ast.Expr, name: str
+    ) -> str | None:
         """Resolve an unambiguous ``instance = SharedClass(...)`` in its scope."""
         tree = ast.parse(path.read_text(encoding="utf-8"))
         scopes = [

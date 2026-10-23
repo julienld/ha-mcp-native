@@ -135,9 +135,9 @@ async def execute_registry_operation(
         areas, floors = await AreaTools(client)._fetch_area_floor_registries({})
         return {"areas": areas, "floors": floors}
     if operation == "registries.snapshot" and arguments == {"registries": ["label"]}:
-        from ha_mcp.tools.tools_labels import LabelTools
+        from ha_mcp.backends.legacy_labels import LegacyLabels
 
-        return {"labels": await LabelTools(client)._list_labels()}
+        return {"labels": await LegacyLabels(client)._list_labels()}
     if operation == "registries.snapshot" and arguments.get("registries") == [
         "category"
     ]:

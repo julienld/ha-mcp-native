@@ -1,7 +1,7 @@
 """Finite read, category and skill operations used by config write families."""
 
 import copy
-from typing import Any
+from typing import Any, Literal
 
 from ha_mcp.tool_api import BackendTools, ToolFailure
 from ha_mcp.utils.config_hash import json_values_equal
@@ -204,7 +204,7 @@ class ConfigWriteContext(BackendTools):
         return output
 
     async def _resolve_written_entity(
-        self, storage_key: str, domain: str, **options: Any
+        self, storage_key: str, domain: Literal["scene", "script"], **options: Any
     ) -> str:
         result: str = await self.backend.execute(
             "config.entity_id.after_write",

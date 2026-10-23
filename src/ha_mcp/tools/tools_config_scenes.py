@@ -9,7 +9,7 @@ keyed by entity_id (not a list).
 
 import asyncio
 import logging
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
@@ -18,6 +18,7 @@ from ..backends.legacy import legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
+    HomeAssistantClient,
     HomeAssistantConnectionError,
     SceneStorageConfigNotFoundError,
 )
@@ -89,7 +90,7 @@ def _skip_scene_activation_backup(kwargs: dict[str, Any]) -> bool:
 class ConfigSceneTools(SceneWriteTools):
     """Scene configuration management tools for Home Assistant."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: HomeAssistantClient) -> None:
         self._client = client
 
     async def _fetch_category(
@@ -357,7 +358,7 @@ class ConfigSceneTools(SceneWriteTools):
         return await validate_config_references(self._client, config)
 
     async def _resolve_written_entity(
-        self, storage_key: str, domain: str, **options: Any
+        self, storage_key: str, domain: Literal["scene", "script"], **options: Any
     ) -> str:
         return await resolve_entity_id_after_write(
             self._client, storage_key, domain, **options
