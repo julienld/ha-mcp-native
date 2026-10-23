@@ -122,4 +122,16 @@ class RecorderQueries:
         payload.setdefault("units", None)
         if payload.get("types") is None:
             payload["types"] = set(default_statistic_types(statistics_during_period))
-        return await self._query(statistics_during_period, payload)
+
+        def read(hass: Any, **query: Any) -> dict[str, Any]:
+            rows = statistics_during_period(hass, **query)
+            # The public tool's existing rows use milliseconds. Core's Python
+            # owner returns seconds; its WS adapter makes this same conversion.
+            for values in rows.values():
+                for row in values:
+                    for key in ("start", "end", "last_reset"):
+                        if row.get(key) is not None:
+                            row[key] = int(row[key] * 1000)
+            return rows
+
+        return await self._query(read, payload)

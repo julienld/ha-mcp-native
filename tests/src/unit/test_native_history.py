@@ -37,7 +37,8 @@ async def history(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
         statistics={
             "sensor.energy": [
                 {
-                    "start": STAMP * 1000,
+                    "start": STAMP,
+                    "end": STAMP + 3600,
                     "mean": 7,
                     "last_reset": 123.4,
                     "future_metric": 9,
@@ -84,7 +85,7 @@ async def history(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
         result = copy.deepcopy(world.statistics)
         if types == {"last_reset"}:
             assert units == {"energy": "Wh"}
-            result["sensor.energy"][0]["last_reset"] = STAMP * 1000
+            result["sensor.energy"][0]["last_reset"] = STAMP
         return result
 
     def schema(value: dict) -> dict:
@@ -288,6 +289,8 @@ async def test_statistics_uses_core_types_metadata_and_stored_unit_reset_query(
     )
     assert entity["statistics_metadata"]["future_metadata"] is True
     assert entity["statistics"][0]["future_metric"] == 9
+    assert entity["statistics"][0]["start"] == int(STAMP * 1000)
+    assert entity["statistics"][0]["end"] == int((STAMP + 3600) * 1000)
     assert entity["statistics"][0]["last_reset"] == STAMP * 1000
     assert history.calls[0][1]["types"] == {"mean", "last_reset", "future_total"}
     assert history.calls[1][1]["types"] == {"last_reset"}

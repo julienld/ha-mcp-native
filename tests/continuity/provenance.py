@@ -13,6 +13,10 @@ import json
 import subprocess
 from pathlib import Path
 
+UPSTREAM_CONTRACTS = (
+    "tests/src/e2e/workflows/core/test_statistics_units.py",
+)
+
 
 def git(directory: Path, *arguments: str) -> str:
     return subprocess.check_output(
@@ -46,12 +50,19 @@ def record(source: Path, harness: Path, role: str, expected: str, output: Path) 
         raise ValueError(
             "Before and after must execute the exact same behavioral tests"
         )
+    upstream_hashes = {}
+    for name in UPSTREAM_CONTRACTS:
+        content = (source / name).read_bytes()
+        if content != (harness / name).read_bytes():
+            raise ValueError(f"The upstream behavioral contract differs: {name}")
+        upstream_hashes[name] = hashlib.sha256(content).hexdigest()
     result = {
         "role": role,
         "source_revision": revision,
         "harness_revision": git(harness, "rev-parse", "HEAD"),
         "application_source_unchanged": True,
         "test_files_sha256": hashes,
+        "upstream_contract_files_sha256": upstream_hashes,
         "qualification_fixtures_sha256": {
             name: hashlib.sha256((source / name).read_bytes()).hexdigest()
             for name in (

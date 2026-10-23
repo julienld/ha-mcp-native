@@ -100,6 +100,13 @@ skips:
 
 ## Execution and provenance
 
+The paired workflow also runs the four existing cases in
+`workflows/core/test_statistics_units.py` unchanged. They exercise stored/display
+unit conversion, reset timestamps and mixed metadata after a native regression
+was discovered by the full upstream E2E suite. Core API calls supply recorder
+fixtures; all assertions concern the public MCP tool response. Their file hash
+is checked separately on both revisions along with the six new scenarios.
+
 From `tests/`, with the comparison runner supplying the disposable environment:
 
 ```text

@@ -70,6 +70,7 @@ jobs:
         run: |
           mkdir -p source/tests/src/e2e/continuity source/tests/fixtures
           cp -a harness/tests/src/e2e/continuity/. source/tests/src/e2e/continuity/
+          cp harness/tests/src/e2e/workflows/core/test_statistics_units.py source/tests/src/e2e/workflows/core/
           cp harness/tests/src/e2e/_conftest_embedded.py source/tests/src/e2e/
           cp harness/tests/src/e2e/_conftest_testcontainer.py source/tests/src/e2e/
           cp harness/tests/src/e2e/_conftest_native_runtime.py source/tests/src/e2e/
@@ -83,7 +84,7 @@ jobs:
         run: docker pull "$HA_IMAGE_GHCR"
       - name: Exercise the same public MCP behavioral contracts
         working-directory: source/tests
-        run: uv run --frozen pytest src/e2e/continuity/ -n 1 --dist loadscope --tb=short -v --maxfail=0 --junitxml=continuity-results.xml
+        run: uv run --frozen pytest src/e2e/continuity/ src/e2e/workflows/core/test_statistics_units.py -n 1 --dist loadscope --tb=short -v --maxfail=0 --junitxml=continuity-results.xml
         env:
           E2E_BACKEND: embedded
           HAMCP_ENV_FILE: tests/.env.test
