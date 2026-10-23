@@ -4,6 +4,7 @@ import asyncio
 import copy
 import importlib
 import sys
+from enum import StrEnum
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,67 @@ from ha_mcp.runtime.snapshot_payloads import _FlowHelperReadError
 from ha_mcp.tool_api import CallContext
 
 from .test_native_engine_backend import native as native
+
+
+class TemplatePlatform(StrEnum):
+    SENSOR = "sensor"
+
+
+@pytest.fixture
+def template_snapshot_source(source, monkeypatch):
+    module, overview, _ = source
+    record = {
+        "covered_types": ["template"],
+        "helpers": [
+            {
+                "kind": "flow",
+                "helper_type": "template",
+                "entry_id": "resolved",
+                "options": {"template_type": TemplatePlatform.SENSOR, "state": "1"},
+            }
+        ],
+    }
+    monkeypatch.setattr(overview, "_do_helpers_list", lambda *a, **kw: record)
+
+    async def read():
+        return await module.flow_snapshot(
+            object(), {"helper_type": "template", "entry_id": "resolved"}
+        )
+
+    return read
+
+
+async def test_template_snapshot_can_be_saved_and_read_by_legacy_store(
+    template_snapshot_source, tmp_path
+):
+    from ha_mcp.backup_manager import BackupManager
+    from ha_mcp.runtime.snapshot_store import SnapshotStore
+
+    snapshot = await template_snapshot_source()
+    path = SnapshotStore(tmp_path).capture(
+        "helper_template", "resolved", snapshot, "ha_manage_backup"
+    )
+    legacy = BackupManager(SimpleNamespace(auto_backup_dir=str(tmp_path)), None)
+    restored = legacy.read_snapshot(path.name)["config"]
+    assert restored["entry_id"] == "resolved"
+    assert restored["options"] == {"template_type": "sensor", "state": "1"}
+    assert restored["entities"] == snapshot["entities"]
+
+
+async def test_restoring_same_template_type_does_not_report_changed_identity(
+    template_snapshot_source,
+):
+    from ha_mcp.runtime.flows.entry import _OptionsFlowProgress
+
+    current = await template_snapshot_source()
+    progress = _OptionsFlowProgress(
+        entry_id="resolved",
+        config={"template_type": "sensor", "state": "0"},
+        fixed=current["options"],
+    )
+    progress.check_form({"data_schema": [{"name": "state"}], "last_step": True})
+    assert progress.apply_status == "not_applied"
+    assert progress.consumed == {"state"}
 
 
 @pytest.fixture

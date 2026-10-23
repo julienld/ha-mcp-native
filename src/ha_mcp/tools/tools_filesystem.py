@@ -22,6 +22,8 @@ import time
 import weakref
 from typing import Any, NoReturn
 
+from packaging.version import InvalidVersion, Version
+
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
@@ -58,20 +60,6 @@ CALLER_TOKEN_BOOTSTRAP_SERVICE = "get_caller_token"
 # field, so it is read only when the component is new enough (see
 # ``effective_extra_yaml_write_keys``).
 GET_EXTRA_YAML_KEYS_SERVICE = "get_extra_yaml_keys"
-
-
-def _version_tuple(version: str) -> tuple[int, ...]:
-    """Parse ``'0.5.1'`` → ``(0, 5, 1)`` for tuple-comparison.
-
-    Raises ``ValueError`` on any non-numeric segment. Coercing a bad
-    segment to ``0`` would not actually achieve the "fail closed"
-    intent: a malformed high-order segment like ``"1.x.0"`` would
-    still parse to ``(1, 0, 0)`` and pass a ``>= (0, 5, 1)`` gate.
-    The caller surfaces the ValueError as a distinct "malformed version"
-    error (reinstall / file-issue remediation), separate from the
-    "too old" update prompt.
-    """
-    return tuple(int(segment) for segment in version.split("."))
 
 
 # Weak-keyed by client object to support multi-client setups and self-evict
@@ -275,10 +263,9 @@ async def _fetch_caller_token(client: Any) -> str:
         )
     version: str = raw_version
     try:
-        parsed = _version_tuple(version)
-    except ValueError:
-        # A malformed version (non-numeric segment like "1.x.0", or a
-        # future suffixed/date scheme _version_tuple can't parse) is a
+        parsed = Version(version)
+    except InvalidVersion:
+        # A malformed PEP 440 version (for example "1.x.0") is a
         # different failure mode from "too old": a HACS update won't help
         # if the reported version itself is wrong. Point at reinstall /
         # issue-filing instead of the version-bump remediation.
@@ -296,7 +283,7 @@ async def _fetch_caller_token(client: Any) -> str:
                 ],
             )
         )
-    if parsed < _version_tuple(MIN_COMPONENT_VERSION):
+    if parsed < Version(MIN_COMPONENT_VERSION):
         _raise_component_too_old(f"reported version is {version}")
     _CALLER_TOKEN_CACHE[client] = token
     _COMPONENT_VERSION_CACHE[client] = version
@@ -410,10 +397,10 @@ def _assert_caps_version_ok(caps: ComponentCaps) -> None:
     left to that downstream token-fetch gate rather than rejected here.
     """
     try:
-        parsed = _version_tuple(caps.component_version)
-    except ValueError:
+        parsed = Version(caps.component_version)
+    except InvalidVersion:
         return
-    if parsed < _version_tuple(MIN_COMPONENT_VERSION):
+    if parsed < Version(MIN_COMPONENT_VERSION):
         _raise_component_too_old(f"reported version is {caps.component_version}")
 
 
@@ -778,16 +765,16 @@ async def assert_extra_yaml_keys_supported(client: Any, extra_keys: list[str]) -
     if not extra_keys:
         return
 
-    def _current() -> tuple[int, ...] | None:
+    def _current() -> Version | None:
         reported = _COMPONENT_VERSION_CACHE.get(client, "")
         if not reported:
             return None
         try:
-            return _version_tuple(reported)
-        except ValueError:
+            return Version(reported)
+        except InvalidVersion:
             return None
 
-    floor = _version_tuple(MIN_COMPONENT_VERSION_EXTRA_YAML_KEYS)
+    floor = Version(MIN_COMPONENT_VERSION_EXTRA_YAML_KEYS)
     await _ensure_caller_token(client)
     parsed = _current()
     if parsed is None or parsed < floor:
@@ -851,10 +838,10 @@ async def effective_extra_yaml_write_keys(client: Any, settings: Any) -> list[st
     try:
         await _ensure_caller_token(client)
         reported = _COMPONENT_VERSION_CACHE.get(client, "")
-        floor = _version_tuple(MIN_COMPONENT_VERSION_EXTRA_YAML_KEYS)
+        floor = Version(MIN_COMPONENT_VERSION_EXTRA_YAML_KEYS)
         try:
-            current = _version_tuple(reported) if reported else None
-        except ValueError:
+            current = Version(reported) if reported else None
+        except InvalidVersion:
             current = None
         if current is not None and current >= floor:
             result = await call_mcp_tools_service(

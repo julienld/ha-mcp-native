@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from homeassistant.helpers.json import json_bytes
 
 from ha_mcp.runtime.snapshot_payloads import (
     _flow_options,
@@ -40,7 +43,7 @@ async def flow_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise _FlowHelperReadError("Resolved helper no longer exists", "entry_missing")
     if record.get("options_withheld"):
         raise _FlowHelperBackupSkip("Helper options are withheld", "options_withheld")
-    return {
+    snapshot = {
         "entry_id": entry_id,
         "options": _flow_options(record.get("options"), helper_type),
         "entities": [
@@ -53,6 +56,10 @@ async def flow_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
             for row in er.async_entries_for_config_entry(er.async_get(hass), entry_id)
         ],
     }
+    # Match the former Core JSON boundary before YAML capture and typed restore
+    # comparisons: e.g. template_type is a Core StrEnum, not a persisted enum.
+    serialized: dict[str, Any] = json.loads(json_bytes(snapshot))
+    return serialized
 
 
 async def subentry_snapshots(hass: Any, entry_id: str) -> list[dict[str, Any]]:
@@ -80,7 +87,8 @@ async def subentry_snapshots(hass: Any, entry_id: str) -> list[dict[str, Any]]:
         raise _FlowHelperReadError(
             "Subentry identities are ambiguous", "subentry_identity"
         )
-    return subentries
+    serialized: list[dict[str, Any]] = json.loads(json_bytes(subentries))
+    return serialized
 
 
 async def optional_subentry_snapshot(
