@@ -22,7 +22,7 @@ from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 from ha_mcp.utils.owned_executor import await_owned_io
 
 from ..helper_collections import _INVALID_ERRORS
-from ..template_diagnose import describe_failure
+from ..template_diagnose import async_diagnose, describe_failure
 from .command_validation import _validated_payload
 from .owner import CoreOperationOwner
 
@@ -105,6 +105,20 @@ class NativeTemplates(CoreOperationOwner):
                 result = await self._track_render(template, payload, log)
         except TemplateError as error:
             result = self._render_error(payload, error)
+        diagnosis = result.get("diagnosis")
+        if isinstance(diagnosis, dict) and "line" not in diagnosis:
+            # Core flattens worker failures into text. Reuse the bounded Core
+            # diagnostic render only when that erased the caller's line.
+            await self.authorize(context)
+            result["diagnosis"] = await await_owned_io(
+                async_diagnose(
+                    self.hass,
+                    payload["template"],
+                    payload.get("variables"),
+                    payload["strict"],
+                    payload["timeout"],
+                )
+            )
         if warnings:
             result["warnings"] = warnings
         return result

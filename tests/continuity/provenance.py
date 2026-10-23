@@ -13,9 +13,7 @@ import json
 import subprocess
 from pathlib import Path
 
-UPSTREAM_CONTRACTS = (
-    "tests/src/e2e/workflows/core/test_statistics_units.py",
-)
+UPSTREAM_CONTRACTS = ("tests/src/e2e/workflows/core/test_statistics_units.py",)
 
 
 def git(directory: Path, *arguments: str) -> str:

@@ -142,6 +142,22 @@ async def test_native_bulk_invalid_action_preserves_successful_sibling(
     assert len(bulk_tools.world.calls) == 1
 
 
+async def test_all_invalid_actions_remain_per_item_results_without_any_dispatch(
+    bulk_tools: Any,
+) -> None:
+    result = await bulk_tools.engine.call(
+        "ha_bulk_control",
+        {"operations": [{"entity_id": "light.item_0", "action": "invalid"}]},
+        CallContext("actor"),
+    )
+    assert not result.is_error, result.data
+    assert result.data["failed_commands"] == 1
+    assert result.data["successful_commands"] == 0
+    assert result.data["operation_ids"] == []
+    assert result.data["results"][0]["error"]["code"] == "SERVICE_INVALID_ACTION"
+    assert not bulk_tools.world.calls
+
+
 async def test_missing_core_service_is_a_row_failure_without_dropping_valid_siblings(
     bulk_tools: Any,
 ) -> None:

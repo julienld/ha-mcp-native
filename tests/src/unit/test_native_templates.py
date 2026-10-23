@@ -196,6 +196,32 @@ async def test_core_failure_keeps_line_without_a_second_diagnostic_render(
     assert len(rendering.state.guards) == 1 and not rendering.state.track_calls
 
 
+@pytest.mark.parametrize("report_errors", [True, False])
+async def test_flattened_worker_error_recovers_the_callers_line_without_logging(
+    rendering: Any, monkeypatch: pytest.MonkeyPatch, report_errors: bool
+) -> None:
+    rendering.state.render_error = rendering.error(
+        "ZeroDivisionError: division by zero"
+    )
+    cause = ZeroDivisionError("division by zero")
+    cause.lineno = 2
+    detailed = rendering.error("ZeroDivisionError: division by zero")
+    detailed.__cause__ = cause
+    render = Mock(side_effect=detailed)
+    monkeypatch.setattr(rendering.template, "ensure_valid", Mock(), raising=False)
+    monkeypatch.setattr(rendering.template, "async_render", render, raising=False)
+    result = await rendering.engine.call(
+        "ha_eval_template",
+        {"template": "\n\nfirst\n{{ 1/0 }}\n", "report_errors": report_errors},
+        CallContext("actor"),
+    )
+    assert result.is_error and result.data["line"] == 4
+    assert result.data["source_line"] == "{{ 1/0 }}"
+    render.assert_called_once()
+    assert callable(render.call_args.kwargs["log_fn"])
+    assert not rendering.state.track_calls
+
+
 async def test_condition_delegates_normalization_validation_trace_and_unload(
     rendering: Any,
 ) -> None:

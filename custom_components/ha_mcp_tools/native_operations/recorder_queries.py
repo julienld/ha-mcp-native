@@ -124,7 +124,7 @@ class RecorderQueries:
             payload["types"] = set(default_statistic_types(statistics_during_period))
 
         def read(hass: Any, **query: Any) -> dict[str, Any]:
-            rows = statistics_during_period(hass, **query)
+            rows: dict[str, Any] = statistics_during_period(hass, **query)
             # The public tool's existing rows use milliseconds. Core's Python
             # owner returns seconds; its WS adapter makes this same conversion.
             for values in rows.values():

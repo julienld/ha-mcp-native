@@ -338,12 +338,7 @@ class NativeBulkControl(DeviceActionValues, BulkOperationValues):
         skipped: list[dict[str, Any]] = []
         valid, rows, results = self._resolve_rows(operations, skipped)
         if not valid:
-            payload = create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"All {len(operations)} operation(s) failed validation; nothing was dispatched",
-                context={"skipped_details": skipped, "results": results},
-            )
-            raise_failure(payload)
+            return self._build_bulk_response(operations, results, [], skipped, parallel)
         self.targets = {entity_id for row in rows for entity_id in row["entity_ids"]}
         reject_group_member_conflicts(self.targets, topology.states)
         states = {state["entity_id"]: state for state in topology.states}
