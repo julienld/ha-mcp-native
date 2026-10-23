@@ -33,6 +33,11 @@ from ._conftest_embedded import (
     _is_no_tools_entry_selected,
     _wait_for_embedded_webhook_ready,
 )
+from ._conftest_native_runtime import (
+    attest_native_runtime,
+    native_runtime_selected,
+    stage_native_runtime,
+)
 from ._conftest_readiness import (
     _dump_ha_readiness_diagnostics,
     _log_readiness_timing,
@@ -228,7 +233,11 @@ def _prepare_testcontainer_config(
     # .ha_mcp data dir all get the same readable perms as the rest of the
     # config. The wheel's dep tree is preinstalled in the container entrypoint.
     if embedded:
-        wheel = _build_embedded_server_wheel(config_path)
+        wheel = (
+            stage_native_runtime(repo_root, config_path)
+            if native_runtime_selected()
+            else _build_embedded_server_wheel(config_path)
+        )
         embedded_wheel_name = wheel.name
         _install_embedded_server(config_path, embedded_wheel_name)
 
@@ -310,7 +319,8 @@ def _build_ha_testcontainer(
     manifest_reqs = _collect_manifest_requirements(
         config_path, skip_server=embedded_wheel_name is not None
     )
-    if manifest_reqs:
+    native = embedded and native_runtime_selected()
+    if manifest_reqs and not native:
         quoted = " ".join(shlex.quote(r) for r in manifest_reqs)
         # PyPI-first with wheels-index fallback. The image env pins
         # PIP_EXTRA_INDEX_URL=wheels.home-assistant.io, and when that index
@@ -335,7 +345,14 @@ def _build_ha_testcontainer(
             f"requirement(s) before HA boots: {manifest_reqs}"
         )
 
-    if embedded and embedded_wheel_name is not None:
+    if native:
+        preinit_cmds.append(
+            f"pip list --format=freeze > /config/{EMBEDDED_FREEZE_BEFORE} && "
+            "python3 -c 'import homeassistant, pathlib, shutil; "
+            'source = pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt"; '
+            f'shutil.copyfile(source, "/config/{EMBEDDED_HA_CONSTRAINTS_COPY}")\''
+        )
+    elif embedded and embedded_wheel_name is not None:
         # Preinstall the ha-mcp wheel + its whole dependency tree (fastmcp etc.)
         # BEFORE HA's /init, so the in-process MCP server bring-up is fast and
         # deterministic — its force-install of the local wheel then finds every
@@ -562,4 +579,18 @@ def _wait_for_testcontainer_ready(
                 "registration) failed — check the HA log dump above for the "
                 f"{_EMBEDDED_DOMAIN} config-entry state and any repair issue."
             )
+        if native_runtime_selected():
+            observed = attest_native_runtime(base_url, headers)
+            result = container.get_wrapped_container().exec_run(
+                [
+                    "sh",
+                    "-c",
+                    f"pip list --format=freeze > /config/{EMBEDDED_FREEZE_AFTER}",
+                ]
+            )
+            if result.exit_code:
+                pytest.fail(
+                    "Native lane could not capture the post-install package inventory"
+                )
+            logger.info("Native runtime attested: %s", observed)
     return embedded_webhook_url

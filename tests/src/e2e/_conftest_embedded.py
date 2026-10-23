@@ -12,6 +12,7 @@ from typing import Any
 import requests
 from urllib3.exceptions import InsecureRequestWarning
 
+from ._conftest_native_runtime import configure_native_entry, native_runtime_selected
 from .utilities.streamable_http import parse_mcp_response
 from .utilities.topology import tools_entry_absent
 
@@ -228,6 +229,9 @@ def _install_embedded_server(config_path: Path, wheel_name: str) -> None:
             }
         )
         storage_file.write_text(json.dumps(data, indent=2))
+
+    if native_runtime_selected():
+        configure_native_entry(config_path, _EMBEDDED_ENTRY_ID)
 
     server_data_dir = config_path / _EMBEDDED_SERVER_CONFIG_SUBDIR
     server_data_dir.mkdir(parents=True, exist_ok=True)

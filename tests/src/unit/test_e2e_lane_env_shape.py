@@ -198,6 +198,8 @@ _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
     (_HAOS, "haos-e2e-embedded"),
     (_HAOS, "haos-e2e-inaddon"),
     (_HAOS, "haos-e2e-stdio"),
+    ("haos-native.yml", "haos-native"),
+    ("native-continuity.yml", "continuity"),
     (_BETA, "haos-e2e-inaddon-beta"),
     (_BETA, "haos-e2e-embedded-beta"),
     (_CBETA, "e2e-tests"),
