@@ -171,6 +171,7 @@ _CBETA = "e2e-beta-tests.yml"
 # lanes must NOT name a backend, or they run the embedded topology instead of
 # the plain-container one they exist to cover.
 _NO_TOOLS_LANES: dict[tuple[str, str], dict[str, str]] = {
+    ("native-e2e.yml", "native-server-only"): {"E2E_BACKEND": "embedded"},
     (_PR, "e2e-validation-no-component"): {},
     (_PR, "e2e-validation-embedded-server-only"): {"E2E_BACKEND": "embedded"},
     (_E2E, "e2e-tests-no-component"): {},
@@ -188,6 +189,7 @@ _NO_TOOLS_LANES: dict[tuple[str, str], dict[str, str]] = {
 # E2E_NO_TOOLS_ENTRY, a pair stops being a comparison and a beta lane stops
 # covering the topology it was built to run on beta images.
 _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
+    ("native-e2e.yml", "native-e2e"),
     (_PR, "e2e-validation"),
     (_PR, "e2e-validation-embedded"),
     (_PR, "e2e-validation-update-path"),
@@ -212,6 +214,7 @@ _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
 # that needs the full list. (The HAOS lanes already carry --maxfail=0 for their
 # own triage reasons, stated in their step comments.)
 _AUDIT_LANES: tuple[tuple[str, str], ...] = (
+    ("native-e2e.yml", "native-server-only"),
     (_PR, "e2e-validation-no-component"),
     (_PR, "e2e-validation-embedded-server-only"),
     (_E2E, "e2e-tests-no-component"),
