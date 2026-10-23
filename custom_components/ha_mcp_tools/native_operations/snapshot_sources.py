@@ -57,12 +57,9 @@ async def flow_snapshot(hass: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 async def subentry_snapshots(hass: Any, entry_id: str) -> list[dict[str, Any]]:
     """Read complete restorable subentry data; absence of the parent is an error."""
-    from ..websocket_api.config_entries import _config_entries_prep, _do_config_entries
+    from ..core_config_entries import config_entries
 
-    params = {"entry_id": entry_id, "include_subentry_data": True}
-    result = _do_config_entries(
-        hass, params, **await _config_entries_prep(hass, params)
-    )
+    result = await config_entries(hass, entry_id=entry_id, include_subentry_data=True)
     _require_scrub(result)
     entries = result["entries"]
     if len(entries) != 1 or entries[0]["entry_id"] != entry_id:

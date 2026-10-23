@@ -10,13 +10,13 @@ from ha_mcp.runtime.search_references import (
 from ha_mcp.runtime.search_response import _CONFIG_BUCKETS, _ResolvedSearch
 from ha_mcp.visibility.enforcement import _HiddenMatcher, _scan_value
 
+from ..core_secrets import _scrub_secret_values
 from ..websocket_api.search import _entity_match_type
 from ..websocket_api.search_score import (
     _apply_hidden_penalty,
     _config_score,
     _text_tier,
 )
-from ..websocket_api.secrets import _scrub_secret_values
 
 
 def visible_record(row: dict[str, Any], matcher: _HiddenMatcher, enforce: bool) -> bool:

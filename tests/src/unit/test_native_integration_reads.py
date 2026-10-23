@@ -59,7 +59,7 @@ def inspection(native: Any, monkeypatch: pytest.MonkeyPatch) -> tuple:
         [entry] if domain in {None, entry.domain} else []
     )
     command = importlib.import_module(
-        "custom_components.ha_mcp_tools.websocket_api.config_entries"
+        "custom_components.ha_mcp_tools.core_config_entries"
     )
     monkeypatch.setattr(
         command,

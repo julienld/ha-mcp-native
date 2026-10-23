@@ -17,6 +17,12 @@ from ha_mcp.runtime.skill_files import read_skill_files
 from ha_mcp.runtime.skills import SkillGuideReader
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 
+from . import core_operation_schemas, helper_collections
+from .core_config_entries import config_entries
+from .core_entity_reads import registry_lookup
+from .core_registries import registry_snapshot
+from .core_services import services_catalog
+from .core_state import read_states
 from .native_operations.area_floor_mutations import (
     DIRECT_OPERATIONS as AREA_FLOOR_OPERATIONS,
 )
@@ -39,22 +45,29 @@ from .native_operations.registry_mutations import (
 )
 from .native_operations.removals import DIRECT_OPERATIONS as REMOVAL_DIRECT_OPERATIONS
 from .native_operations.zones import DIRECT_OPERATIONS as ZONE_DIRECT_OPERATIONS
-from .native_registry_ops import COMMAND_OPERATIONS as REGISTRY_COMMAND_OPERATIONS
+from .native_registry_ops import CORE_READ_OPERATIONS as REGISTRY_READ_OPERATIONS
 from .native_registry_ops import DIRECT_OPERATIONS as REGISTRY_DIRECT_OPERATIONS
 
-# A capability boundary, not an emulation of HomeAssistantClient. Each row reuses
-# an owned, tested operation behind the existing component transport facade.
-COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
-    **REGISTRY_COMMAND_OPERATIONS,
-    "states.read": ("ha_mcp_tools/states", False),
-    "services.catalog": ("ha_mcp_tools/services_list", False),
-    "services.call_observe": ("ha_mcp_tools/call_service", True),
-    "helpers.storage.schemas": ("ha_mcp_tools/helper_schemas", False),
-    "helpers.storage.read": ("ha_mcp_tools/helper_item", False),
-    "helpers.storage.write": ("ha_mcp_tools/helper_write", True),
-    "helpers.registry.snapshot": ("ha_mcp_tools/registries", False),
-    "helpers.entities.for_entry": ("ha_mcp_tools/registry_lookup", False),
-    "integrations.entries": ("ha_mcp_tools/config_entries", False),
+_CORE_PARAMETERS = {
+    "states.read": core_operation_schemas.states_parameters,
+    "services.catalog": core_operation_schemas.services_list_parameters,
+    "services.call_observe": core_operation_schemas.call_service_parameters,
+    "helpers.storage.schemas": lambda schema: {},
+    "helpers.storage.read": core_operation_schemas.helper_item_parameters,
+    "helpers.storage.write": core_operation_schemas.helper_write_parameters,
+    "helpers.registry.snapshot": core_operation_schemas.registries_parameters,
+    "helpers.entities.for_entry": core_operation_schemas.registry_lookup_parameters,
+    "integrations.entries": core_operation_schemas.config_entries_parameters,
+    "registries.snapshot": core_operation_schemas.registries_parameters,
+    "assist.exposure": core_operation_schemas.exposure_parameters,
+    "entities.enrich": core_operation_schemas.entity_enrich_parameters,
+    "config.references.snapshot": core_operation_schemas.reference_data_parameters,
+}
+_CORE_READERS: dict[str, Callable[..., dict[str, Any]]] = {
+    **REGISTRY_READ_OPERATIONS,
+    "states.read": read_states,
+    "helpers.registry.snapshot": registry_snapshot,
+    "helpers.entities.for_entry": registry_lookup,
 }
 DOMAIN_DIRECT_OPERATIONS = {
     **HELPER_DIRECT_OPERATIONS,
@@ -100,8 +113,6 @@ class NativeBackend:
         ]
         | None = None,
     ) -> None:
-        from .websocket_api import _command_specs
-
         self.hass = hass
         self.service_policy = service_policy
         self.skill_guide_reader = skill_guide_reader or SkillGuideReader()
@@ -113,16 +124,10 @@ class NativeBackend:
         self.config_backup = config_backup
         self.registry_backup = registry_backup
         self.loop = asyncio.get_running_loop()
-        self._commands: dict[str, tuple[Any, Any, Any]] = {}
         self._flows: Any = None
         self._templates: Any = None
         self._reload_watches: Any = None
         self._entry_watches: Any = None
-        selected = {command for command, _ in COMMAND_OPERATIONS.values()}
-        for schema, do, prep in _command_specs():
-            command = next(value for key, value in schema.items() if str(key) == "type")
-            if command in selected:
-                self._commands[command] = (vol.Schema(schema), do, prep)
 
     async def authorize(self, context: CallContext) -> None:
         if asyncio.get_running_loop() is not self.loop:
@@ -154,10 +159,10 @@ class NativeBackend:
         }:
             # These can only release a nonce already owned by this actor/client.
             # Revoking credentials must not strand its pending flow or listener.
-            self._check_envelope(arguments)
+            self._check_arguments(arguments)
             return await self._cleanup_owned(operation, arguments, context)
         await self._authorize_operation(operation, context)
-        self._check_envelope(arguments)
+        self._check_arguments(arguments)
         from .native_operations.todo import TODO_OPERATIONS, NativeTodoOperations
 
         if operation in TODO_OPERATIONS:
@@ -182,8 +187,8 @@ class NativeBackend:
                 )
             result = await function(self.hass, arguments)
             return json.loads(json_bytes(result))
-        if operation in COMMAND_OPERATIONS:
-            return await self._execute_command(operation, arguments, context)
+        if operation in _CORE_PARAMETERS:
+            return await self._execute_core_operation(operation, arguments, context)
         return await self._execute_owned_operation(operation, arguments, context)
 
     async def _authorize_operation(self, operation: str, context: CallContext) -> None:
@@ -197,7 +202,7 @@ class NativeBackend:
             raise
 
     @staticmethod
-    def _check_envelope(arguments: dict[str, Any]) -> None:
+    def _check_arguments(arguments: dict[str, Any]) -> None:
         if {"type", "id", "ha_mcp_context"}.intersection(arguments):
             raise ToolFailure(
                 "INVALID_ARGUMENTS",
@@ -321,17 +326,14 @@ class NativeBackend:
             self._reload_watches = NativeReloadWatches(self.hass, self.authorize)
         return await self._reload_watches.execute(operation, arguments, context)
 
-    async def _execute_command(
+    async def _execute_core_operation(
         self, operation: str, arguments: dict[str, Any], context: CallContext
     ) -> Any:
-        if operation not in COMMAND_OPERATIONS:
-            raise UnsupportedOperation(operation)
-        command, writes = COMMAND_OPERATIONS[operation]
+        writes = operation in {"helpers.storage.write", "services.call_observe"}
         if writes:
             check_mutation_admission(context)
         if writes and context.read_only:
             raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
-        schema, do, prep = self._commands[command]
         payload = dict(arguments)
         if operation == "helpers.storage.write":
             from .native_operations.helpers import check_expected_item
@@ -345,14 +347,13 @@ class NativeBackend:
             if operation == "services.call_observe"
             else False
         )
-        message = schema({"type": command, **payload})
-        message["ha_mcp_context"] = Context(user_id=context.user_id)
+        values = vol.Schema(_CORE_PARAMETERS[operation](vol))(payload)
         if operation == "helpers.storage.write":
             from .native_operations.helper_mutations import NativeHelperMutations
 
             result = await NativeHelperMutations(self.hass, self.authorize).execute(
                 {
-                    **message,
+                    **values,
                     "expected_item": expected,
                     "expected_registry": expected_registry,
                 },
@@ -362,20 +363,37 @@ class NativeBackend:
         if operation == "services.call_observe":
             from .native_operations.services import call_and_observe
 
-            self._check_service_policy(message["domain"], message["service"])
+            self._check_service_policy(values["domain"], values["service"])
             result = await call_and_observe(
                 self.hass,
-                message,
-                prep,
-                do,
+                values,
+                context=Context(user_id=context.user_id),
                 include_changed_states=include_changed_states,
             )
             return json.loads(json_bytes(result))
-        extra = await prep(self.hass, message) if prep is not None else {}
-        result = do(self.hass, message, **extra)
+        result = await self._read_core(operation, values)
         # Same HA encoder as the former wire path; datetime/enum values remain
         # JSON-compatible before reaching either MCP or Assist.
         return json.loads(json_bytes(result))
+
+    async def _read_core(self, operation: str, values: dict[str, Any]) -> Any:
+        if operation == "services.catalog":
+            return await services_catalog(self.hass, **values)
+        if operation == "integrations.entries":
+            return await config_entries(self.hass, **values)
+        if operation == "helpers.storage.schemas":
+            return helper_collections.describe_schemas(self.hass)
+        if operation == "helpers.storage.read":
+            from homeassistant.helpers import entity_registry as er
+
+            return helper_collections.read_item(
+                self.hass,
+                er.async_get(self.hass),
+                values["helper_type"],
+                values.get("entity_id"),
+                values.get("item_id"),
+            )
+        return _CORE_READERS[operation](self.hass, **values)
 
     def _check_service_policy(self, domain: str, service: str) -> None:
         if self.service_policy is not None:

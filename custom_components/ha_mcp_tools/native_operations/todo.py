@@ -107,7 +107,8 @@ class NativeTodoOperations:
         try:
             # The checked owner runs synchronously up to Core's service dispatch.
             # Core/provider awaits after that remain an external concurrency boundary.
-            response = await self.backend._execute_command(
+            # Re-entering execute() would await authorization after the target CAS.
+            response = await self.backend._execute_core_operation(
                 "services.call_observe",
                 {
                     "domain": "todo",

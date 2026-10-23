@@ -1,4 +1,4 @@
-"""Native backend runs existing prep/do owners, never their WS handlers."""
+"""Native backend calls Core owners independently of WS registration/adapters."""
 
 from __future__ import annotations
 
@@ -93,6 +93,82 @@ def authorize(hass: Any) -> Any:
     )
     hass.auth = SimpleNamespace(async_get_user=AsyncMock(return_value=user))
     return user
+
+
+async def test_native_state_and_service_call_do_not_consult_the_wire_surface(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire = importlib.import_module("custom_components.ha_mcp_tools.websocket_api")
+
+    def wire_forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Native execution must not consult WebSocket adapters")
+
+    for name in (
+        "_command_specs",
+        "_do_states",
+        "_call_service_prep",
+        "_do_call_service",
+    ):
+        monkeypatch.setattr(wire, name, wire_forbidden)
+    services = _FakeCallServices(known={("scene", "turn_on")})
+    hass = _call_hass([FakeState("light.a", "on")], services, EventBus())
+    authorize(hass)
+    backend = native.NativeBackend(hass)
+    states = await backend.execute(
+        "states.read", {"entity_ids": ["light.a"]}, CallContext("actor")
+    )
+    result = await backend.execute(
+        "services.call_observe",
+        {"domain": "scene", "service": "turn_on", "wait": False},
+        CallContext("actor"),
+    )
+    assert states["states"]["light.a"]["state"] == "on"
+    assert result["dispatched"] and len(services.calls) == 1
+    assert services.calls[0]["context"].user_id == "actor"
+
+
+async def test_native_catalog_and_entry_reads_do_not_use_async_wire_preparation(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .test_component_ws_search import FakeConfigEntries
+
+    wire = importlib.import_module("custom_components.ha_mcp_tools.websocket_api")
+    catalogs = importlib.import_module("custom_components.ha_mcp_tools.core_services")
+    entries = importlib.import_module(
+        "custom_components.ha_mcp_tools.core_config_entries"
+    )
+
+    def wire_forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Native reads must not call WS prep/do")
+
+    for name in (
+        "_command_specs",
+        "_services_list_prep",
+        "_do_services_list",
+        "_config_entries_prep",
+        "_do_config_entries",
+    ):
+        monkeypatch.setattr(wire, name, wire_forbidden)
+    monkeypatch.setattr(
+        catalogs,
+        "_fetch_service_descriptions",
+        AsyncMock(return_value={"light": {"turn_on": {}}}),
+    )
+    monkeypatch.setattr(
+        catalogs, "_fetch_service_translations", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        entries, "_load_secret_scrub", lambda hass: (frozenset(), False)
+    )
+    hass = _call_hass([], _FakeCallServices(known=set()), EventBus())
+    hass.config_entries = FakeConfigEntries([])
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+    authorize(hass)
+    backend = native.NativeBackend(hass)
+    catalog = await backend.execute("services.catalog", {}, CallContext("actor"))
+    records = await backend.execute("integrations.entries", {}, CallContext("actor"))
+    assert catalog["services"][0]["domain"] == "light"
+    assert records == {"entries": []}
 
 
 async def test_native_service_tool_keeps_all_changed_states_and_actor(

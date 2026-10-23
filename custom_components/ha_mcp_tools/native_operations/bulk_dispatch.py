@@ -14,6 +14,7 @@ from ha_mcp.runtime.bulk_selection import MAX_SELECTOR_ENTITIES
 from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.utils.owned_executor import await_owned_io
 
+from ..core_call_service import _guard_call_service_target
 from ..websocket_api.bulk import (
     _build_bulk_op_result,
     _bulk_match_immediate,
@@ -21,7 +22,6 @@ from ..websocket_api.bulk import (
     _bulk_register_all,
     _bulk_wait_all,
 )
-from ..websocket_api.call_service import _guard_call_service_target
 from .registry_access import (
     Authorize,
     admit_registry_write,

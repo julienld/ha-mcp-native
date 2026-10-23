@@ -289,7 +289,7 @@ async def test_corrupt_visibility_keeps_last_enforced_boundary(
 def test_core_hidden_set_reuses_registry_categories_without_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from custom_components.ha_mcp_tools.websocket_api import registry
+    from custom_components.ha_mcp_tools import core_registry as registry
 
     hidden = SimpleNamespace(
         entity_id="sensor.secret",

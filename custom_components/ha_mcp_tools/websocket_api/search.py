@@ -7,6 +7,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from ..core_registry import _registry_enrichment as _registry_enrichment
 from ..search_locations import (
     add_location_metadata,
     add_registry_failures,
@@ -28,16 +29,10 @@ from .constants import (
 )
 from .flow_domains import HELPER_FLOWS_DEGRADED_WARNING, _flow_helper_domains
 from .registry import (
-    _area_name,
-    _device_dict_repr,
-    _effective_area_for_entry,
-    _floor_name_for_area,
     _iter_states,
-    _label_names,
     _reg_entity,
     _RegistryView,
     _resolve_registries,
-    _unambiguous_device_entries,
 )
 from .search_config import _observe_candidate, _search_config_surface, _search_helpers
 from .search_score import _apply_hidden_penalty, _text_tier, _tokenize
@@ -497,60 +492,6 @@ def _get_match_type_tier(
     if query_lower in fname:
         return "partial_name"
     return "fuzzy_match"
-
-
-def _registry_enrichment(view: _RegistryView, entity_id: str) -> dict[str, Any]:
-    """Join one entity_id with the entity/device/area/floor/label registries.
-
-    The shared registry read behind BOTH the search record (:func:`_entity_record`)
-    and the ``entity_enrich`` / ``exposure`` commands, so the area/floor/label-name
-    resolution lives in exactly one place. Resolves the entity's aliases plus its
-    area / floor / label NAMES (device-inherited when the entity itself carries
-    none), keyed off the entity registry — no ``State`` object required, so a
-    registry-only (stateless) entity is enriched too. Returns the public
-    enrichment fields (``area`` / ``floor`` / ``labels`` / ``aliases``) alongside
-    the internal ``_area_id`` / ``_hidden`` / ``_dev_texts`` the scorer consumes.
-    """
-    reg = _reg_entity(view, entity_id)
-    # String entries only: HA core's aliases can carry the COMPUTED_NAME
-    # sentinel (entity_registry.ComputedNameType._singleton, "the computed
-    # entity name is an alias"). Blind str() published it as a literal
-    # "ComputedNameType._singleton" alias on every carrying entity — fake data
-    # in results AND a scored match_text. The name it stands for is already
-    # matched via ``friendly``, so dropping the sentinel loses nothing.
-    aliases = (
-        sorted(a for a in (getattr(reg, "aliases", None) or []) if isinstance(a, str))
-        if reg
-        else []
-    )
-    area_id = _effective_area_for_entry(view, reg) if reg else None
-    device_id = getattr(reg, "device_id", None) if reg else None
-    labels = set(getattr(reg, "labels", None) or []) if reg else set()
-    hidden = bool(getattr(reg, "hidden_by", None)) if reg else False
-
-    dev = (
-        _unambiguous_device_entries(view).get(device_id)
-        if isinstance(device_id, str) and device_id
-        else None
-    )
-    dev_texts: list[str] = []
-    if dev is not None:
-        dev_row = _device_dict_repr(dev) or {}
-        labels |= set(dev_row.get("labels") or [])
-        for attr in ("name_by_user", "name", "manufacturer", "model"):
-            val = dev_row.get(attr)
-            if val:
-                dev_texts.append(str(val))
-
-    return {
-        "area": _area_name(view, area_id),
-        "floor": _floor_name_for_area(view, area_id),
-        "labels": _label_names(view, labels),
-        "aliases": aliases,
-        "_area_id": area_id,
-        "_hidden": hidden,
-        "_dev_texts": dev_texts,
-    }
 
 
 def _entity_record(

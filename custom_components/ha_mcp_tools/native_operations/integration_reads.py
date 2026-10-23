@@ -17,9 +17,9 @@ async def identity_entities(hass: HomeAssistant, arguments: dict[str, Any]) -> A
 
 
 async def identity_devices(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:
-    from ..websocket_api.lookups import _do_device_list
+    from ..core_device_reads import device_list
 
-    return _do_device_list(hass, {})["devices"]
+    return device_list(hass)["devices"]
 
 
 async def identity_unique_id(

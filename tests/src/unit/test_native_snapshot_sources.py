@@ -24,10 +24,10 @@ def source(native, monkeypatch):
         "custom_components.ha_mcp_tools.websocket_api.overview"
     )
     entries = importlib.import_module(
-        "custom_components.ha_mcp_tools.websocket_api.config_entries"
+        "custom_components.ha_mcp_tools.core_config_entries"
     )
     monkeypatch.setattr(overview, "_helpers_list_prep", AsyncMock(return_value={}))
-    monkeypatch.setattr(entries, "_config_entries_prep", AsyncMock(return_value={}))
+    monkeypatch.setattr(entries, "load_entry_secret_values", AsyncMock(return_value={}))
     registry = SimpleNamespace(
         async_get=lambda hass: "registry",
         async_entries_for_config_entry=lambda registry, entry_id: [
@@ -143,7 +143,7 @@ async def test_subentry_capture_keeps_original_restore_shape_and_checks_identity
         result["entries"][0]["subentries"].append(copy.deepcopy(row))
     elif change == "missing_parent":
         result["entries"] = []
-    monkeypatch.setattr(entries, "_do_config_entries", lambda *a, **kw: result)
+    monkeypatch.setattr(entries, "project_config_entries", lambda *a, **kw: result)
     payload = {
         "entry_id": "resolved",
         "subentry_id": "child",

@@ -1,31 +1,30 @@
 """Observe native service dispatch without losing REST's changed-state body."""
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 
+from ..core_call_service import call_service
+
 
 async def call_and_observe(
     hass: HomeAssistant,
-    message: dict[str, Any],
-    prepare: Callable[..., Awaitable[dict[str, Any]]],
-    finish: Callable[..., dict[str, Any]],
+    parameters: dict[str, Any],
     *,
+    context: Any,
     include_changed_states: bool = False,
 ) -> dict[str, Any]:
-    """Reuse call_service prep's guards/confirmation and retain all changed states.
+    """Observe the canonical Core call and retain all actor-correlated states.
 
     Core 2026.10.2's APIDomainServicesView selects state_changed events by the
     call's Context. This observer uses that same ownership rule. The existing
-    component prep still owns registration-before-fire confirmation, dispatch,
+    service owner still owns registration-before-fire confirmation, dispatch,
     timeout and its listener; no HTTP/WS request or handler is constructed.
     """
     if not include_changed_states:
-        return finish(hass, message, **await prepare(hass, message))
+        return await call_service(hass, **parameters, context=context)
     changed: list[dict[str, Any]] = []
-    context = message["ha_mcp_context"]
 
     @callback
     def record(event: Event) -> None:
@@ -37,8 +36,7 @@ async def call_and_observe(
 
     unsubscribe = hass.bus.async_listen(EVENT_STATE_CHANGED, record)
     try:
-        extra = await prepare(hass, message)
-        result = finish(hass, message, **extra)
+        result = await call_service(hass, **parameters, context=context)
         return {**result, "changed_states": changed}
     finally:
         unsubscribe()

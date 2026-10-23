@@ -329,7 +329,7 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
     Built from websocket_api's ``vol`` and ``er`` so its registration stays the
     one place those are bound.
     """
-    helper_type = vol.In(SIMPLE_HELPER_TYPES)
+    from .core_operation_schemas import helper_item_parameters, helper_write_parameters
 
     def do_schemas(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
         return describe_schemas(hass)
@@ -353,20 +353,12 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
     ) -> dict[str, Any]:
         return result
 
-    registry_fields = {
-        vol.Optional("icon"): vol.Any(str, None),
-        vol.Optional("area_id"): vol.Any(str, None),
-        vol.Optional("labels"): [str],
-        vol.Optional("category"): vol.Any(str, None),
-    }
     return [
         ({vol.Required("type"): WS_HELPER_SCHEMAS}, do_schemas, None),
         (
             {
                 vol.Required("type"): WS_HELPER_ITEM,
-                vol.Required("helper_type"): helper_type,
-                vol.Exclusive("entity_id", "target"): str,
-                vol.Exclusive("item_id", "target"): str,
+                **helper_item_parameters(vol),
             },
             do_item,
             None,
@@ -374,11 +366,7 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
         (
             {
                 vol.Required("type"): WS_HELPER_WRITE,
-                vol.Required("helper_type"): helper_type,
-                vol.Required("action"): vol.In(("create", "update")),
-                vol.Optional("item_id"): str,
-                vol.Required("data"): dict,
-                vol.Optional("registry"): registry_fields,
+                **helper_write_parameters(vol),
             },
             do_write,
             write_prep,

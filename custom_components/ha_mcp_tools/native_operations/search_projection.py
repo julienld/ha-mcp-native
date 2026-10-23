@@ -12,7 +12,7 @@ from ha_mcp.runtime.search_component_results import (
 from ha_mcp.runtime.search_response import _ResolvedSearch
 from ha_mcp.runtime.search_scoring import ConfigurationScoring
 
-from ..websocket_api.secrets import _scrub_secret_values
+from ..core_secrets import _scrub_secret_values
 from .search_matching import score_candidates, visible_record
 
 

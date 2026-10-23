@@ -55,8 +55,8 @@ def load_native_visibility(directory: Path) -> VisibilityConfig:
 
 def hidden_from_core(hass: Any, config: VisibilityConfig) -> set[str]:
     """Resolve on HA's loop without invoking any transport or writing exposure."""
-    from .websocket_api.assist import _assist_exposure_available, _assist_should_expose
-    from .websocket_api.registry import _resolve_registries
+    from .core_assist import _assist_exposure_available, _assist_should_expose
+    from .core_registry import _resolve_registries
     from .websocket_api.visibility import _visibility_hidden_set, _visibility_warnings
 
     view = _resolve_registries(hass)

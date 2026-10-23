@@ -10,16 +10,19 @@ from homeassistant.core import HomeAssistant
 
 from ha_mcp.tool_api import ToolFailure
 
+from .core_entity_reads import enrich_entities, entity_exposure
+from .core_registries import registry_snapshot
+from .core_services import reference_data
 from .native_operations.blueprints import render_blueprint
 from .native_operations.config_reads import DIRECT_OPERATIONS as CONFIG_READ_OPERATIONS
 
-# This is a semantic capability map, never permission to execute arbitrary WS
-# handlers. NativeBackend applies the schema and calls the do/prep owners.
-COMMAND_OPERATIONS: dict[str, tuple[str, bool]] = {
-    "registries.snapshot": ("ha_mcp_tools/registries", False),
-    "assist.exposure": ("ha_mcp_tools/exposure", False),
-    "entities.enrich": ("ha_mcp_tools/entity_enrich", False),
-    "config.references.snapshot": ("ha_mcp_tools/reference_data", False),
+# Existing shared-tool semantic names select Core readers directly. Transport
+# adapters bind these same producers without participating in native execution.
+CORE_READ_OPERATIONS: dict[str, Callable[..., dict[str, Any]]] = {
+    "registries.snapshot": registry_snapshot,
+    "assist.exposure": entity_exposure,
+    "entities.enrich": enrich_entities,
+    "config.references.snapshot": reference_data,
 }
 
 
@@ -144,10 +147,10 @@ async def _device_single_snapshot(
         annotate_device_rows_with_effective_area,
     )
 
-    from .websocket_api.lookups import _do_device_get, _do_device_list
+    from .core_device_reads import device_get, device_list
 
     device_id = arguments["device_id"]
-    result = _do_device_get(hass, {"device_id": device_id, "include_entities": True})
+    result = device_get(hass, device_id, include_entities=True)
     device, entities = result.get("device"), result.get("entities")
     if isinstance(device, dict) and isinstance(entities, list):
         device = dict(device)
@@ -155,9 +158,7 @@ async def _device_single_snapshot(
             device[EFFECTIVE_AREA_MARKER] = result["effective_area_id"]
         devices = [device]
     else:
-        devices = annotate_device_rows_with_effective_area(
-            _do_device_list(hass, {})["devices"]
-        )
+        devices = annotate_device_rows_with_effective_area(device_list(hass)["devices"])
         entities = _entity_rows(hass)
     _, entity_map = _build_entity_maps(entities, True)
     return {"devices": devices, "device_to_entities": entity_map}
@@ -169,14 +170,12 @@ async def _device_list_snapshot(hass: HomeAssistant, arguments: dict[str, Any]) 
         annotate_device_rows_with_effective_area,
     )
 
-    from .websocket_api.lookups import _do_device_list
+    from .core_device_reads import device_list
 
     need_full = arguments["include_entities"]
     entities = _entity_rows(hass) if need_full else []
     _, entity_map = _build_entity_maps(entities, need_full)
-    devices = annotate_device_rows_with_effective_area(
-        _do_device_list(hass, {})["devices"]
-    )
+    devices = annotate_device_rows_with_effective_area(device_list(hass)["devices"])
     return {"devices": devices, "device_to_entities": entity_map}
 
 
