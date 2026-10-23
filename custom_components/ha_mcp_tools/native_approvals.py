@@ -64,6 +64,13 @@ class NativeApprovalGate:
         self._event_tasks: set[asyncio.Task] = set()
 
     def start_decisions(self) -> None:
+        policy = self.manager.policy.security_policy
+        if (
+            self._unsubscribe is not None
+            or policy is None
+            or not policy.event_decisions_enabled
+        ):
+            return
         from ha_mcp.policy.decisions import (
             APPROVAL_RESPONSE_EVENT,
             ApprovalResponseListener,
@@ -268,6 +275,10 @@ class NativeApprovalGate:
         actor: CallContext,
         dynamic: bool,
     ) -> None:
+        # Open this channel only when an opted-in approval needs it, matching
+        # the remote listener; an inactive native server must not answer other
+        # servers' decisions with unrelated feature_off events.
+        self.start_decisions()
         if not pending.mark_notified():
             return
         payload = build_requested_payload(

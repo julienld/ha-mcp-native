@@ -34,6 +34,7 @@ from .native_server_policy import (
     NativePolicy,
     catalogue_middleware,
     catalogue_transform,
+    connection_read_only,
     load_initial_policy,
     load_policy,
 )
@@ -331,7 +332,6 @@ class NativeServerManager:
             if self._startup_error is not None:
                 raise self._startup_error
             self.accepting = True
-            self.approval_gate.start_decisions()
             self.entry.async_on_unload(
                 self.hass.async_add_shutdown_job(HassJob(self.async_stop))
             )
@@ -420,14 +420,7 @@ class NativeServerManager:
         return definition is not None and definition.writes is not None
 
     def _search_read_only(self) -> bool:
-        if self.policy.read_only:
-            return True
-        try:
-            return current_context().read_only
-        except RuntimeError:
-            # Assist/initial catalogue introspection has no HTTP request;
-            # its own execution path still binds and validates CallContext.
-            return False
+        return connection_read_only(self.policy)
 
     async def refresh_policy(self) -> None:
         """Apply all-client restrictions independently from Assist exposure."""

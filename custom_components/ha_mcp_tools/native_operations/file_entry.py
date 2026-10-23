@@ -41,7 +41,8 @@ class NativeFileEntry:
             raise ToolFailure(
                 "COMPONENT_NOT_INSTALLED",
                 'The optional "HA-MCP File & YAML Tools" entry is not set up. '
-                "Add this entry to the integration to use file and YAML tools.",
+                "Open Settings > Devices & services > HA-MCP > Add entry, then "
+                'choose "HA-MCP File & YAML Tools" to use file and YAML tools.',
                 status="not_started",
             )
         if self.owner is not None and owner is not self.owner:

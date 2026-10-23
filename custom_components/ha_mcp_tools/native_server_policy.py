@@ -171,11 +171,25 @@ def load_policy(directory: Path) -> NativePolicy:
     )
 
 
+def connection_read_only(policy: NativePolicy) -> bool:
+    """Combine global policy with the trusted caller scope of this request."""
+    if policy.read_only:
+        return True
+    from .native_server import current_context
+
+    try:
+        return current_context().read_only
+    except RuntimeError:
+        # Assist and initial catalogue introspection have no HTTP request.
+        return False
+
+
 def filter_catalogue(manager: Any, tools: Any) -> list[Any]:
     """Filter before presentation transforms so hidden tools cannot leak in search."""
     from ha_mcp.llm_exposure import effective_llm_api_exposed
 
     policy = manager.policy
+    read_only = connection_read_only(policy)
     visible = []
     for tool in tools:
         writes = getattr(tool.annotations, "read_only_hint", False) is not True
@@ -184,6 +198,8 @@ def filter_catalogue(manager: Any, tools: Any) -> list[Any]:
             # Mixed tools remain discoverable for their read operations. The
             # engine classifies each validated invocation before policy checks.
             writes = False
+        if writes and read_only:
+            continue
         source_module = definition.source_module if definition is not None else None
         if not policy.enabled(
             tool.name, writes=writes, source_module=source_module
@@ -213,6 +229,23 @@ def catalogue_middleware(manager: Any) -> Any:
             return filter_catalogue(manager, await call_next(context))
 
         async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+            if connection_read_only(manager.policy) and manager._search_call_effect(
+                context.message.name, context.message.arguments or {}
+            ):
+                from ha_mcp.errors import ErrorCode, create_error_response
+
+                raise ToolError(
+                    json.dumps(
+                        create_error_response(
+                            ErrorCode.READ_ONLY_MODE,
+                            "This connection is read-only. If changes are needed, ask the user.",
+                            context={
+                                "tool_name": context.message.name,
+                                "read_only_mode": True,
+                            },
+                        )
+                    )
+                )
             definition = manager.engine.tools.get(context.message.name)
             source_module = definition.source_module if definition is not None else None
             if not manager.policy.enabled(

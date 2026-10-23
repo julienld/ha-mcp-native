@@ -55,10 +55,12 @@ from .const import (
     OPT_OAUTH_CLIENT_ID,
     OPT_OAUTH_CLIENT_SECRET,
     OPT_PIP_SPEC,
+    OPT_RUNTIME_MODE,
     OPT_SECRET_PATH_OVERRIDE,
     OPT_SERVER_URL,
     OPT_WEBHOOK_AUTH,
     OPT_WEBHOOK_ID_OVERRIDE,
+    RUNTIME_NATIVE,
     WEBHOOK_AUTH_NONE,
 )
 from .spec_dist import version_dist
@@ -146,13 +148,16 @@ async def _async_server_summary(
     # Lazy import, the embedded chain's convention (embedded_entry.py): only a
     # server-entry install needs the embedded server module.
     from .embedded_server import (
-        EmbeddedServerManager,
         _async_paired_server_requirement,
         _installed_ha_mcp_version,
     )
 
     options = entry.options
-    pip_spec = str(options.get(OPT_PIP_SPEC) or "").strip()
+    pip_spec = (
+        ""
+        if options.get(OPT_RUNTIME_MODE) == RUNTIME_NATIVE
+        else str(options.get(OPT_PIP_SPEC) or "").strip()
+    )
     # Same test as EmbeddedServerManager: the default spec is no override.
     override = pip_spec if pip_spec != DEFAULT_PIP_SPEC else ""
     # The effective spec, as EmbeddedServerManager._resolve_pip_spec resolves it.
@@ -166,7 +171,7 @@ async def _async_server_summary(
             _installed_ha_mcp_version, version_dist(spec)
         ),
         "package_override_set": bool(override),
-        "running": isinstance(manager, EmbeddedServerManager) and manager.is_running,
+        "running": bool(getattr(manager, "is_running", False)),
         "bring_up_in_progress": bringup is not None and not bringup.done(),
         "startup_error": _startup_error(hass, entry),
         "webhook_enabled": bool(options.get(OPT_ENABLE_WEBHOOK, True)),

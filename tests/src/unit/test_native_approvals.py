@@ -16,6 +16,26 @@ from ha_mcp.runtime import Engine  # noqa: E402
 from ha_mcp.tool_api import CallContext, ToolDefinition  # noqa: E402
 
 
+def test_native_decision_channel_subscribes_only_for_an_opted_in_approval(tmp_path):
+    manager, _engine, _handler, _announced = runtime()
+    manager.settings_ui = SimpleNamespace(directory=tmp_path)
+    manager.hass.bus.async_listen = MagicMock()
+    gate = manager.approval_gate
+    manager.policy.security_policy = None
+    gate.start_decisions()
+    manager.hass.bus.async_listen.assert_not_called()
+
+    policy = Policy(event_decisions_enabled=True)
+    manager.policy.security_policy = policy
+    pending = gate.queue.create("write", "digest", {}, ttl_minutes=5)
+    gate._announce(pending, "write", {}, policy, CallContext("owner"), False)
+    manager.hass.bus.async_listen.assert_called_once()
+    # A second announcement reuses the listener and its failed-PIN budget.
+    another = gate.queue.create("write", "second", {}, ttl_minutes=5)
+    gate._announce(another, "write", {}, policy, CallContext("owner"), False)
+    manager.hass.bus.async_listen.assert_called_once()
+
+
 def runtime() -> tuple[SimpleNamespace, Engine, AsyncMock, asyncio.Queue]:
     announced: asyncio.Queue = asyncio.Queue()
     manager = SimpleNamespace(
