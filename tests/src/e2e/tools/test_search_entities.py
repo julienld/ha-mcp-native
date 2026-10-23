@@ -17,6 +17,7 @@ from ..utilities.assertions import (
     safe_call_tool,
 )
 from ..utilities.scene_fragments import is_structural_scene_fragment
+from ..utilities.seeded_search_area import seeded_search_area
 from ..utilities.topology import component_surface_available
 from ..utilities.wait_helpers import wait_for_tool_result
 
@@ -2220,82 +2221,10 @@ class TestSearchEntitiesSeededAreasIssue1170:
     @pytest.fixture
     async def seeded_bedroom(self, mcp_client):
         """Give four seed entities legal own-area assignments, then restore them."""
-        saved = {}
-        async with MCPAssertions(mcp_client) as mcp:
-            try:
-                for eid, area_id in self.SEED_ASSIGNMENTS:
-                    entry = (
-                        await mcp.call_tool_success("ha_get_entity", {"entity_id": eid})
-                    )["entity_entry"]
-                    # Record intent before dispatch: even a failed write may have
-                    # changed state. Core 2026.10 disallows an entity area when a
-                    # has_entity_name entity has no name of its own (the HAOS demos
-                    # use their device name). Supply one instead of skipping tests.
-                    saved[eid] = {
-                        "name": entry.get("name"),
-                        "area_id": entry.get("area_id"),
-                    }
-                    await mcp.call_tool_success(
-                        "ha_set_entity",
-                        {
-                            "entity_id": eid,
-                            "name": f"E2E search {eid}",
-                            "area_id": area_id,
-                        },
-                    )
-                # Wait until all 4 are visible in the bedroom area
-                expected = {eid for eid, _ in self.SEED_ASSIGNMENTS}
-                await wait_for_tool_result(
-                    mcp_client,
-                    tool_name="ha_search",
-                    arguments={"area_filter": "bedroom", "limit": 50},
-                    predicate=lambda d: expected.issubset(
-                        {
-                            r.get("entity_id")
-                            for r in d.get("data", d).get("entities", [])
-                        }
-                    ),
-                    description="all seed assignments visible under bedroom",
-                )
-                yield {
-                    "area_id": "bedroom",
-                    "entity_ids": [eid for eid, _ in self.SEED_ASSIGNMENTS],
-                }
-            finally:
-                cleanup_errors = []
-                for eid, before in reversed(saved.items()):
-                    try:
-                        # name='' means reset-to-default; the distinct stored ''
-                        # override is restored via Core's use-device-name switch.
-                        name = (
-                            {"use_device_name": True}
-                            if before["name"] == ""
-                            else {"name": before["name"] or ""}
-                        )
-                        await mcp.call_tool_success(
-                            "ha_set_entity",
-                            {
-                                "entity_id": eid,
-                                "area_id": before["area_id"] or "",
-                                **name,
-                            },
-                        )
-                        await wait_for_tool_result(
-                            mcp_client,
-                            tool_name="ha_get_entity",
-                            arguments={"entity_id": eid},
-                            predicate=lambda data, expected=before: all(
-                                data.get("entity_entry", {}).get(key) == value
-                                for key, value in expected.items()
-                            ),
-                            description=f"original name and area restored for {eid}",
-                        )
-                    except Exception as exc:  # noqa: BLE001 - finish restoring other owned changes
-                        cleanup_errors.append(exc)
-                if cleanup_errors:
-                    raise ExceptionGroup(
-                        "Seeded search fixture cleanup failed", cleanup_errors
-                    )
+        async with seeded_search_area(
+            mcp_client, [eid for eid, _ in self.SEED_ASSIGNMENTS], "bedroom"
+        ) as prepared:
+            yield prepared
 
     @pytest.mark.asyncio
     async def test_area_only_returns_all_assigned_domains(
