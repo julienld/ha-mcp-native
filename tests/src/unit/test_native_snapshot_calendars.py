@@ -33,7 +33,9 @@ def calendars(runtime: Any, native: Any, monkeypatch: pytest.MonkeyPatch) -> tup
         "summary": "Saved appointment",
         "description": "Saved description",
     }
-    path = store.capture("calendar_event", "calendar.family::original", saved, "fixture")
+    path = store.capture(
+        "calendar_event", "calendar.family::original", saved, "fixture"
+    )
     return manager, snapshots, store, path, entity, entities
 
 
@@ -134,5 +136,7 @@ async def test_calendar_history_keeps_a_provider_uid_containing_the_key_separato
     path = store.capture(
         "calendar_event", "calendar.family::provider::event", saved, "fixture"
     )
-    _data, current = await snapshots.snapshot_comparison(path.name, CallContext("owner"))
+    _data, current = await snapshots.snapshot_comparison(
+        path.name, CallContext("owner")
+    )
     assert current["uid"] == "provider::event"

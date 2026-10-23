@@ -365,9 +365,12 @@ async def test_native_category_serialization_failure_after_create_is_not_a_rejec
     assert ("automation", "new") in registry.rows and len(registry.calls) == 1
 
 
-def test_legacy_registry_error_seam_preserves_classified_code_and_execution_status() -> None:
+def test_legacy_registry_error_seam_preserves_classified_code_and_execution_status() -> (
+    None
+):
     from ha_mcp.tool_api import ToolFailure
     from ha_mcp.tools.tools_categories import CategoryTools
+
     failure = ToolFailure("CONFIG_CONFLICT", "Do not dispatch", status="not_started")
     with pytest.raises(ToolFailure) as caught:
         CategoryTools._map_category_write_error(failure, {}, [])

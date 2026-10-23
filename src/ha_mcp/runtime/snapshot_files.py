@@ -153,6 +153,25 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _require_list(value: Any, endpoint: str) -> list[Any]:
+    """Return ``value`` if it's a list, else raise.
+
+    The WS registry-list fetchers distinguish two cases that used
+    to both collapse to ``None`` (which the diff/capture callers read as
+    "entity missing"): a genuine miss (entity not in the list) stays
+    ``None``, but an unexpected non-list envelope — a degraded response
+    from an auth-scope change or API drift — raises instead. The raise
+    funnels through the diff tool's ``exception_to_structured_error`` and
+    the capture pipeline's ``_CAPTURE_TRANSIENT_ERRORS`` warning, so a
+    broken fetch is never reported as a confident ``entity_missing``.
+    """
+    if not isinstance(value, list):
+        raise HomeAssistantError(
+            f"Expected a list from {endpoint!r}, got {type(value).__name__}"
+        )
+    return value
+
+
 def _require_dict(value: Any, endpoint: str) -> dict[str, Any]:
     """Return ``value`` if it's a dict, else raise.
 

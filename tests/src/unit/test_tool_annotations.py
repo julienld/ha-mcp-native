@@ -413,13 +413,13 @@ class TestToolAnnotations:
     def test_shared_method_registration_keeps_its_safety_checks(self):
         """A decorated facade assignment must not escape annotation checks."""
         source = textwrap.dedent(
-            '''
+            """
             class LegacyTools:
                 ha_eval_template = tool(
                     tags={"Utilities"},
                     annotations=read_only_hints("Evaluate Template", open_world=False),
                 )(log_tool_usage(TemplateTools.ha_eval_template))
-            '''
+            """
         )
         tools = _tools_in_source(source, "tools_utility.py")
         assert len(tools) == 1

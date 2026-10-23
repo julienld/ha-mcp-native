@@ -23,7 +23,11 @@ async def exercise_camera(checks: Any) -> None:
         "tools/call",
         {
             "name": "ha_get_camera_image",
-            "arguments": {"entity_id": camera["entity_id"], "width": 640, "height": 480},
+            "arguments": {
+                "entity_id": camera["entity_id"],
+                "width": 640,
+                "height": 480,
+            },
         },
     )
     assert "error" not in reply, reply

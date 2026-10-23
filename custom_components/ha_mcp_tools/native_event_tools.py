@@ -12,9 +12,7 @@ from .native_operations.events import NativeEvents
 
 def event_definition(manager: Any) -> ToolDefinition:
     async def invoke(arguments: dict[str, Any], actor: CallContext) -> dict[str, Any]:
-        events = NativeEvents(
-            manager.hass, actor, authorize=manager.backend.authorize
-        )
+        events = NativeEvents(manager.hass, actor, authorize=manager.backend.authorize)
         return await EventTools(events).ha_call_event(**arguments)
 
     return define_tool(

@@ -22,6 +22,7 @@ async def test_category_scope_containing_colon_is_not_split_into_another_scope(
 
 async def test_area_restore_keeps_the_saved_floor_assignment():
     from types import SimpleNamespace
+
     from ha_mcp.backup_manager import _restore_area_or_floor
 
     before = {"area_id": "room", "name": "Room", "floor_id": "wrong-floor"}

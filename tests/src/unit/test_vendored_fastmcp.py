@@ -210,7 +210,9 @@ def test_component_adapters_do_not_import_cores_shared_protocol_stack():
             for node in ast.walk(ast.parse(path.read_text("utf-8")))
         )
     ]
-    assert not offenders, f"component SDK adapters must use the private copy: {offenders}"
+    assert not offenders, (
+        f"component SDK adapters must use the private copy: {offenders}"
+    )
 
 
 def test_pyproject_declares_no_shared_fastmcp_or_mcp():

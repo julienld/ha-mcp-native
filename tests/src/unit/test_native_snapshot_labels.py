@@ -48,9 +48,7 @@ def labels(runtime, monkeypatch):
     )
     monkeypatch.setattr(access, "json_bytes", lambda value: json.dumps(value).encode())
     manager.hass.data = {
-        "websocket_api": {
-            "config/label_registry/update": (None, dict)
-        }
+        "websocket_api": {"config/label_registry/update": (None, dict)}
     }
     capture = AsyncMock(
         side_effect=AssertionError(

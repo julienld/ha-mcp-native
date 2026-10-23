@@ -5,7 +5,9 @@ from ha_mcp.runtime.flows import helpers as _shared
 
 logger = _shared.logger
 _MENU_CHOICE_CONFIG_KEYS = _shared._MENU_CHOICE_CONFIG_KEYS
-_extract_menu_choice_from_config = legacy_helper_flow(_shared._extract_menu_choice_from_config)
+_extract_menu_choice_from_config = legacy_helper_flow(
+    _shared._extract_menu_choice_from_config
+)
 _flow_helper_error_context = legacy_helper_flow(_shared._flow_helper_error_context)
 _resolve_flow_action = legacy_helper_flow(_shared._resolve_flow_action)
 _normalize_flow_config = legacy_helper_flow(_shared._normalize_flow_config)

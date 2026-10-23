@@ -1081,7 +1081,6 @@ class TestSweepWarningsShape:
       shape directly.
     """
 
-
     @pytest.mark.asyncio
     async def test_service_call_event_timeout_warnings_shape(self):
         import httpx

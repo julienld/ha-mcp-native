@@ -25,7 +25,10 @@ def events(native, monkeypatch):
 
     core = sys.modules["homeassistant.core"]
     monkeypatch.setattr(
-        sys.modules["homeassistant.const"], "EVENT_STATE_CHANGED", "state_changed", raising=False
+        sys.modules["homeassistant.const"],
+        "EVENT_STATE_CHANGED",
+        "state_changed",
+        raising=False,
     )
     origin = object()
     monkeypatch.setattr(core, "Context", Context)

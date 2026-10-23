@@ -160,6 +160,9 @@ from .runtime.snapshot_files import (
     _require_dict as _require_dict,
 )
 from .runtime.snapshot_files import (
+    _require_list as _require_list,
+)
+from .runtime.snapshot_files import (
     _safe_entity_id as _safe_entity_id,
 )
 from .runtime.snapshot_files import (
@@ -1486,25 +1489,6 @@ async def _restore_scene(client: Any, entity_id: str, config: Any) -> Any:
     return await client.upsert_scene_config(config, entity_id)
 
 
-def _require_list(value: Any, endpoint: str) -> list[Any]:
-    """Return ``value`` if it's a list, else raise.
-
-    The WS registry-list fetchers below distinguish two cases that used
-    to both collapse to ``None`` (which the diff/capture callers read as
-    "entity missing"): a genuine miss (entity not in the list) stays
-    ``None``, but an unexpected non-list envelope — a degraded response
-    from an auth-scope change or API drift — raises instead. The raise
-    funnels through the diff tool's ``exception_to_structured_error`` and
-    the capture pipeline's ``_CAPTURE_TRANSIENT_ERRORS`` warning, so a
-    broken fetch is never reported as a confident ``entity_missing``.
-    """
-    if not isinstance(value, list):
-        raise HomeAssistantError(
-            f"Expected a list from {endpoint!r}, got {type(value).__name__}"
-        )
-    return value
-
-
 # Dashboard resources — WS lovelace/resources commands. Rows store the
 # resource type as ``type``; the create/update field is ``res_type``. A restore
 # of a deleted resource re-creates it under a new id, so a snapshot falls back
@@ -1708,8 +1692,6 @@ async def _find_calendar_event(
     return None
 
 
-
-
 async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
     # entity_id is "<calendar.entity>::<event_uid>[::<recurrence_id>]"
     cal, _, rest = entity_id.partition("::")
@@ -1776,8 +1758,6 @@ async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
         )
         return None
     return {"calendar_entity_id": cal, **found}
-
-
 
 
 # HA reports a missing event as a plain ``failed`` command error whose message
@@ -2821,8 +2801,12 @@ class _LegacyRestoreOperations:
             if not getattr(self.manager._settings, "enable_auto_backup", False):
                 return None
             return await self.manager.maybe_snapshot_known(
-                self.domain, self.entity_id, self.registry_before,
-                tool_name="ha_manage_backup.restore.safety", force=True, mandatory=True,
+                self.domain,
+                self.entity_id,
+                self.registry_before,
+                tool_name="ha_manage_backup.restore.safety",
+                force=True,
+                mandatory=True,
             )
         return await self.manager._capture_restore_safety(
             self.domain, self.entity_id, outcome, self.config
@@ -2836,7 +2820,9 @@ class _LegacyRestoreOperations:
             from .backends.legacy_entity_snapshots import restore_entity_registry
 
             return await restore_entity_registry(
-                self.manager._client, self.entity_id, self.config,
+                self.manager._client,
+                self.entity_id,
+                self.config,
                 expected=self.registry_before,
             )
         # Absence commits to recreation; a target reappearing cannot be edited

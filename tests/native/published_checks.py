@@ -19,7 +19,13 @@ async def exercise_installation(
     observation = proof["observations"][-1]
     assert observation["verified"], {
         key: observation.get(key)
-        for key in ("changed_preinstalled", "new_issues", "errors", "receipt", "payload")
+        for key in (
+            "changed_preinstalled",
+            "new_issues",
+            "errors",
+            "receipt",
+            "payload",
+        )
     }
     assert not {"ha-mcp", "ha-mcp-dev"} & proof["before"].keys(), proof["before"]
     checks.passed(f"{mode}_Core_install_dependencies_{phase}")

@@ -268,7 +268,9 @@ async def test_calendar_catalog_binds_the_direct_owner_and_engine_write_policy(
     }
     with pytest.raises(ToolFailure) as refused:
         await engine.call(
-            "ha_config_set_calendar_event", arguments, CallContext("actor", read_only=True)
+            "ha_config_set_calendar_event",
+            arguments,
+            CallContext("actor", read_only=True),
         )
     assert refused.value.code == "READ_ONLY"
     entity.async_create_event.assert_not_awaited()

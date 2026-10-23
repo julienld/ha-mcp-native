@@ -2,7 +2,6 @@
 
 from typing import Any, TypedDict
 
-
 _SERVICE_KEYS: frozenset[str] = frozenset({"service", "action"})
 
 

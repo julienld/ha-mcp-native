@@ -155,7 +155,6 @@ class RemoteCameras:
             ) from e
 
 
-
 def _as_fastmcp_image(
     function: Callable[..., Awaitable[CameraSnapshot]],
 ) -> Callable[..., Awaitable[tuple[str, Image]]]:

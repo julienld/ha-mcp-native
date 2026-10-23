@@ -120,9 +120,7 @@ def _porch_core(rows: list[dict[str, Any]], sent: list[dict[str, Any]]) -> Magic
 async def _legacy_update(client: MagicMock, **changes: Any) -> dict[str, Any]:
     args = {"name": None, "icon": None, "area_id": None, "wait": False, **changes}
     with (
-        patch.object(
-            chc, "read_stored_helper_item", AsyncMock(return_value=None)
-        ),
+        patch.object(chc, "read_stored_helper_item", AsyncMock(return_value=None)),
         patch(_FETCH_SCHEMAS, AsyncMock(return_value=None)),
     ):
         result: dict[str, Any] = await hc_update._execute_update_simple_helper(
@@ -174,9 +172,7 @@ async def test_a_bare_id_no_helper_has_updates_nothing() -> None:
     rows = [{"entity_id": "input_boolean.attic", "platform": "input_boolean",
              "unique_id": "hall"}]  # fmt: skip
     with (
-        patch.object(
-            chc, "read_stored_helper_item", AsyncMock(return_value=None)
-        ),
+        patch.object(chc, "read_stored_helper_item", AsyncMock(return_value=None)),
         pytest.raises(ToolError) as exc_info,
     ):
         await hc_update._execute_update_simple_helper(
