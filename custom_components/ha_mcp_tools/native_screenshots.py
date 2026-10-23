@@ -120,6 +120,25 @@ class NativeScreenshots:
             )
         try:
             discovered, token = await self._discover()
+        except ToolError as error:
+            if explicit:
+                return explicit, None
+            # Discovery is shared with the legacy facade. Normalize its
+            # structured refusal here because theme reads also use _target.
+            data = json.loads(str(error))
+            detail = data["error"]
+            failure = ToolFailure(
+                detail["code"], detail["message"], data=data, status="not_started"
+            )
+            hint = (
+                detail.get("details")
+                or detail.get("suggestion")
+                or (
+                    "Select one started, schema-verified Puppet app, or configure "
+                    "this entry's screenshot engine URL explicitly."
+                )
+            )
+            raise with_recovery_hint(failure, hint) from None
         except Exception:
             if not explicit:
                 raise

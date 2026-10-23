@@ -24,6 +24,14 @@ MAX_WS_MESSAGE_BYTES = 5 * 1024 * 1024
 MAX_WS_MESSAGES = 1000
 
 
+class AppHTTPError(Exception):
+    """A received app refusal, without its potentially credential-bearing body."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"App returned HTTP {status_code}")
+        self.status_code = status_code
+
+
 class SingleAttemptWebSocket(connect):
     """An opaque app's handshake must not be repeated after a redirect."""
 
@@ -68,11 +76,11 @@ async def http_exchange(
             try:
                 value = json.loads(text)
             except ValueError:
-                pass
+                value = text
         if response.status >= 400:
             # The opaque app may have changed state before replying with an
             # error. Never retry or expose echoed ingress credentials.
-            raise ValueError(f"App returned HTTP {response.status}")
+            raise AppHTTPError(response.status)
         headers = {
             key.lower(): val
             for key, val in response.headers.items()

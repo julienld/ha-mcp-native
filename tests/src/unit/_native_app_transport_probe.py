@@ -40,6 +40,12 @@ async def run(case: str) -> None:
             if request.path == "/start":
                 raise web.HTTPFound("/destination")
             return web.Response(text="replayed")
+        if case == "http_refusal":
+            return web.json_response(
+                {"echo": request.headers.get("Cookie")},
+                status=401,
+                headers={"Set-Cookie": "private-response-session"},
+            )
         if case == "ws_command":
             socket = web.WebSocketResponse()
             await socket.prepare(request)
@@ -70,6 +76,14 @@ async def run(case: str) -> None:
 
 
 async def exchange(transport: Any, route: Any, case: str) -> None:
+    if case == "http_refusal":
+        try:
+            await transport.http_exchange(route, "POST", {"save": True})
+        except transport.AppHTTPError as error:
+            assert error.status_code == 401
+            assert "private" not in str(error) + repr(vars(error))
+            return
+        raise AssertionError("The rejected opaque POST was accepted as successful")
     if case == "http_redirect":
         result = await transport.http_exchange(route, "GET", None)
         assert result[0] == 302

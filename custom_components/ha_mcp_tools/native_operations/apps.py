@@ -6,6 +6,10 @@ from typing import Any
 
 from ha_mcp.runtime.app_arrays import _apply_array_ops
 from ha_mcp.runtime.app_dispatch import AppDispatch
+from ha_mcp.runtime.app_http_hints import (
+    _addon_config_for_http_hint,
+    add_http_error_hints,
+)
 from ha_mcp.runtime.app_proxy_results import (
     _apply_response_transform,
     _build_ws_result,
@@ -19,7 +23,7 @@ from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .app_actions import WEBSOCKET_TIMEOUT, AppActions
 from .app_routes import AppRoute, routing_identity
-from .app_transport import http_exchange, ws_exchange
+from .app_transport import AppHTTPError, http_exchange, ws_exchange
 
 
 class NativeApps(AppActions, AppDispatch):
@@ -50,10 +54,35 @@ class NativeApps(AppActions, AppDispatch):
                 "The app changed during array editing",
                 status="not_started",
             )
-        status, response_headers, value = await self.write(
-            lambda: http_exchange(route, method, body),
-            array_patch_post=expected_route is not None,
-        )
+        try:
+            status, response_headers, value = await self.write(
+                lambda: http_exchange(route, method, body),
+                array_patch_post=expected_route is not None,
+            )
+        except AppHTTPError as error:
+            hints: dict[str, Any] = {}
+            add_http_error_hints(
+                hints, error.status_code, route.addon, slug, port is not None
+            )
+            message = hints.pop("error")
+            if "addon_config" in hints:
+                # Select the remedy from the real schema/options, but return
+                # only the same redacted options as ha_get_app.
+                hints["addon_config"] = _addon_config_for_http_hint(
+                    self._info(route.addon, slug)["addon"]
+                )
+            failure = ToolFailure(
+                "OUTCOME_UNKNOWN",
+                f"{message}. The request was sent; inspect the app before another change. No retry was performed.",
+                status="outcome_unknown",
+            )
+            failure.data.update(status_code=error.status_code, slug=slug, **hints)
+            if self.array_patch_post_completed is not None:
+                failure.data.update(
+                    prerequisite_get_completed=self.completed,
+                    array_patch_applied=None if expected_route is not None else False,
+                )
+            raise failure from None
         return route, status, response_headers, value
 
     async def _execute_http_proxy(

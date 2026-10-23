@@ -281,6 +281,58 @@ async def test_supervisor_discovery_uses_the_existing_core_client(
     addons.addon_info.assert_awaited_once_with("repository_puppet")
 
 
+@pytest.mark.parametrize(
+    ("states", "code"),
+    [
+        ([], "CONFIG_VALIDATION_FAILED"),
+        (["stopped"], "SERVICE_CALL_FAILED"),
+        (["started", "started"], "CONFIG_VALIDATION_FAILED"),
+    ],
+)
+async def test_engine_theme_discovery_preserves_actionable_puppet_refusals(
+    renderer, monkeypatch, states, code
+):
+    from custom_components.ha_mcp_tools.native_operations.themes import NativeThemes
+
+    renderer, requests, *_ = renderer
+    renderer.manager.hass.config.components = {"hassio"}
+    renderer.manager.policy.flags["dashboard_screenshot_engine_url"] = ""
+    infos = {
+        f"repo{index}_puppet": {
+            "name": "Puppet",
+            "state": state,
+            "schema": [
+                {"name": name}
+                for name in ("access_token", "home_assistant_url", "keep_browser_open")
+            ],
+        }
+        for index, state in enumerate(states)
+    }
+    addons = SimpleNamespace(
+        list=AsyncMock(return_value=[SimpleNamespace(slug=slug) for slug in infos]),
+        addon_info=AsyncMock(
+            side_effect=lambda slug: SimpleNamespace(to_dict=lambda: infos[slug])
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.hassio",
+        SimpleNamespace(
+            get_supervisor_client=lambda hass: SimpleNamespace(addons=addons)
+        ),
+    )
+    theme = NativeThemes(renderer.manager, renderer.actor)
+    with pytest.raises(ToolFailure) as caught:
+        await theme._engine_token()
+    failure = caught.value
+    assert failure.code == code and failure.status == "not_started"
+    assert failure.data["error"]["suggestions"]
+    assert failure.data["matched_slugs"] == list(infos)
+    if states == ["stopped"]:
+        assert "access_token" in failure.data["error"]["details"]
+    assert requests == []
+
+
 async def test_repeated_cancellation_drains_screenshot_response_close(renderer):
     renderer, _requests, status, _active, png = renderer
     closing, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()

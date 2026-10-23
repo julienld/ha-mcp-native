@@ -4,6 +4,7 @@ import asyncio
 import copy
 import importlib
 import sys
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -222,3 +223,110 @@ async def test_array_patch_does_not_apply_old_array_to_replaced_app(
     assert result.data["prerequisite_get_completed"]
     assert result.data["array_patch_applied"] is False
     assert result.data["write_completed"] is False
+
+
+@pytest.fixture
+def app_responses(bound: Any) -> Any:
+    """Exercise the real HTTP adapter with a controlled Core-owned response."""
+    info = bound.replies["/addons/core_fixture/info"]
+    info.update(ip_address="172.30.33.1", network={"1880/tcp": 1880})
+    info["options"]["leave_front_door_open"] = False
+    info["schema"].append({"name": "leave_front_door_open", "type": "boolean"})
+    replies: list[tuple[int, bytes]] = []
+    calls: list[str] = []
+
+    @asynccontextmanager
+    async def request(method: str, url: Any, **kwargs: Any) -> Any:
+        calls.append(method)
+        assert kwargs["allow_redirects"] is False
+        status, body = replies.pop(0)
+
+        async def chunks(size: int) -> Any:
+            yield body
+
+        yield SimpleNamespace(
+            status=status,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "private-session",
+            },
+            charset="utf-8",
+            content=SimpleNamespace(iter_chunked=chunks),
+        )
+
+    bound.raw.websession.request = request
+    bound.routes.ingress_view(bound.manager.hass)._websession.request = request
+    return replies, calls
+
+
+async def test_native_direct_rejection_preserves_safe_settings_and_auth_guidance(
+    bound: Any, app_responses: Any
+) -> None:
+    replies, calls = app_responses
+    replies.append((401, b'{"echo":"private-session private-app-token"}'))
+    result = await bound.engine.call(
+        "ha_manage_app",
+        {"slug": "core_fixture", "path": "/flows", "port": 1880, "debug": True},
+        CallContext("actor"),
+    )
+    assert result.is_error and result.data["status_code"] == 401
+    assert result.status == "outcome_unknown"
+    assert result.data["addon_config"]["options"]["leave_front_door_open"] is False
+    hint = result.data["suggestion"].lower()
+    assert all(
+        word in hint
+        for word in ("ingress", "security", "restart", "leave_front_door_open")
+    )
+    assert not any(
+        secret in repr(result.data)
+        for secret in ("fixture-secret", "private-session", "private-app-token")
+    )
+    assert calls == ["GET"]
+
+
+async def test_native_ingress_post_rejection_retains_uncertainty_without_weakening_auth(
+    bound: Any, app_responses: Any
+) -> None:
+    replies, calls = app_responses
+    replies.append((401, b'{"echo":"private-session"}'))
+    result = await bound.engine.call(
+        "ha_manage_app",
+        {
+            "slug": "core_fixture",
+            "path": "/api",
+            "method": "POST",
+            "body": {"save": True},
+        },
+        CallContext("actor"),
+    )
+    assert result.is_error and result.data["status_code"] == 401
+    assert result.status == "outcome_unknown"
+    assert "session" in result.data["suggestion"].lower()
+    assert "addon_config" not in result.data
+    assert "leave_front_door_open" not in repr(result.data)
+    assert "private-session" not in repr(result.data)
+    assert calls == ["POST"]
+
+
+@pytest.mark.parametrize("rejected_method", ["GET", "POST"])
+async def test_array_patch_never_accepts_an_http_error_as_a_before_image_or_saved_array(
+    bound: Any, app_responses: Any, rejected_method: str
+) -> None:
+    replies, calls = app_responses
+    if rejected_method == "POST":
+        replies.append((200, b'[{"id":"a"}]'))
+    # An app can return a list-shaped body even with a rejection status.
+    replies.append((403, b'[{"id":"a"}]'))
+    result = await bound.engine.call(
+        "ha_manage_app",
+        {
+            "slug": "core_fixture",
+            "path": "/flows",
+            "array_patch": {"operations": [{"op": "delete", "id": "a"}]},
+        },
+        CallContext("actor"),
+    )
+    assert result.is_error and result.data["status_code"] == 403
+    assert result.status == "outcome_unknown"
+    assert result.data.get("array_patch_applied") is not True
+    assert calls == (["GET"] if rejected_method == "GET" else ["GET", "POST"])

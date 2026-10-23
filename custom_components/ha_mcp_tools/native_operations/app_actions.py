@@ -22,6 +22,7 @@ from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .app_reads import NativeAppReads
+from .app_transport import AppHTTPError
 from .registry_access import admit_registry_write
 
 _ACTIONS = {
@@ -105,6 +106,15 @@ class AppActions(NativeAppReads):
             try:
                 async with asyncio.timeout(budget):
                     result = await operation()
+            except AppHTTPError:
+                # Preserve a received status for route-specific guidance. It
+                # does not prove an opaque request had no effects or succeeded.
+                try:
+                    await self.supervisor.authorize()
+                except ToolFailure as denied:
+                    denied.status = "outcome_unknown"
+                    raise
+                raise
             except (Exception, asyncio.CancelledError) as error:  # noqa: BLE001 - provider may fail after effects
                 # Even an API error may follow a completed job or a partial
                 # provider change. Never reinterpret it as safe to replay.

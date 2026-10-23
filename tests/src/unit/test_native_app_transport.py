@@ -9,7 +9,15 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "case", ["http_drop", "http_redirect", "ws_drop", "ws_redirect", "ws_command"]
+    "case",
+    [
+        "http_drop",
+        "http_redirect",
+        "http_refusal",
+        "ws_drop",
+        "ws_redirect",
+        "ws_command",
+    ],
 )
 def test_app_transport_real_server_sends_only_one_request(
     case: str, tmp_path: Path
