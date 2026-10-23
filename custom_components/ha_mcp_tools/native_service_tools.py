@@ -17,6 +17,13 @@ def service_definition(definition: ToolDefinition) -> ToolDefinition:
         "Extra service-call parameters beyond entity_id (e.g. {'temperature': 22}). "
         "If entity_id is also present in data, the entity_id parameter wins."
     )
+    schema["properties"]["wait"]["description"] = (
+        "If True (default), confirm state-changing services for each target in "
+        "entity_id, including comma-separated targets. After service execution, allow "
+        "up to 10 seconds for pending confirmations. Other calls do not wait for state confirmation. "
+        "An already matching target can confirm immediately; an expired confirmation "
+        "is partial and never retries the service."
+    )
     return replace(
         definition,
         description=(

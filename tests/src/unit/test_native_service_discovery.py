@@ -42,6 +42,9 @@ def test_native_mcp_and_assist_disclose_unsupported_ws_parameter(
             in schema["properties"]["ws_command"]["description"].lower()
         )
         assert "raw command payload" not in schema["properties"]["data"]["description"]
+        wait_help = schema["properties"]["wait"]["description"]
+        assert "legacy" not in wait_help
+        assert "each target" in wait_help and "comma-separated" in wait_help
         assert not _changed_inputs(original.input_schema, schema)
     assert definition.handler is not None
     assert definition.meta["ha_mcp"]["native_support"]["partial"] is True
