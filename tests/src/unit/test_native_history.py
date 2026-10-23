@@ -336,6 +336,8 @@ async def test_core_options_neither_override_query_target_nor_bypass_validator(
     history: Any, options: dict
 ) -> None:
     result = await _get(history, core_options=options)
+    if "future_switch" in options:
+        assert "parameters" in result.data["error"]["message"]
     assert result.is_error and history.calls == []
 
 

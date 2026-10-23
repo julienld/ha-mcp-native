@@ -8,24 +8,25 @@ import logging
 from typing import Any
 
 from ha_mcp.backends.legacy_flows import legacy_helper_flow
-from ha_mcp.runtime.errors import websocket_error_message as websocket_error_message
+from ha_mcp.runtime.errors import websocket_error_message
 from ha_mcp.runtime.health_results import (
-    _REPAIR_PROJECTION_FIELDS as _REPAIR_PROJECTION_FIELDS,
-)
-from ha_mcp.runtime.health_results import filter_active_repairs as filter_active_repairs
-from ha_mcp.runtime.health_results import project_repair_fields as project_repair_fields
-from ha_mcp.runtime.health_results import (
-    summarize_theme_listing as summarize_theme_listing,
+    _REPAIR_PROJECTION_FIELDS,
+    filter_active_repairs,
+    project_repair_fields,
+    summarize_theme_listing,
 )
 from ha_mcp.runtime.integration_logs import get_logger_levels as _shared_logger_levels
-from ha_mcp.runtime.integration_logs import normalize_log_level as normalize_log_level
+from ha_mcp.runtime.integration_logs import normalize_log_level
 from ha_mcp.runtime.search_response import (
-    merge_visibility_warnings as merge_visibility_warnings,
+    merge_visibility_warnings,
+)
+from ha_mcp.runtime.websocket_policy import (
+    BLOCKED_WS_WRITE_COMMANDS as BLOCKED_WS_WRITE_COMMANDS,
 )
 
-from ..runtime.action_constants import _SERVICE_TO_STATE as _SERVICE_TO_STATE
 from ..runtime.action_constants import (
-    is_single_entity_target as is_single_entity_target,
+    _SERVICE_TO_STATE,
+    is_single_entity_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,54 +63,6 @@ def unwrap_service_response(result: dict[str, Any]) -> dict[str, Any]:
     """
     sr = result.get("service_response")
     return sr if isinstance(sr, dict) else result
-
-
-# WebSocket commands that mutate persistent state in a way that bypasses a
-# wrapping MCP tool's validation (auto-backup, config-hash optimistic locking,
-# registry invariant checks), or that have no escape-hatch-appropriate use case
-# (`config/core/update` rewrites the installation's location/timezone/currency/
-# lat-long). Shared by the code sandbox's `ws_send` bridge (tools_code.py) and
-# ha_call_service's `ws_command` escape hatch (tools_service.py) so the two raw
-# WebSocket surfaces stay in lockstep. Registry deletion command names differ on
-# HA Core: device deletion is `remove_config_entry` and entity deletion is
-# `remove` (not `delete`) -- ha_remove_device / ha_remove_entity emit those.
-BLOCKED_WS_WRITE_COMMANDS: frozenset[str] = frozenset(
-    {
-        "config/core/update",
-        "lovelace/config/save",
-        "ha_mcp_tools/dashboard_edit",
-        "lovelace/dashboards/create",
-        "lovelace/dashboards/delete",
-        "lovelace/dashboards/update",
-        # Resource writes carry the same wrapping-tool validation as the
-        # dashboard commands above -- auto-backup, the #1072 HA-config-YAML
-        # misroute rejection, the inline size cap, and the data:-URL routing
-        # guard all live in ha_config_set_dashboard_resource (#2060).
-        "lovelace/resources/create",
-        "lovelace/resources/delete",
-        "lovelace/resources/update",
-        "config/area_registry/delete",
-        "config/area_registry/disable",
-        "config/area_registry/update",
-        "config/device_registry/delete",
-        "config/device_registry/disable",
-        "config/device_registry/update",
-        "config/device_registry/remove_config_entry",
-        "config/entity_registry/delete",
-        "config/entity_registry/disable",
-        "config/entity_registry/update",
-        "config/entity_registry/remove",
-        "config/floor_registry/create",
-        "config/floor_registry/delete",
-        "config/floor_registry/update",
-        "config/label_registry/create",
-        "config/label_registry/delete",
-        "config/label_registry/update",
-        "config/category_registry/create",
-        "config/category_registry/delete",
-        "config/category_registry/update",
-    }
-)
 
 
 # Fields surfaced from each repair issue. Includes `ignored` / `dismissed_version`
@@ -156,3 +109,18 @@ def is_connection_error_message(error_msg: Any) -> bool:
     """
     lowered = str(error_msg).lower()
     return any(sig in lowered for sig in WS_CONNECTION_SIGNATURES)
+
+
+__all__ = [
+    "_REPAIR_PROJECTION_FIELDS",
+    "_SERVICE_TO_STATE",
+    "filter_active_repairs",
+    "is_connection_error_message",
+    "is_single_entity_target",
+    "merge_visibility_warnings",
+    "normalize_log_level",
+    "project_repair_fields",
+    "summarize_theme_listing",
+    "unwrap_service_response",
+    "websocket_error_message",
+]

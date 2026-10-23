@@ -51,6 +51,23 @@ def _dates(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _parameters(hass: Any, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _validated_payload(hass, command, arguments)
+    except ToolFailure as error:
+        detail = error.data.get("error")
+        if not error.code.startswith("VALIDATION_") or not isinstance(detail, dict):
+            raise
+        message = f"Invalid recorder parameters: {error}"
+        payload = {
+            **error.data,
+            "error": {**detail, "message": message},
+        }
+        raise ToolFailure(
+            error.code, message, data=payload, status=error.status
+        ) from error
+
+
 class RecorderQueries:
     def __init__(self, service: Any) -> None:
         self.service = service
@@ -89,7 +106,7 @@ class RecorderQueries:
 
         service = self.service
         payload = _dates(
-            _validated_payload(service.hass, "history/history_during_period", arguments)
+            _parameters(service.hass, "history/history_during_period", arguments)
         )
         for entity_id in payload["entity_ids"]:
             if service.hass.states.get(entity_id) is None and not valid_entity_id(
@@ -114,7 +131,7 @@ class RecorderQueries:
         )
 
         payload = _dates(
-            _validated_payload(
+            _parameters(
                 self.service.hass, "recorder/statistics_during_period", arguments
             )
         )

@@ -34,44 +34,35 @@ from ..errors import (
 )
 from ..read_only import require_write_access
 from ..runtime.action_constants import (
-    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING as _COMPONENT_RESPONSE_UNCONFIRMED_WARNING,
-)
-from ..runtime.action_constants import _NON_ENVELOPE_WARNING as _NON_ENVELOPE_WARNING
-from ..runtime.action_constants import (
-    _NON_STATE_CHANGING_DOMAINS as _NON_STATE_CHANGING_DOMAINS,
-)
-from ..runtime.action_constants import (
-    _STATE_CHANGING_SERVICES as _STATE_CHANGING_SERVICES,
+    _COMPONENT_RESPONSE_UNCONFIRMED_WARNING,
+    _NON_ENVELOPE_WARNING,
+    _NON_STATE_CHANGING_DOMAINS,
+    _STATE_CHANGING_SERVICES,
 )
 from ..runtime.action_params import (
     _parse_json_dict_param as _shared_parse_json_dict_param,
 )
 from ..runtime.actions import ServiceCallTools as SharedServiceCallTools
-from ..runtime.bulk_params import BulkControlOperation as BulkControlOperation
+from ..runtime.bulk_params import BulkControlOperation
 from ..runtime.bulk_params import (
     _parse_bulk_operations as _shared_parse_bulk_operations,
 )
 from ..runtime.bulk_safety import (
     _INFRASTRUCTURE_ERROR_SUGGESTIONS,
     _attach_resolution_to_response,
+    _expand_membership_transitively,
+    _find_group_member_conflicts,
+    _format_member_list,
+    _GroupConflict,
     _selector_only_parameter_message,
     _selector_only_parameter_offender,
     reject_group_member_conflicts,
 )
-from ..runtime.bulk_safety import (
-    _expand_membership_transitively as _expand_membership_transitively,
-)
-from ..runtime.bulk_safety import (
-    _find_group_member_conflicts as _find_group_member_conflicts,
-)
-from ..runtime.bulk_safety import (
-    _format_member_list as _format_member_list,
-)
-from ..runtime.bulk_safety import (
-    _GroupConflict as _GroupConflict,
-)
 from ..runtime.bulk_tools import BulkFacade as _BulkContractTools
 from ..runtime.event_tools import EventTools as _EventContractTools
+from ..runtime.websocket_policy import (
+    validate_ws_request,
+)
 from ..tool_api import ToolFailure
 from .backup_access import guard_snapshot_route
 from .bulk_selector import (
@@ -97,7 +88,6 @@ from .helpers import (
 from .tool_hints import read_only_hints, write_hints
 from .util_helpers import (
     _SERVICE_TO_STATE,
-    BLOCKED_WS_WRITE_COMMANDS,
     is_single_entity_target,
 )
 from .ws_waiters import wait_for_state_change
@@ -227,50 +217,6 @@ logger = logging.getLogger(__name__)
 # source of truth in ``util_helpers`` — imported above and shared with the bulk
 # consumer (``device_control``) so both write paths hand the component the same
 # confirmation hint.
-
-
-# WebSocket commands that stream events or reply in two phases (an initial ack
-# then the real payload as a follow-up event) rather than resolving to a single
-# terminal result. ha_call_service's ws_command escape hatch only supports
-# one-shot request/response commands, so these are rejected: the "subscribe"
-# substring catches subscription commands, and the set names known two-phase /
-# streaming commands whose names don't contain "subscribe". The set is a floor,
-# not an exhaustive list -- HA's WS command naming isn't consistent enough for a
-# name check alone to be fully reliable.
-_WS_COMMAND_EVENT_BLOCKLIST = frozenset(
-    {
-        "render_template",  # event-based; use ha_eval_template instead
-        "system_health/info",  # two-phase (see tools_system._fetch_health_info)
-        "assist_pipeline/run",  # streams pipeline events
-    }
-)
-
-# Substrings that mark a WS command as streaming / subscription-based even when
-# its name isn't in the blocklist above. Such commands ack once and then push
-# follow-up events on the same id; the one-shot send_command path returns the
-# ack and leaks the subscription. "subscribe" covers subscribe_* and */subscribe;
-# "stream" covers history/stream, logbook/event_stream, camera/stream, ...;
-# "start_preview" covers template/start_preview and the config-flow preview family.
-_WS_STREAMING_SUBSTRINGS = ("subscribe", "stream", "start_preview")
-
-# One-shot WS commands that re-enter Home Assistant's service invocation. Routing
-# them through the escape hatch would bypass the service-mode guards (notably the
-# reserved ha_mcp_tools domain block), so they are rejected -- use the
-# domain/service parameters for service calls instead.
-_WS_COMMAND_SERVICE_INVOKERS = frozenset({"call_service", "execute_script"})
-
-# Reserved WebSocket envelope keys the transport owns. Allowing them inside data
-# would let a caller override the validated command type (defeating every check
-# below) or collide with the transport's message id, so they are rejected.
-_WS_RESERVED_ENVELOPE_KEYS = frozenset({"type", "id"})
-
-
-def _is_streaming_ws_command(command_type: str) -> bool:
-    """Return True for subscription / streaming / two-phase WS commands."""
-    lowered = command_type.lower()
-    if lowered in _WS_COMMAND_EVENT_BLOCKLIST:
-        return True
-    return any(sub in lowered for sub in _WS_STREAMING_SUBSTRINGS)
 
 
 def _build_service_suggestions(
@@ -555,81 +501,12 @@ class ServiceTools(SharedServiceCallTools):
         services. Only one-shot request/response commands are supported —
         streaming / subscription commands are rejected up front.
         """
-        command_type = ws_command.strip()
-        if domain is not None or service is not None:
-            raise_tool_error(
-                create_validation_error(
-                    "Provide either domain + service (a registered service call) "
-                    "OR ws_command (a raw WebSocket command), not both.",
-                    parameter="ws_command",
-                )
+        try:
+            command_type, command_params = validate_ws_request(
+                ws_command, data, domain=domain, service=service
             )
-        if not command_type:
-            raise_tool_error(
-                create_validation_error(
-                    "ws_command must be a non-empty WebSocket command type "
-                    "(the message's 'type' field).",
-                    parameter="ws_command",
-                )
-            )
-        if _is_streaming_ws_command(command_type):
-            raise_tool_error(
-                create_validation_error(
-                    f"ws_command '{command_type}' is a streaming or two-phase "
-                    "command; ha_call_service only sends one-shot "
-                    "request/response commands. For template rendering use "
-                    "ha_eval_template.",
-                    parameter="ws_command",
-                )
-            )
-        if command_type.lower() in _WS_COMMAND_SERVICE_INVOKERS:
-            raise_tool_error(
-                create_validation_error(
-                    f"ws_command '{command_type}' invokes Home Assistant services "
-                    "and would bypass ha_call_service's safeguards. Use the "
-                    "domain/service parameters for service calls instead.",
-                    parameter="ws_command",
-                )
-            )
-        if command_type.lower().startswith("ha_mcp_tools/"):
-            raise_tool_error(
-                create_validation_error(
-                    "ha_call_service cannot invoke 'ha_mcp_tools/*' WebSocket "
-                    "commands. Use the dedicated ha-mcp tools instead.",
-                    parameter="ws_command",
-                )
-            )
-        if command_type.lower() in BLOCKED_WS_WRITE_COMMANDS:
-            raise_tool_error(
-                create_validation_error(
-                    f"ws_command '{command_type}' mutates persistent state that a "
-                    "dedicated tool guards with backups and conflict checks. Use "
-                    "the corresponding ha-mcp tool (e.g. ha_config_set_dashboard, "
-                    "ha_set_area_or_floor, ha_remove_entity) instead.",
-                    parameter="ws_command",
-                )
-            )
-        command_params = (
-            _parse_json_dict_param(
-                data, type_error_message="ws_command data must be a JSON object"
-            )
-            or {}
-        )
-        reserved = _WS_RESERVED_ENVELOPE_KEYS & command_params.keys()
-        if reserved:
-            raise_tool_error(
-                create_validation_error(
-                    "data must not contain the reserved WebSocket envelope key(s) "
-                    f"{', '.join(sorted(reserved))}; the command type is set by "
-                    "ws_command, and the message id is managed by the transport.",
-                    parameter="data",
-                )
-            )
-        # send_websocket_message returns a {"success": ...} dict for anything
-        # HA answered with, which the result-shape check below turns into a
-        # structured error. A dead transport raises instead (#1947), and this
-        # branch runs BEFORE ha_call_service's own try block, so the mapping
-        # has to happen here or the exception escapes the tool unstructured.
+        except ToolFailure as error:
+            raise_tool_error(error.data)
         guard_snapshot_route(ws_command=command_type, ws_params=command_params)
         result = await self._send_ws_command_mapped(command_type, command_params)
 
@@ -1124,3 +1001,18 @@ def register_service_tools(
     if not device_tools:
         raise ValueError("device_tools is required for service tools registration")
     register_tool_methods(mcp, ServiceTools(client, device_tools))
+
+
+__all__ = [
+    "BulkControlOperation",
+    "ServiceTools",
+    "_COMPONENT_RESPONSE_UNCONFIRMED_WARNING",
+    "_GroupConflict",
+    "_NON_ENVELOPE_WARNING",
+    "_NON_STATE_CHANGING_DOMAINS",
+    "_STATE_CHANGING_SERVICES",
+    "_expand_membership_transitively",
+    "_find_group_member_conflicts",
+    "_format_member_list",
+    "register_service_tools",
+]

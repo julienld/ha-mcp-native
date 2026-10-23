@@ -15,6 +15,7 @@ from .action_constants import (
 )
 from .action_params import ActionParameters
 from .action_projection import ActionProjection
+from .websocket_policy import validate_ws_request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,11 +39,18 @@ class ServiceCallTools(ActionParameters, ActionProjection, BackendTools):
     async def _call_ws_command(
         self, ws_command: str, data: Any, *, domain: str | None, service: str | None
     ) -> dict[str, Any]:
+        try:
+            command_type, command_params = validate_ws_request(
+                ws_command, data, domain=domain, service=service
+            )
+        except ToolFailure as error:
+            error.status = "not_started"
+            raise
         result: dict[str, Any] = await self.backend.execute(
             "services.websocket_command",
             {
-                "ws_command": ws_command,
-                "data": data,
+                "ws_command": command_type,
+                "data": command_params or None,
                 "domain": domain,
                 "service": service,
             },
