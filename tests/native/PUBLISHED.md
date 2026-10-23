@@ -12,12 +12,16 @@ the matching assets are publicly available and publication has been approved.
 
 - Select the source ref whose HEAD is exactly `native-build.json.revision`, not
   the separate HACS distribution-snapshot commit. The workflow refuses a mismatch.
-- The tag belongs to `julienld/ha-mcp-native` and has public `native-build.json`,
+- The tag belongs to the explicitly selected repository (the manual default is
+  `julienld/ha-mcp-native`) and has public `native-build.json`,
   `ha_mcp_tools.zip`, and the wheel named by that metadata.
 - Metadata must identify the native dependency profile and the exact source
   revision/submodule gitlinks. Both archives must match its SHA-256 values.
 
-The downloader accepts only a single tag and asset basenames in that repository.
+The workflow selects its own `GITHUB_REPOSITORY`; manual qualification accepts
+`--repository OWNER/NAME`. This expected repository is trusted input, never
+inferred from downloaded metadata. The downloader accepts only a single tag and
+asset basenames in that repository.
 HTTPS redirects are limited to GitHub's asset hosts and bounded in count and time.
 JSON, component ZIP, and wheel downloads are capped at 1, 64, and 128 MiB. Archive
 paths, duplicate entries, links, and extraction size are checked before extraction.
