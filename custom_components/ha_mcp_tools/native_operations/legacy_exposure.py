@@ -43,10 +43,17 @@ class NativeLegacyExposure:
         from homeassistant.components.homeassistant import exposed_entities as module
 
         owner = self.hass.data.get(getattr(module, "DATA_EXPOSED_ENTITIES", None))
+        if type(owner) is not getattr(
+            module, "ExposedEntities", None
+        ) or not isinstance(getattr(owner, "entities", None), dict):
+            raise UnsupportedOperation("entity_exposure.core_owner")
+        return owner, module
+
+    def _restore_owner(self) -> tuple[Any, Any]:
+        """Only exact replacement depends on Core's private persistence protocol."""
+        owner, module = self._owner()
         if (
-            type(owner) is not getattr(module, "ExposedEntities", None)
-            or not isinstance(getattr(owner, "entities", None), dict)
-            or not isinstance(getattr(owner, "_listeners", None), dict)
+            not isinstance(getattr(owner, "_listeners", None), dict)
             or not callable(getattr(owner, "_async_schedule_save", None))
             or not dataclasses.is_dataclass(getattr(module, "ExposedEntity", None))
         ):
@@ -226,7 +233,7 @@ class NativeLegacyExposure:
         await admit_registry_write(self.actor, self.authorize)
         async with registry_update_lock("entity_exposure", entity_id):
             await admit_registry_write(self.actor, self.authorize)
-            owner, module = self._owner()
+            owner, module = self._restore_owner()
             restored = self._restore_value(module, config, entity_id)
             self._check_current(owner, entity_id, expected)
             current = self._snapshot(owner, entity_id)

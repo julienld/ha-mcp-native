@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -91,6 +91,69 @@ async def _call(manager: Any, method: Any) -> Any:
     return await Engine(manager.backend).call_owned(
         "legacy-exposure", method, CallContext("actor"), writes=True
     )
+
+
+def _remove_restore_capability(
+    monkeypatch: pytest.MonkeyPatch, owner: Any, capability: str
+) -> Any:
+    module = sys.modules["homeassistant.components.homeassistant.exposed_entities"]
+    if capability == "listeners":
+        monkeypatch.delattr(owner, "_listeners")
+    elif capability == "schedule":
+        monkeypatch.setattr(owner, "_async_schedule_save", None)
+    else:
+        monkeypatch.delattr(module, "ExposedEntity")
+    return module
+
+
+@pytest.mark.parametrize("capability", ["listeners", "schedule", "model"])
+async def test_public_exposure_read_and_set_do_not_require_restore_internals(
+    native: Any, monkeypatch: pytest.MonkeyPatch, capability: str
+) -> None:
+    service, owner, manager, _, _ = _setup(native, monkeypatch)
+    module = _remove_restore_capability(monkeypatch, owner, capability)
+
+    def public_set(_hass: Any, assistant: str, entity_id: str, value: bool) -> None:
+        owner.entities[entity_id] = _ExposedEntity(
+            {assistant: {"should_expose": value}}
+        )
+
+    setter = Mock(side_effect=public_set)
+    monkeypatch.setattr(module, "async_expose_entity", setter)
+    absent = await service.read_snapshot("sensor.legacy")
+    assert absent["preferences"] is None
+    result = await _call(
+        manager, lambda: service.set("sensor.legacy", {"conversation": True})
+    )
+    assert not result.is_error and result.status == "confirmed", result.data
+    setter.assert_called_once_with(manager.hass, "conversation", "sensor.legacy", True)
+    current = await service.read_snapshot("sensor.legacy")
+    assert current["preferences"] == {
+        "assistants": {"conversation": {"should_expose": True}}
+    }
+
+
+@pytest.mark.parametrize("capability", ["listeners", "schedule", "model"])
+async def test_restore_without_private_support_refuses_before_mapping_changes(
+    native: Any, monkeypatch: pytest.MonkeyPatch, capability: str
+) -> None:
+    service, owner, manager, _, _ = _setup(native, monkeypatch)
+    original = _ExposedEntity({"conversation": {"should_expose": True}})
+    owner.entities["sensor.legacy"] = original
+    expected = await service.read_snapshot("sensor.legacy")
+    _remove_restore_capability(monkeypatch, owner, capability)
+    result = await _call(
+        manager,
+        lambda: service.restore_snapshot(
+            "sensor.legacy",
+            {"entity_id": "sensor.legacy", "preferences": None},
+            expected,
+        ),
+    )
+    assert result.is_error and result.status == "not_started", result.data
+    assert result.data["error"]["code"] == "UNSUPPORTED_OPERATION"
+    assert owner.entities["sensor.legacy"] is original
+    assert owner.saves == 0 and owner.calls == []
 
 
 async def test_legacy_exposure_absence_is_captured_and_restored_as_absence(
