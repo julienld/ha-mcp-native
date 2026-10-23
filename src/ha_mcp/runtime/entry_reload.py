@@ -7,12 +7,9 @@ begun; this module owns that stream and the rule for what counts as settled.
 """
 
 import asyncio
-import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 # States HA passes THROUGH while reloading. ``unload_in_progress`` is the first
 # one an enabled domain entry enters and exists only from HA 2025.x, so
@@ -177,6 +174,4 @@ async def _observe_reload_settled(
         return entry
 
 
-__all__ = [
-    "_ENTRY_SUBSCRIBE_TIMEOUT",
-]
+__all__ = ["WS_CONFIG_ENTRIES_SUBSCRIBE", "_ENTRY_SUBSCRIBE_TIMEOUT"]

@@ -1,6 +1,6 @@
 """Custom FastMCP transforms for ha-mcp."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ha_mcp._lazy_exports import resolve_export
 
@@ -13,6 +13,9 @@ from .categorized_search import (
 )
 from .lite_docstrings import LiteDocstringsTransform
 from .write_tool_note import DESKTOP_APPROVAL_NOTE, WriteToolNoteTransform
+
+if TYPE_CHECKING:
+    from .component_search import ComponentSearchSchemaTransform
 
 _LAZY_EXPORTS = {
     "ComponentSearchSchemaTransform": (

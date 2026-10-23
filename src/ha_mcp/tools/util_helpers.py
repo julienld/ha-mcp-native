@@ -4,7 +4,6 @@ Shared utility functions for MCP tool modules.
 This module provides common helper functions used across multiple tool registration modules.
 """
 
-import logging
 from typing import Any
 
 from ha_mcp.backends.legacy_flows import legacy_helper_flow
@@ -27,8 +26,6 @@ from ..runtime.action_constants import (
     _SERVICE_TO_STATE,
     is_single_entity_target,
 )
-
-logger = logging.getLogger(__name__)
 
 get_logger_levels = legacy_helper_flow(_shared_logger_levels)
 
@@ -114,6 +111,7 @@ __all__ = [
     "BLOCKED_WS_WRITE_COMMANDS",
     "_SERVICE_TO_STATE",
     "filter_active_repairs",
+    "get_logger_levels",
     "is_connection_error_message",
     "is_single_entity_target",
     "merge_visibility_warnings",

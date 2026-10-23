@@ -81,5 +81,8 @@ reject_use_device_name_without_device = legacy_errors_sync(
 
 
 __all__ = [
+    "build_name_visibility_fields",
+    "build_state_tag_fields",
     "ensure_use_device_name_allowed",
+    "reject_name_with_use_device_name",
 ]

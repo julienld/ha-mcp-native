@@ -18,7 +18,6 @@ from ..tools.helpers import raise_tool_error
 DashboardRenderTarget = _routes.DashboardRenderTarget
 dashboard_frontend_path = legacy_errors_sync(_routes.dashboard_frontend_path)
 dashboard_render_paths = legacy_errors_sync(_routes.dashboard_render_paths)
-match_dashboard_view = legacy_errors_sync(_routes.match_dashboard_view)
 resolve_dashboard_view = legacy_errors_sync(_routes.resolve_dashboard_view)
 
 
@@ -146,5 +145,7 @@ async def resolve_dashboard_render_target(
 
 
 __all__ = [
+    "dashboard_render_paths",
     "resolve_dashboard_render_target",
+    "resolve_dashboard_view",
 ]

@@ -6,7 +6,6 @@ Home Assistant areas and floors - essential organizational features for smart ho
 """
 
 import asyncio
-import logging
 from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -27,8 +26,6 @@ from .helpers import (
     register_tool_methods,
 )
 from .tool_hints import read_only_hints, write_hints
-
-logger = logging.getLogger(__name__)
 
 
 class AreaTools(LegacyBackendTools, AreaWriteTools):
@@ -206,7 +203,4 @@ def register_area_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     register_tool_methods(mcp, AreaTools(client))
 
 
-__all__ = [
-    "AreaTools",
-    "register_area_tools",
-]
+__all__ = ["AreaTools", "register_area_tools"]

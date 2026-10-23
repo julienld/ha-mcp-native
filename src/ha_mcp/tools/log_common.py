@@ -6,12 +6,10 @@ from ha_mcp.runtime import log_common as _shared
 
 COMPACT_LOGBOOK_FIELDS = _shared.COMPACT_LOGBOOK_FIELDS
 SYSTEM_SERVICE_SLUGS = _shared.SYSTEM_SERVICE_SLUGS
-DEFAULT_LIMIT = _shared.DEFAULT_LIMIT
 DEFAULT_LOG_LIMIT = _shared.DEFAULT_LOG_LIMIT
 SUPERVISOR_SEARCH_WINDOW_LINES = _shared.SUPERVISOR_SEARCH_WINDOW_LINES
 MAX_LIMIT = _shared.MAX_LIMIT
 _LOG_LEVEL_RE = _shared._LOG_LEVEL_RE
-VALID_LOG_LEVELS = _shared.VALID_LOG_LEVELS
 _compact_logbook_entries = _shared._compact_logbook_entries
 _coerce_limit = legacy_errors_sync(_shared._coerce_limit)
 
@@ -30,6 +28,11 @@ def _addon_auth_error_suggestions() -> list[str]:
 
 
 __all__ = [
+    "COMPACT_LOGBOOK_FIELDS",
+    "DEFAULT_LOG_LIMIT",
+    "MAX_LIMIT",
+    "SUPERVISOR_SEARCH_WINDOW_LINES",
+    "SYSTEM_SERVICE_SLUGS",
     "_coerce_limit",
     "_compact_logbook_entries",
 ]

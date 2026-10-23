@@ -333,6 +333,8 @@ async def send_hacs_repository_refresh(
 
 __all__ = [
     "CATEGORY_MAP",
+    "HACS_ADD_REGISTRATION_TIMEOUT",
+    "HACS_RESOLVE_REGISTRATION_TIMEOUT",
     "_filter_and_score_repos",
     "send_hacs_repository_refresh",
     "wait_for_repo_registration",

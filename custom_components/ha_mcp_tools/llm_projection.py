@@ -174,6 +174,8 @@ def async_unregister_llm_api(hass: HomeAssistant) -> None:
 
 
 __all__ = [
+    "CALL_TOOL_DESCRIPTION",
+    "CALL_TOOL_PARAMETERS",
     "_FALLBACK_API_PROMPT",
     "_TOOL_SEARCH_PROMPT",
     "async_unregister_llm_api",

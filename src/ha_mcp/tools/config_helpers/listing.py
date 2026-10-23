@@ -3,7 +3,6 @@
 from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
 from ha_mcp.runtime import helper_listing_shape as _shared
 
-logger = _shared.logger
 _SCRUB_DEGRADED_WARNING = _shared._SCRUB_DEGRADED_WARNING
 raise_if_helper_flows_degraded = legacy_errors_sync(
     _shared.raise_if_helper_flows_degraded
@@ -30,4 +29,7 @@ __all__ = [
     "_raise_flow_requires_component",
     "_shape_collection_helper_record",
     "_shape_component_helpers_response",
+    "listed_items",
+    "raise_if_helper_flows_degraded",
+    "shape_all_helpers_response",
 ]

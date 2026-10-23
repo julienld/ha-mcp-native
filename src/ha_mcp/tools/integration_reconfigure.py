@@ -10,10 +10,6 @@ from ha_mcp.runtime import integration_reconfigure as _shared
 from ha_mcp.runtime.flows.session import FlowSession
 from ha_mcp.tool_api import CallContext
 
-RECONFIGURE_ONLY_PARAMETERS = _shared.RECONFIGURE_ONLY_PARAMETERS
-reject_reconfigure_only_parameters = legacy_flow(
-    _shared.reject_reconfigure_only_parameters
-)
 _reconfigure_preflight_token = _shared._reconfigure_preflight_token
 
 
@@ -34,7 +30,4 @@ class ReconfigureRunner(_shared.ReconfigureRunner):
     handle_mode = legacy_flow(_shared.ReconfigureRunner.handle_mode)
 
 
-__all__ = [
-    "ReconfigureRunner",
-    "_reconfigure_preflight_token",
-]
+__all__ = ["ReconfigureRunner", "_reconfigure_preflight_token"]

@@ -1,8 +1,12 @@
 """Custom tools for the Home Assistant MCP server."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .._lazy_exports import resolve_export
+
+if TYPE_CHECKING:
+    from .device_control import DeviceControlTools, create_device_control_tools
+    from .smart_search import SmartSearchTools, create_smart_search_tools
 
 _LAZY_EXPORTS = {
     "DeviceControlTools": (".device_control", "DeviceControlTools"),

@@ -7,7 +7,6 @@ Important: Device renaming does NOT cascade to entities - they are independent r
 """
 
 import asyncio
-import logging
 from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -35,8 +34,6 @@ from .helpers import (
     register_tool_methods,
 )
 from .tool_hints import read_only_hints, write_hints
-
-logger = logging.getLogger(__name__)
 
 
 async def _fetch_entity_rows(client: Any) -> list[dict[str, Any]]:
@@ -366,7 +363,4 @@ def register_registry_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     register_tool_methods(mcp, RegistryTools(client))
 
 
-__all__ = [
-    "RegistryTools",
-    "register_registry_tools",
-]
+__all__ = ["RegistryTools", "register_registry_tools"]

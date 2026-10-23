@@ -382,7 +382,9 @@ def _raise_reconfigure_no_answer(
 
 
 __all__ = [
+    "POST_COMMIT_STATUSES",
     "ReconfigureStatus",
     "_RECONFIGURE_SUCCESS_REASONS",
     "_UNDRIVABLE_STEP_TYPES",
+    "logger",
 ]

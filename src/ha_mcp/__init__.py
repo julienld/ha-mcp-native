@@ -13,7 +13,7 @@ __version__ = get_version()
 __author__ = "Julien"
 __license__ = "MIT"
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._lazy_exports import resolve_export
 from .errors import (
@@ -31,6 +31,12 @@ from .errors import (
     get_error_message,
     is_error_response,
 )
+
+if TYPE_CHECKING:
+    from .auth import HomeAssistantOAuthProvider
+    from .client.rest_client import HomeAssistantClient
+    from .config import Settings
+    from .server import HomeAssistantSmartMCPServer
 
 # The integration imports the tool API without constructing the standalone
 # transport stack. Keep the historical package exports available on demand.

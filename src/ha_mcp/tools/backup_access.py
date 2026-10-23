@@ -171,7 +171,9 @@ def snapshot_route_refusal(
 
 
 __all__ = [
+    "gate_backup_combo",
     "guard_snapshot_route",
     "require_backup_access",
+    "require_backup_param",
     "snapshot_route_refusal",
 ]

@@ -14,21 +14,12 @@ from ..client.rest_client import (
 from ..errors import create_error_response
 from .helpers import raise_tool_error, ws_failure_code
 
-YAML_HELPER_REMOVAL = _shared.YAML_HELPER_REMOVAL
-YAML_HELPER_SUGGESTION = _shared.YAML_HELPER_SUGGESTION
-not_stored_reply = legacy_helper_flow(_shared.not_stored_reply)
 FlowLookupReason = _shared.FlowLookupReason
 _raise_unexpected_registry_reply = legacy_helper_flow(
     _shared._raise_unexpected_registry_reply
 )
-raise_unregistered_entity_error = legacy_helper_flow(
-    _shared.raise_unregistered_entity_error
-)
 get_entry_id_for_flow_helper = legacy_helper_flow(_shared.get_entry_id_for_flow_helper)
 _raise_platform_mismatch = legacy_helper_flow(_shared._raise_platform_mismatch)
-raise_flow_helper_lookup_error = legacy_helper_flow(
-    _shared.raise_flow_helper_lookup_error
-)
 resolve_helper_entity = legacy_helper_flow(_shared.resolve_helper_entity)
 
 
@@ -108,4 +99,6 @@ async def _absence_reason(client: Any, entity_id: str) -> FlowLookupReason:
 
 __all__ = [
     "_raise_platform_mismatch",
+    "get_entry_id_for_flow_helper",
+    "resolve_helper_entity",
 ]

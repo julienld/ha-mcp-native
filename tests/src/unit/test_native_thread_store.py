@@ -101,7 +101,7 @@ async def test_cancelling_a_waiter_never_cancels_shared_core_loading(
     world.radios.hass.data["thread.datasets"] = world.owner
     pending.set_result(world.owner)
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert not pending.cancelled()
     assert world.radios.hass.data["thread.datasets"] is world.owner
 

@@ -197,6 +197,4 @@ def _validate_log_slug(source: str, slug: str | None) -> None:
         )
 
 
-__all__ = [
-    "_LOG_LEVEL_RE",
-]
+__all__ = ["DEFAULT_LOG_LIMIT", "SUPERVISOR_SEARCH_WINDOW_LINES", "_LOG_LEVEL_RE"]

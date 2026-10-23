@@ -2,9 +2,7 @@
 
 from ha_mcp.runtime import entry_reload as _shared
 
-logger = _shared.logger
 _TRANSIENT_RECONFIGURE_STATES = _shared._TRANSIENT_RECONFIGURE_STATES
-WS_CONFIG_ENTRIES_SUBSCRIBE = _shared.WS_CONFIG_ENTRIES_SUBSCRIBE
 _is_transient_reconfigure_state = _shared._is_transient_reconfigure_state
 _entry_fragments = _shared._entry_fragments
 _observe_reload_settled = _shared._observe_reload_settled

@@ -16,7 +16,6 @@ firmware installs).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -28,8 +27,6 @@ from ...errors import ErrorCode, create_error_response
 from ..component_devices import fetch_device_entities_via_component
 from ..helpers import raise_tool_error
 from ..tools_integrations import _fetch_entries_via_component
-
-logger = logging.getLogger(__name__)
 
 
 async def ws_call(
@@ -163,13 +160,14 @@ async def resolve_update_entity(
 
 require = legacy_errors_sync(_values.require)
 integration_required = legacy_errors_sync(_values.integration_required)
-confirm_required = legacy_errors_sync(_values.confirm_required)
 
 
 __all__ = [
     "ActionSpec",
     "integration_not_found",
+    "integration_required",
     "ok",
+    "require",
     "resolve_entry_id",
     "resolve_update_entity",
     "ws_call",

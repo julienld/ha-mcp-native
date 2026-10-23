@@ -3,7 +3,6 @@
 from ha_mcp.backends.legacy_flows import legacy_helper_flow
 from ha_mcp.runtime.flows import helpers as _shared
 
-logger = _shared.logger
 _extract_menu_choice_from_config = legacy_helper_flow(
     _shared._extract_menu_choice_from_config
 )

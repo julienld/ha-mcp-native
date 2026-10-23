@@ -11,7 +11,6 @@ Split out of ``tools_utility`` under `.gemini/styleguide.md` § Tool
 Consolidation and Module Size.
 """
 
-import logging
 from typing import Any, Literal
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
@@ -34,8 +33,6 @@ from .log_common import (
     _addon_auth_error_suggestions,
     _coerce_limit,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class CoreLogSourcesMixin(LogResults):
@@ -210,7 +207,4 @@ class CoreLogSourcesMixin(LogResults):
             raise  # unreachable: exception_to_structured_error always raises
 
 
-__all__ = [
-    "CoreLogSourcesMixin",
-    "_SYSTEM_LOG_MESSAGE_CAP",
-]
+__all__ = ["CoreLogSourcesMixin", "_SYSTEM_LOG_MESSAGE_CAP"]

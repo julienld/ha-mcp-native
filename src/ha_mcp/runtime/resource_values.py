@@ -515,7 +515,4 @@ def resource_list_result(
     return response
 
 
-__all__ = [
-    "_RESOURCE_TYPE",
-    "resource_list_result",
-]
+__all__ = ["MAX_CONTENT_SIZE", "_RESOURCE_TYPE", "resource_list_result"]

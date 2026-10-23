@@ -12,7 +12,6 @@ token in server memory to restore the engine user's saved theme (issue
 from __future__ import annotations
 
 import json
-import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -32,8 +31,6 @@ from ..errors import ErrorCode, create_error_response
 from ..utils.tool_errors import raise_tool_error
 from .provision import TOKEN_HINT, EngineTarget, resolve_engine
 from .theme_guard import ThemeGuard
-
-logger = logging.getLogger(__name__)
 
 _normalize_dashboard_path = legacy_errors_sync(_pure_dashboard_path)
 
@@ -970,6 +967,7 @@ async def capture_dashboard_images(
 
 __all__ = [
     "DashboardImageCapture",
+    "FULL_PAGE_PARAM_DESC",
     "capture_dashboard_images",
     "validate_capture_parameters",
 ]

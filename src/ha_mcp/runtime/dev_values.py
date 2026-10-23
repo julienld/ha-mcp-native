@@ -211,6 +211,4 @@ def _apply_gate_to_policy(policy: Any, tool: str, gated: bool) -> tuple[Any, boo
     return policy, False
 
 
-__all__ = [
-    "_HUMAN_ONLY_SETTINGS",
-]
+__all__ = ["HUMAN_BACKUP_CONTROLS", "_HUMAN_ONLY_SETTINGS"]

@@ -10,15 +10,11 @@ import time
 from typing import Any, Literal, NoReturn, overload
 
 from ha_mcp._vendor.fastmcp import Context
-from ha_mcp.backends.legacy import legacy_errors_sync as _legacy_errors_sync
 from ha_mcp.runtime.error_text import (
     extract_structured_error_reason,
     extract_tool_error_message,
 )
 from ha_mcp.runtime.errors import ws_failure_code
-from ha_mcp.runtime.validation import (
-    reject_malformed_list_fields as _reject_malformed_list_fields,
-)
 
 from ..client.websocket_client import HomeAssistantWebSocketClient
 from ..errors import (
@@ -32,9 +28,6 @@ from ..utils.usage_logger import log_tool_call
 from .coercion import UNSET
 
 logger = logging.getLogger(__name__)
-
-
-reject_malformed_list_fields = _legacy_errors_sync(_reject_malformed_list_fields)
 
 
 def validate_identifier_not_empty(

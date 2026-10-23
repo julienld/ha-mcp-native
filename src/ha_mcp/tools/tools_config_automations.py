@@ -561,6 +561,7 @@ def register_config_automation_tools(mcp: Any, client: Any, **kwargs: Any) -> No
 
 __all__ = [
     "AutomationConfigTools",
+    "NOT_VERIFIED_WARNING_PREFIX",
     "_AUTOMATION_SKILL_FILES",
     "_detect_conflicting_root_keys",
     "_normalize_automation_config",

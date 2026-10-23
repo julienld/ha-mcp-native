@@ -123,7 +123,7 @@ class NativeReloadWatches:
             return await hook
         row.hook_task = asyncio.current_task()
         try:
-            await hook
+            return await hook
         except BaseException:
             row.event.set()
             raise

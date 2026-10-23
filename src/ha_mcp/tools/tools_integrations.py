@@ -527,5 +527,7 @@ def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
 
 __all__ = [
     "IntegrationTools",
+    "fetch_entry_options_with_status",
+    "options_from_form_flow",
     "register_integration_tools",
 ]

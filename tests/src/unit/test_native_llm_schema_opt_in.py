@@ -46,11 +46,15 @@ def test_failed_schema_probe_restores_opt_out_and_preserves_owner_and_import_mod
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
 
     monkeypatch.setattr(probe.requests, "post", post)
-    with (
-        pytest.raises(RuntimeError, match="schema rejected"),
-        probe.native_llm_opt_in({"base_url": "http://fixture", "token": "fixture"}),
-    ):
-        raise RuntimeError("schema rejected")
+
+    def rejected_schema() -> None:
+        with probe.native_llm_opt_in(
+            {"base_url": "http://fixture", "token": "fixture"}
+        ):
+            raise RuntimeError("schema rejected")
+
+    with pytest.raises(RuntimeError, match="schema rejected"):
+        rejected_schema()
     assert [row["enable_llm_api"] for row in submissions] == [True, False]
     assert all(row["native_owner_user_id"] == "owner" for row in submissions)
     assert all(row["enable_native_llm_import"] is False for row in submissions)

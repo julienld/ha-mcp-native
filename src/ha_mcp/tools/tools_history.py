@@ -463,5 +463,6 @@ async def _fetch_statistics(
 __all__ = [
     "HistoryTools",
     "_RELATIVE_TIME_UNIT_SECONDS",
+    "parse_relative_time",
     "register_history_tools",
 ]

@@ -9,7 +9,6 @@ from ha_mcp.runtime import statistics_results as _results
 _parse_statistic_types = legacy_errors_sync(_results._parse_statistic_types)
 format_entity_statistics = _results.format_entity_statistics
 statistics_unit = _results.statistics_unit
-statistics_warnings = _results.statistics_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -94,5 +93,7 @@ async def resolve_requested_units(
 __all__ = [
     "_parse_statistic_types",
     "fetch_statistics_metadata",
+    "format_entity_statistics",
     "resolve_requested_units",
+    "statistics_unit",
 ]

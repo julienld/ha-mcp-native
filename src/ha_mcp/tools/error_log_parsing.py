@@ -14,6 +14,7 @@ _error_log_window_lines = legacy_errors_sync(_shared._error_log_window_lines)
 
 
 __all__ = [
+    "STRUCTURED_ERROR_LOG_WINDOW_LINES",
     "_DEFAULT_TOP_N",
     "_MAX_COMPONENTS",
     "_MAX_MESSAGE_LEN",
