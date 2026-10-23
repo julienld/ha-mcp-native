@@ -283,10 +283,16 @@ call the explicit `native_import_apis` selection in Native mode. Switching eithe
 bridge off preserves the selected APIs and exposure mode. Home Assistant's own
 built-in Assist tools are unchanged.
 
-On upgrade, config-entry schema 1.2 preserves the previous effective export
+On upgrade, config-entry schema 1.3 preserves the previous effective export
 setting: an old server entry with no `enable_llm_api` option gets an explicit
-`true`, matching upstream's former default. Explicit `true` and `false` choices
-remain unchanged, in both Legacy and Native mode. For compatibility, an existing
+`true`, including upstream 1.2 entries, whose migration only cleared old package
+overrides. Explicit `true` and `false` choices from upstream settings or prototype
+1.2 remain unchanged, in both Legacy and Native mode. Configure also preserves
+that historical default when a disabled entry has not run its setup migration.
+An entry older than 1.2 drops its saved `pip_spec` override once, following the
+upstream migration so the release's paired package can run. Overrides on entries
+already at 1.2 or newer are retained. New entries start at 1.3 with both bridges
+off; this migration never enables a new entry's bridges. For compatibility, an existing
 nonempty `native_import_apis` list with no import switch is migrated to an
 explicit enabled import. A saved `false` always wins over the retained list.
 Legacy runtime supports export, but retains the native import choice for a later

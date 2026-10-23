@@ -62,6 +62,8 @@ def _configure_entry(
     options = entry.setdefault("options", {})
     options["runtime_mode"] = runtime
     if runtime == "native":
+        # Preserve a real historical upgrade in the native HAOS qualification.
+        entry["minor_version"] = 1
         owners = [
             user
             for user in auth["data"]["users"]
@@ -76,6 +78,7 @@ def _configure_entry(
         for key in ("pip_spec", "server_port", "bind_host"):
             options.pop(key, None)
     else:
+        entry["minor_version"] = 2
         options["pip_spec"] = f"ha-mcp @ file:///config/{wheel.name}"
         entry["data"]["admin_token"] = token
 

@@ -209,7 +209,7 @@ def _install_embedded_server(config_path: Path, wheel_name: str) -> None:
                 "discovery_keys": {},
                 "domain": _EMBEDDED_DOMAIN,
                 "entry_id": _EMBEDDED_ENTRY_ID,
-                "minor_version": 1,
+                "minor_version": 2,
                 "modified_at": "2025-09-07T23:56:28.040747+00:00",
                 "options": {
                     # file:// wheel (the pre-release/override channel) + deps

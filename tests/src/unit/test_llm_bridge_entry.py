@@ -59,13 +59,17 @@ from .test_embedded_entry import (  # noqa: E402
     ],
 )
 @pytest.mark.usefixtures("fake_collaborators")
+@pytest.mark.parametrize("minor", [1, 2])
 async def test_entry_migrates_without_reloading_or_replacing_identity(
-    saved: dict, expected: dict
+    saved: dict, expected: dict, minor: int
 ) -> None:
     hass, entry = _make_hass(), _make_entry()
-    entry.version, entry.minor_version = 1, 1
+    entry.version, entry.minor_version = 1, minor
     entry.data["entry_type"] = "server"
-    entry.options = dict(saved)
+    # Upstream 1.2 already cleared old overrides; a saved one is a later choice.
+    override = {"pip_spec": "ha-mcp-dev==9.0.0.dev3136"}
+    entry.options = {"server_port": 9584, **override, **saved}
+    expected = {"server_port": 9584, **(override if minor == 2 else {}), **expected}
     original_data = dict(entry.data)
 
     def update(_entry: object, **changes: object) -> None:
@@ -82,7 +86,7 @@ async def test_entry_migrates_without_reloading_or_replacing_identity(
     assert hass.data[eentry.DOMAIN][eentry.DATA_LAST_OPTIONS] == expected
     hass.config_entries.async_reload.assert_not_called()
     assert hass.config_entries.async_update_entry.call_count == 1
-    assert entry.version == 1 and entry.minor_version > 1
+    assert (entry.version, entry.minor_version) == (1, 3)
 
     await eentry.async_unload_server_entry(hass, entry)
     assert await component.async_migrate_entry(hass, entry)
@@ -94,8 +98,9 @@ async def test_entry_migrates_without_reloading_or_replacing_identity(
 
 
 @pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("minor", [1, 2])
 async def test_old_implicit_export_keeps_assist_api_selection_on_upgrade(
-    monkeypatch: pytest.MonkeyPatch, native: bool
+    monkeypatch: pytest.MonkeyPatch, native: bool, minor: int
 ) -> None:
     hass = make_hass()
     saved = {"llm_api_exposure": "both", "native_import_apis": ["assist"]}
@@ -103,7 +108,7 @@ async def test_old_implicit_export_keeps_assist_api_selection_on_upgrade(
         saved["runtime_mode"] = "native"
     entry = SimpleNamespace(
         version=1,
-        minor_version=1,
+        minor_version=minor,
         options=saved,
         data={"entry_type": "server"},
         entry_id="historic",
@@ -148,13 +153,15 @@ async def test_tools_entry_migration_never_introduces_bridge_options(
     )
     assert await component.async_migrate_entry(hass, entry)
     hass.config_entries.async_update_entry.assert_called_once_with(
-        entry, minor_version=2
+        entry, minor_version=3
     )
     assert entry.options == {"allowed_paths": ["private"]}
     assert not fake_llm_apis(hass)
 
 
-@pytest.mark.parametrize("version,minor,accepted", [(1, 3, True), (2, 1, False)])
+@pytest.mark.parametrize(
+    "version,minor,accepted", [(1, 3, True), (1, 4, True), (2, 1, False)]
+)
 async def test_future_entry_schema_is_never_rewritten(
     version: int, minor: int, accepted: bool
 ) -> None:

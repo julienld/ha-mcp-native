@@ -193,7 +193,7 @@ def _seed_config(config_path: Path, wheel_name: str) -> None:
             "discovery_keys": {},
             "domain": _DOMAIN,
             "entry_id": _ENTRY_ID,
-            "minor_version": 1,
+            "minor_version": 2,
             "modified_at": "2025-09-07T23:56:28.040747+00:00",
             "options": {
                 # file:// wheel + PyPI-resolved deps under HA's constraints file.

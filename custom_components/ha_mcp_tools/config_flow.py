@@ -430,7 +430,8 @@ class HaMcpServerOptionsFlow(OptionsFlow):
         opts = bridge_options(
             self.config_entry.options,
             export_default=(
-                self.config_entry.version == 1 and self.config_entry.minor_version < 2
+                self.config_entry.version == CONFIG_ENTRY_VERSION
+                and self.config_entry.minor_version < CONFIG_ENTRY_MINOR_VERSION
             ),
         )
         errors: dict[str, str] = {}
