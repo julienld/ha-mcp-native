@@ -232,6 +232,7 @@ class NativeServerManager:
         self._supervisor: asyncio.Task | None = None
         self._cleanup_task: asyncio.Task | None = None
         self._http_tasks: set[asyncio.Task] = set()
+        self._policy_refresh_lock = asyncio.Lock()
         self._stopped = False
         self.policy = NativePolicy()
         self.approval_gate: Any = None
@@ -424,31 +425,33 @@ class NativeServerManager:
 
     async def refresh_policy(self) -> None:
         """Apply all-client restrictions independently from Assist exposure."""
+        from .llm_bridge_options import selected_import_apis
         from .native_resources import build_instructions
 
-        policy = await self.hass.async_add_executor_job(
-            load_policy, Path(self.hass.config.path(SERVER_CONFIG_SUBDIR))
-        )
-        self.policy = policy
-        self.engine.read_only = policy.read_only
-        from .llm_bridge_options import selected_import_apis
-
-        names = set(self.engine.tools)
-        if selected_import_apis(self.entry.options):
-            names.update({"ha_native_llm_tools", "ha_native_llm_call"})
-        self.engine.enabled_tools = {
-            name
-            for name in names
-            if (
-                policy.tool_enabled(self.engine.tools[name])
-                if name in self.engine.tools
-                else policy.enabled(name)
+        # An older executor read must not publish after a completed restriction.
+        # Neither pure worker calls refresh_policy; cleanup cancels its waiters.
+        async with self._policy_refresh_lock:
+            policy = await self.hass.async_add_executor_job(
+                load_policy, Path(self.hass.config.path(SERVER_CONFIG_SUBDIR))
             )
-        }
-        self.instructions = await self.settings_ui._io(
-            build_instructions, policy, self.engine.enabled_tools
-        )
-        self.mcp.instructions = self.instructions
+            self.policy = policy
+            self.engine.read_only = policy.read_only
+            names = set(self.engine.tools)
+            if selected_import_apis(self.entry.options):
+                names.update({"ha_native_llm_tools", "ha_native_llm_call"})
+            self.engine.enabled_tools = {
+                name
+                for name in names
+                if (
+                    policy.tool_enabled(self.engine.tools[name])
+                    if name in self.engine.tools
+                    else policy.enabled(name)
+                )
+            }
+            self.instructions = await self.settings_ui._io(
+                build_instructions, policy, self.engine.enabled_tools
+            )
+            self.mcp.instructions = self.instructions
 
     def service_policy(self, domain: str, service: str) -> None:
         from ha_mcp.runtime.service_policy import check_service_policy
