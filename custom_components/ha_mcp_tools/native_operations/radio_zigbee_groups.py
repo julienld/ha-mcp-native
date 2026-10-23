@@ -6,6 +6,7 @@ from typing import Any
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession
 from .registry_access import registry_json
 
@@ -62,10 +63,9 @@ async def groups(
 async def bind(
     session: RadioSession, gateway: Any, action: str, args: dict[str, Any]
 ) -> dict[str, Any]:
-    from homeassistant.components.zha.websocket_api import (
-        get_matched_clusters,
-        zdo_types,
-    )
+    zha_websocket_api = loaded_integration_module(session.hass, "zha.websocket_api")
+    get_matched_clusters = zha_websocket_api.get_matched_clusters
+    zdo_types = zha_websocket_api.zdo_types
 
     Status, ZDOCmd = zdo_types.Status, zdo_types.ZDOCmd
 

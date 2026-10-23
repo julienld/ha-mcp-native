@@ -8,6 +8,8 @@ from homeassistant.core import HomeAssistant
 
 from ha_mcp.errors import HomeAssistantAPIError, HomeAssistantConnectionError
 
+from ..optional_integrations import loaded_integration_module
+
 
 def logger_levels(hass: HomeAssistant) -> list[dict[str, Any]] | None:
     """Core logger domains and levels, without a transport envelope."""
@@ -44,10 +46,9 @@ async def log_levels(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str
 
 
 async def knx_project(hass: HomeAssistant, arguments: dict[str, Any]) -> dict[str, Any]:
-    try:
-        from homeassistant.components.knx.const import KNX_MODULE_KEY
-    except ImportError:
+    if "knx" not in hass.config.components:
         return {"success": False, "error": "KNX integration not loaded."}
+    KNX_MODULE_KEY = loaded_integration_module(hass, "knx.const").KNX_MODULE_KEY
     owner = hass.data.get(KNX_MODULE_KEY)
     if owner is None:
         return {"success": False, "error": "KNX integration not loaded."}

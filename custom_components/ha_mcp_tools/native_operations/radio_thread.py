@@ -7,12 +7,15 @@ from typing import Any
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession
 from .registry_access import registry_json
 
 
 def dataset_owner(session: RadioSession) -> Any:
-    from homeassistant.components.thread.dataset_store import DATA_STORE
+    DATA_STORE = loaded_integration_module(
+        session.hass, "thread.dataset_store"
+    ).DATA_STORE
 
     owner = session.hass.data.get(DATA_STORE)
     if owner is None or isinstance(owner, asyncio.Future):
@@ -96,7 +99,9 @@ async def handle_thread(
 
 
 async def _discover(session: RadioSession) -> dict[str, Any]:
-    from homeassistant.components.thread.discovery import ThreadRouterDiscovery
+    ThreadRouterDiscovery = loaded_integration_module(
+        session.hass, "thread.discovery"
+    ).ThreadRouterDiscovery
 
     session.validate("thread/discover_routers", {})
     routers: dict[str, Any] = {}

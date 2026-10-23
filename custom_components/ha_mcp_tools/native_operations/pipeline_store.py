@@ -23,6 +23,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
+from ..optional_integrations import loaded_integration_module
 from .command_validation import _validated_payload
 from .pipeline_conversation import PipelineConversation
 from .registry_access import Authorize, admit_registry_write, authorize_actor
@@ -37,7 +38,9 @@ def pipeline_owner(hass: HomeAssistant) -> Any:
             "Core Assist pipelines are not loaded",
             status="not_started",
         )
-    from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELINE
+    KEY_ASSIST_PIPELINE = loaded_integration_module(
+        hass, "assist_pipeline.pipeline"
+    ).KEY_ASSIST_PIPELINE
 
     data = hass.data.get(KEY_ASSIST_PIPELINE)
     if data is None or isinstance(data, asyncio.Future):
@@ -70,7 +73,9 @@ def pin_pipeline(hass: HomeAssistant, owner: Any, before: dict[str, Any]) -> Non
 
 
 def _get(hass: HomeAssistant, pipeline_id: str | None) -> dict[str, Any]:
-    from homeassistant.components.assist_pipeline.pipeline import async_get_pipeline
+    async_get_pipeline = loaded_integration_module(
+        hass, "assist_pipeline.pipeline"
+    ).async_get_pipeline
 
     return copy.deepcopy(async_get_pipeline(hass, pipeline_id).to_json())
 
@@ -216,10 +221,9 @@ class NativePipelines(PipelineConversation):
         payload: dict[str, Any],
         make_preferred: bool,
     ) -> dict[str, Any]:
-        from homeassistant.components.assist_pipeline.pipeline import (
-            Pipeline,
-            validate_language,
-        )
+        pipeline_api = loaded_integration_module(self.hass, "assist_pipeline.pipeline")
+        Pipeline = pipeline_api.Pipeline
+        validate_language = pipeline_api.validate_language
 
         values = copy.deepcopy(payload)
         identifier = values.pop("pipeline_id", "")

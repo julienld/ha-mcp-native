@@ -33,6 +33,7 @@ from .native_operations.dashboard_storage import DashboardStorage
 from .native_operations.registry_access import admit_registry_write, authorize_actor
 from .native_operations.screenshot_theme import NativeThemeObserver
 from .native_server_policy import setting_value
+from .optional_integrations import loaded_integration_module
 
 
 @dataclass(slots=True)
@@ -60,7 +61,9 @@ class NativeScreenshots:
             raise
 
     async def _discover(self) -> tuple[str, str | None]:
-        from homeassistant.components.hassio import get_supervisor_client
+        get_supervisor_client = loaded_integration_module(
+            self.manager.hass, "hassio"
+        ).get_supervisor_client
 
         client = get_supervisor_client(self.manager.hass)
         async with asyncio.timeout(15):

@@ -15,6 +15,7 @@ from .core_registries import registry_snapshot
 from .core_services import reference_data
 from .native_operations.blueprints import render_blueprint
 from .native_operations.config_reads import DIRECT_OPERATIONS as CONFIG_READ_OPERATIONS
+from .optional_integrations import loaded_integration_module
 
 # Existing shared-tool semantic names select Core readers directly. Transport
 # adapters bind these same producers without participating in native execution.
@@ -33,7 +34,9 @@ def _require_loaded(hass: HomeAssistant, domain: str) -> None:
 
 async def _zha_devices(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:
     _require_loaded(hass, "zha")
-    from homeassistant.components.zha.helpers import get_zha_gateway_proxy
+    get_zha_gateway_proxy = loaded_integration_module(
+        hass, "zha.helpers"
+    ).get_zha_gateway_proxy
 
     gateway = get_zha_gateway_proxy(hass)
     return [device.zha_device_info for device in gateway.device_proxies.values()]
@@ -41,8 +44,10 @@ async def _zha_devices(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:
 
 async def _zwave_node_status(hass: HomeAssistant, arguments: dict[str, Any]) -> Any:
     _require_loaded(hass, "zwave_js")
-    from homeassistant.components.zwave_js.api import node_status
-    from homeassistant.components.zwave_js.helpers import async_get_node_from_device_id
+    node_status = loaded_integration_module(hass, "zwave_js.api").node_status
+    async_get_node_from_device_id = loaded_integration_module(
+        hass, "zwave_js.helpers"
+    ).async_get_node_from_device_id
 
     try:
         node = async_get_node_from_device_id(hass, arguments["device_id"])
@@ -55,12 +60,11 @@ async def _matter_node_diagnostics(
     hass: HomeAssistant, arguments: dict[str, Any]
 ) -> Any:
     _require_loaded(hass, "matter")
-    from homeassistant.components.matter import api as matter_api
-    from homeassistant.components.matter.helpers import (
-        MissingNode,
-        get_matter,
-        node_from_ha_device_id,
-    )
+    matter_api = loaded_integration_module(hass, "matter.api")
+    matter_helpers = loaded_integration_module(hass, "matter.helpers")
+    MissingNode = matter_helpers.MissingNode
+    get_matter = matter_helpers.get_matter
+    node_from_ha_device_id = matter_helpers.node_from_ha_device_id
 
     try:
         matter = get_matter(hass)

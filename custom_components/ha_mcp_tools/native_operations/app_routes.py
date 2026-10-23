@@ -19,11 +19,12 @@ from ha_mcp.runtime.redaction import register_known_secret_values
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 from ha_mcp.utils.config_hash import json_values_equal
 
+from ..optional_integrations import loaded_integration_module
 from .app_actions import AppActions
 
 
 def ingress_view(hass: Any) -> Any:
-    owner_type = import_module("homeassistant.components.hassio.ingress").HassIOIngress
+    owner_type = loaded_integration_module(hass, "hassio.ingress").HassIOIngress
     path = "/api/hassio_ingress/{token}/{path}"
     for route in hass.http.app.router.routes():
         if route.method != "GET" or route.resource.canonical != path:

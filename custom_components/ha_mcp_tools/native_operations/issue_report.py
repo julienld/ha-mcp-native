@@ -32,6 +32,7 @@ from ..const import (
     OPT_WEBHOOK_AUTH,
 )
 from ..native_server_policy import setting_value
+from ..optional_integrations import loaded_integration_module
 from .log_files import NativeLogFiles
 from .registry_access import authorize_actor
 
@@ -113,7 +114,7 @@ class NativeIssueReport:
         supervisor: dict[str, str] = {"none": "true"}
         if "hassio" in self.hass.config.components:
             try:
-                from homeassistant.components.hassio import get_info
+                get_info = loaded_integration_module(self.hass, "hassio").get_info
 
                 info = get_info(self.hass)
                 supervisor = {

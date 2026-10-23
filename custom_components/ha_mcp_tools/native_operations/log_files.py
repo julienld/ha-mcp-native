@@ -16,6 +16,7 @@ from ha_mcp.runtime.log_window import (
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 from ha_mcp.utils.owned_executor import await_owned_io
 
+from ..optional_integrations import loaded_integration_module
 from .registry_access import authorize_actor
 
 
@@ -111,7 +112,9 @@ class NativeLogFiles:
             raise UnsupportedOperation("Supervisor log endpoint")
         if "hassio" not in self.service.hass.config.components:
             raise UnsupportedOperation("Supervisor is not loaded on this installation")
-        from homeassistant.components.hassio import get_supervisor_client
+        get_supervisor_client = loaded_integration_module(
+            self.service.hass, "hassio"
+        ).get_supervisor_client
 
         transport = get_supervisor_client(self.service.hass)._client
         if transport.session is None or transport.session.closed:

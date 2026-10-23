@@ -6,6 +6,7 @@ from typing import Any
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession, unavailable
 
 
@@ -64,12 +65,12 @@ async def handle_otbr(
         fields["channel"] = args["channel"]
     payload = session.validate("otbr/" + action, fields)
     if action == "set_channel":
-        from homeassistant.components.homeassistant_hardware.silabs_multiprotocol_addon import (
-            is_multiprotocol_url,
-        )
-        from homeassistant.components.otbr.websocket_api import (
-            PENDING_DATASET_DELAY_TIMER,
-        )
+        is_multiprotocol_url = loaded_integration_module(
+            session.hass, "homeassistant_hardware.silabs_multiprotocol_addon"
+        ).is_multiprotocol_url
+        PENDING_DATASET_DELAY_TIMER = loaded_integration_module(
+            session.hass, "otbr.websocket_api"
+        ).PENDING_DATASET_DELAY_TIMER
 
         if is_multiprotocol_url(owner.url):
             raise ToolFailure(
@@ -89,8 +90,12 @@ async def handle_otbr(
 
 
 async def _set_network(session: RadioSession, owner: Any, identifier: str) -> None:
-    from homeassistant.components.otbr.util import get_allowed_channel, update_issues
-    from homeassistant.components.otbr.websocket_api import MeshcopTLVType, tlv_parser
+    otbr_util = loaded_integration_module(session.hass, "otbr.util")
+    get_allowed_channel = otbr_util.get_allowed_channel
+    update_issues = otbr_util.update_issues
+    otbr_websocket_api = loaded_integration_module(session.hass, "otbr.websocket_api")
+    MeshcopTLVType = otbr_websocket_api.MeshcopTLVType
+    tlv_parser = otbr_websocket_api.tlv_parser
 
     from .radio_thread import dataset_owner
 
@@ -119,14 +124,17 @@ async def _set_network(session: RadioSession, owner: Any, identifier: str) -> No
 
 
 async def _create_network(session: RadioSession, owner: Any) -> None:
-    from homeassistant.components.otbr.const import DEFAULT_CHANNEL
-    from homeassistant.components.otbr.util import (
-        compose_default_network_name,
-        generate_random_pan_id,
-        get_allowed_channel,
-        update_issues,
-    )
-    from homeassistant.components.otbr.websocket_api import python_otbr_api
+    DEFAULT_CHANNEL = loaded_integration_module(
+        session.hass, "otbr.const"
+    ).DEFAULT_CHANNEL
+    otbr_util = loaded_integration_module(session.hass, "otbr.util")
+    compose_default_network_name = otbr_util.compose_default_network_name
+    generate_random_pan_id = otbr_util.generate_random_pan_id
+    get_allowed_channel = otbr_util.get_allowed_channel
+    update_issues = otbr_util.update_issues
+    python_otbr_api = loaded_integration_module(
+        session.hass, "otbr.websocket_api"
+    ).python_otbr_api
 
     from .radio_thread import dataset_owner
 

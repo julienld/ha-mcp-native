@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.utils.owned_executor import await_owned_io
 
+from ..optional_integrations import loaded_integration_module
 from .registry_access import Authorize, authorize_actor
 
 # The network-status presentation in Core 2026.10.2 has no standalone producer.
@@ -40,7 +41,7 @@ _CONTROLLER_FIELDS = (
 async def zwave_status(
     hass: HomeAssistant, entry_id: str, actor: CallContext, authorize: Authorize
 ) -> dict[str, Any]:
-    from homeassistant.components.zwave_js.api import node_status
+    node_status = loaded_integration_module(hass, "zwave_js.api").node_status
 
     await authorize_actor(actor, authorize)
     entry = hass.config_entries.async_get_entry(entry_id)
@@ -83,7 +84,7 @@ async def zwave_status(
 async def thread_status(
     hass: HomeAssistant, actor: CallContext, authorize: Authorize
 ) -> dict[str, Any]:
-    from homeassistant.components.otbr.const import DOMAIN
+    DOMAIN = loaded_integration_module(hass, "otbr.const").DOMAIN
 
     await authorize_actor(actor, authorize)
     entries = hass.config_entries.async_loaded_entries(DOMAIN)

@@ -131,6 +131,22 @@ each installation and its SDK/state/transport probes. Compatibility ranges admit
 future Core versions; they are not an assurance that every future dependency
 graph is unchanged. A changed shared dependency remains a qualification failure.
 
+Optional integration APIs use `optional_integrations.loaded_integration_module`:
+Core must already have loaded the named integration before its module is
+resolved. Radio, Assist and Supervisor operations still pin their runtime owners
+and revalidate them across awaits. Cloud connect URLs are offered only while
+Cloud is loaded; local webhook URLs remain available without it. This boundary
+does not initialize integrations or install their libraries.
+
+Do not add optional radios, KNX, Assist, Supervisor or Cloud to
+`after_dependencies` merely to satisfy Hassfest. Core 2026.10.2
+[installs requirements for both dependency lists](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/requirements.py#L195),
+even when those integrations are not configured. The 2026-10-23 correction
+declares the required Core API domains and removes Cloud's eager dependency;
+loaded-owner tests cover unavailable integrations, changed owners and import
+failures. Full and minimal Core installation receipts remain the acceptance
+checks for the resulting dependency graph.
+
 This correction prevents new resolver churn; it does not undo packages already
 changed by dev2. Restore or recreate an affected Core environment through the
 installation platform's supported procedure, preserving its configuration.

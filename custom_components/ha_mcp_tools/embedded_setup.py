@@ -362,20 +362,15 @@ def build_connect_urls(
         urls.append(f"{external}/api/webhook/{webhook_id}")
 
     # Nabu Casa remote URL (only when the cloud integration is set up + logged in).
-    try:
-        from homeassistant.components.cloud import (
-            CloudNotAvailable,
-            async_remote_ui_url,
-        )
+    if webhook_id and "cloud" in hass.config.components:
+        from .optional_integrations import loaded_integration_module
 
+        cloud = loaded_integration_module(hass, "cloud")
         try:
-            if webhook_id:
-                cloud_base = async_remote_ui_url(hass)
-                urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
-        except CloudNotAvailable:
+            cloud_base = cloud.async_remote_ui_url(hass)
+            urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
+        except cloud.CloudNotAvailable:
             pass  # Cloud not logged in / remote UI off - no remote URL to show.
-    except ImportError:
-        pass  # Cloud integration not installed (e.g. HA Core) - local URL only.
 
     local_base, local_host = _resolve_local_url(hass)
 

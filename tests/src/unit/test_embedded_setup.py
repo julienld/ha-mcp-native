@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -416,6 +417,7 @@ class TestSurfaceConnectUrls:
             cloud_url="https://abc.ui.nabu.casa", local_url="http://192.168.1.5:8123"
         )
         hass = _make_hass()
+        hass.config.components = {"cloud"}
         entry = _make_entry(
             data={DATA_WEBHOOK_ID: "mcp_id", DATA_SECRET_PATH: "/private_x"},
             options={esetup.OPT_BIND_HOST: esetup.BIND_HOST_ALL},
@@ -456,6 +458,7 @@ class TestSurfaceConnectUrls:
             cloud_url="https://abc.ui.nabu.casa", local_url="http://192.168.1.5:8123"
         )
         hass = _make_hass()
+        hass.config.components = {"cloud"}
         entry = _make_entry(
             data={DATA_WEBHOOK_ID: "mcp_id", DATA_SECRET_PATH: "/p"},
             options={esetup.OPT_EXTERNAL_URL: "https://ha.example.com/"},
@@ -463,6 +466,28 @@ class TestSurfaceConnectUrls:
         urls = self._urls(hass, entry)
         assert urls[0] == "https://ha.example.com/api/webhook/mcp_id"
         assert "https://abc.ui.nabu.casa/api/webhook/mcp_id" in urls
+
+    def test_inactive_cloud_is_not_imported_and_local_webhook_stays_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import builtins
+
+        _install_network_cloud(local_url="http://192.168.1.5:8123")
+        original_import = builtins.__import__
+
+        def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "homeassistant.components.cloud":
+                raise AssertionError("Inactive Cloud must never be imported")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+        hass = _make_hass()
+        hass.config.components = set()
+        entry = _make_entry(data={DATA_WEBHOOK_ID: "mcp_id"})
+
+        urls = self._urls(hass, entry)
+
+        assert "http://192.168.1.5:8123/api/webhook/mcp_id" in urls
 
     def test_notification_links_panel_and_carries_title(self):
         # The rename commit's discoverability contract: the running

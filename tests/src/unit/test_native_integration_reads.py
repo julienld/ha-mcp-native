@@ -214,6 +214,7 @@ async def test_native_diagnostics_and_knx_use_owners_and_shared_projection(
 ) -> None:
     engine, hass, _, entry, _ = inspection(native, monkeypatch)
     entry.domain = "knx"
+    hass.config = SimpleNamespace(components={"knx"})
     artifact = {
         "home_assistant": {"version": "test"},
         "data": {"items": [{"id": 1}, {"id": 2}]},

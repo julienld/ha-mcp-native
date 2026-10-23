@@ -23,7 +23,7 @@ async def health(health_info: Any, monkeypatch: pytest.MonkeyPatch) -> Any:  # n
     base.rows["homeassistant"] = {"info": {"healthy": True}, "manage_url": "/config"}
     hass = base.hass
     hass.config = SimpleNamespace(
-        components={"zha"}, safe_mode=False, recovery_mode=False
+        components={"zha", "zwave_js", "otbr"}, safe_mode=False, recovery_mode=False
     )
 
     async def execute(function: Any, *arguments: Any) -> Any:

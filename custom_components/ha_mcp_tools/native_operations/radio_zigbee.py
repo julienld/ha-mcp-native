@@ -5,13 +5,14 @@ from typing import Any
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession, unavailable
 from .registry_access import registry_json
 
 
 def _gateway(session: RadioSession) -> tuple[Any, Any, Any]:
     entry = session.entry("zha")
-    from homeassistant.components.zha.const import DATA_ZHA
+    DATA_ZHA = loaded_integration_module(session.hass, "zha.const").DATA_ZHA
 
     data = session.hass.data.get(DATA_ZHA)
     if data is None or data.gateway_proxy is None:
@@ -54,11 +55,10 @@ async def handle_zigbee(
 ) -> dict[str, Any]:
     entry, proxy, gateway = _gateway(session)
     if action == "network_status":
-        from homeassistant.components.zha.api import (
-            CONF_DEVICE,
-            async_get_active_network_settings,
-            async_get_radio_type,
-        )
+        zha_api = loaded_integration_module(session.hass, "zha.api")
+        CONF_DEVICE = zha_api.CONF_DEVICE
+        async_get_active_network_settings = zha_api.async_get_active_network_settings
+        async_get_radio_type = zha_api.async_get_radio_type
 
         session.validate("zha/network/settings", {})
         network = {
@@ -156,9 +156,9 @@ async def _cluster(
     }
     values.update(ieee=ieee, cluster_type=args.get("cluster_type", "in"))
     if action == "cluster_read":
-        from homeassistant.components.zha.websocket_api import (
-            ZIGPY_UNDEFINED as UNDEFINED,
-        )
+        UNDEFINED = loaded_integration_module(
+            session.hass, "zha.websocket_api"
+        ).ZIGPY_UNDEFINED
 
         payload = session.validate("zha/devices/clusters/attributes/value", values)
         cluster = device.async_get_cluster(
@@ -230,7 +230,9 @@ async def _network_action(
     )
     channel = payload["new_channel"]
     if channel == "auto":
-        from homeassistant.components.zha.api import Channels, pick_optimal_channel
+        zha_api = loaded_integration_module(session.hass, "zha.api")
+        Channels = zha_api.Channels
+        pick_optimal_channel = zha_api.pick_optimal_channel
 
         energy = await session.read(
             lambda: app.energy_scan(

@@ -5,6 +5,7 @@ from typing import Any
 from ha_mcp.runtime.radio_values import ok
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession
 from .registry_access import registry_json
 
@@ -50,7 +51,9 @@ async def handle_matter(
         proposal["network_only"] = bool(args.get("network_only", False))
     payload = session.validate("matter/" + _COMMANDS[action], proposal)
     if "device_id" in payload:
-        from homeassistant.components.matter.helpers import node_from_ha_device_id
+        node_from_ha_device_id = loaded_integration_module(
+            session.hass, "matter.helpers"
+        ).node_from_ha_device_id
 
         session.device(payload["device_id"])
         node = node_from_ha_device_id(session.hass, payload["device_id"])
@@ -67,8 +70,10 @@ async def handle_matter(
     return await _network_action(session, client, action, payload)
 
 
-def _model_result(value: Any) -> dict[str, Any]:
-    from homeassistant.components.matter.api import dataclass_to_dict
+def _model_result(session: RadioSession, value: Any) -> dict[str, Any]:
+    dataclass_to_dict = loaded_integration_module(
+        session.hass, "matter.api"
+    ).dataclass_to_dict
 
     return registry_json(dataclass_to_dict(value))
 
@@ -78,7 +83,8 @@ async def _node_action(
 ) -> dict[str, Any]:
     if action == "diagnostics":
         result = _model_result(
-            await session.read(lambda: client.node_diagnostics(node_id=node.node_id))
+            session,
+            await session.read(lambda: client.node_diagnostics(node_id=node.node_id)),
         )
         if "ip_adresses" in result:
             result["ip_addresses"] = result.pop("ip_adresses")
@@ -88,16 +94,18 @@ async def _node_action(
         return ok("matter", action, reachability=result)
     if action == "share_out":
         result = _model_result(
+            session,
             await session.effect(
                 lambda: client.open_commissioning_window(node_id=node.node_id)
-            )
+            ),
         )
         return ok("matter", action, commissioning=result)
     if action == "interview":
         await session.effect(lambda: client.interview_node(node_id=node.node_id))
         return ok("matter", action, result=None, long_running=True)
     diagnostics = _model_result(
-        await session.read(lambda: client.node_diagnostics(node_id=node.node_id))
+        session,
+        await session.read(lambda: client.node_diagnostics(node_id=node.node_id)),
     )
     if payload["fabric_index"] == diagnostics.get("active_fabric_index"):
         raise ToolFailure(

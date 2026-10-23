@@ -5,6 +5,8 @@ from typing import Any
 
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 
+from ..optional_integrations import loaded_integration_module
+
 
 @dataclass(frozen=True, slots=True)
 class UpdateTarget:
@@ -46,10 +48,11 @@ def check_update_target(hass: Any, target: UpdateTarget) -> None:
 def core_update_category(hass: Any, entity: Any) -> str | None:
     if "hassio" not in hass.config.components:
         return None
-    from homeassistant.components.hassio.update import (
-        SupervisorCoreUpdateEntity,
-        SupervisorOSUpdateEntity,
-        SupervisorSupervisorUpdateEntity,
+    supervisor_updates = loaded_integration_module(hass, "hassio.update")
+    SupervisorCoreUpdateEntity = supervisor_updates.SupervisorCoreUpdateEntity
+    SupervisorOSUpdateEntity = supervisor_updates.SupervisorOSUpdateEntity
+    SupervisorSupervisorUpdateEntity = (
+        supervisor_updates.SupervisorSupervisorUpdateEntity
     )
 
     for owner, category in (

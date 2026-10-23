@@ -7,6 +7,7 @@ from ha_mcp.runtime.radio_values import ok
 from ha_mcp.runtime.radio_zwave_values import validate_inclusion
 from ha_mcp.tool_api import ToolFailure
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession
 
 
@@ -24,10 +25,11 @@ async def network_action(
         if args.get("smart_start"):
             return await _smart_start(session, entry, driver, controller, args)
         validate_inclusion(args)
-        from homeassistant.components.zwave_js.api import (
-            INCLUSION_STRATEGY_NOT_SMART_START,
-            InclusionState,
+        zwave_api = loaded_integration_module(session.hass, "zwave_js.api")
+        INCLUSION_STRATEGY_NOT_SMART_START = (
+            zwave_api.INCLUSION_STRATEGY_NOT_SMART_START
         )
+        InclusionState = zwave_api.InclusionState
 
         payload = session.validate(
             "zwave_js/add_node",
@@ -86,7 +88,9 @@ async def _smart_start(
     controller: Any,
     args: dict[str, Any],
 ) -> dict[str, Any]:
-    from homeassistant.components.zwave_js.api import ProvisioningEntry, QRCodeVersion
+    zwave_api = loaded_integration_module(session.hass, "zwave_js.api")
+    ProvisioningEntry = zwave_api.ProvisioningEntry
+    QRCodeVersion = zwave_api.QRCodeVersion
 
     payload = session.validate(
         "zwave_js/provision_smart_start_node",
@@ -124,7 +128,9 @@ async def _smart_start(
 async def _provision_device(
     session: RadioSession, entry: Any, driver: Any, qr: Any, payload: dict[str, Any]
 ) -> str:
-    from homeassistant.components.zwave_js.helpers import get_device_id
+    get_device_id = loaded_integration_module(
+        session.hass, "zwave_js.helpers"
+    ).get_device_id
     from homeassistant.helpers import device_registry as dr
 
     registry = session.registry("device")
@@ -174,10 +180,9 @@ async def _provision_device(
 
 
 async def _reset(session: RadioSession, entry: Any, driver: Any) -> dict[str, Any]:
-    from homeassistant.components.zwave_js.helpers import (
-        DRIVER_READY_EVENT_TIMEOUT,
-        async_get_version_info,
-    )
+    zwave_helpers = loaded_integration_module(session.hass, "zwave_js.helpers")
+    DRIVER_READY_EVENT_TIMEOUT = zwave_helpers.DRIVER_READY_EVENT_TIMEOUT
+    async_get_version_info = zwave_helpers.async_get_version_info
 
     session.validate("zwave_js/hard_reset_controller", {"entry_id": entry.entry_id})
     ready = asyncio.Event()

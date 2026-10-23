@@ -8,6 +8,7 @@ from ha_mcp.runtime.radio_zwave_values import (
     network_status,
 )
 
+from ..optional_integrations import loaded_integration_module
 from .radio_access import RadioSession, unavailable
 
 
@@ -38,7 +39,9 @@ def _controller(session: RadioSession, args: dict[str, Any]) -> tuple[Any, Any, 
 
 
 def _node(session: RadioSession, device_id: str) -> Any:
-    from homeassistant.components.zwave_js.helpers import async_get_node_from_device_id
+    async_get_node_from_device_id = loaded_integration_module(
+        session.hass, "zwave_js.helpers"
+    ).async_get_node_from_device_id
 
     node = async_get_node_from_device_id(session.hass, device_id)
     return session.retain(
@@ -77,7 +80,9 @@ async def handle_zwave(
 
         return await parameters(session, node, action, args)
     if action == "diagnostics":
-        from homeassistant.components.zwave_js.api import node_status
+        node_status = loaded_integration_module(
+            session.hass, "zwave_js.api"
+        ).node_status
 
         session.validate("zwave_js/node_status", {"device_id": args["device_id"]})
         return diagnostics(node_status(node))
@@ -116,7 +121,9 @@ async def _node_action(
             lambda: controller.async_rebuild_node_routes(node)
         )
         return ok("zwave", action, scope="node", result=result, long_running=True)
-    from homeassistant.components.zwave_js.api import async_set_config_parameter
+    async_set_config_parameter = loaded_integration_module(
+        session.hass, "zwave_js.api"
+    ).async_set_config_parameter
 
     value, status = await session.effect(
         lambda: async_set_config_parameter(

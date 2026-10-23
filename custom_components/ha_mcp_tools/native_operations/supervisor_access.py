@@ -7,6 +7,7 @@ from ha_mcp.runtime.app_values import _validate_supervisor_slug
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
 from ha_mcp.utils.owned_executor import await_owned_io
 
+from ..optional_integrations import loaded_integration_module
 from .registry_access import authorize_actor
 
 
@@ -23,8 +24,10 @@ class SupervisorAccess:
             raise UnsupportedOperation(
                 "Supervisor is unavailable on this Home Assistant installation"
             )
-        from homeassistant.components.hassio import get_supervisor_client
-        from homeassistant.components.hassio.const import DATA_COMPONENT
+        get_supervisor_client = loaded_integration_module(
+            hass, "hassio"
+        ).get_supervisor_client
+        DATA_COMPONENT = loaded_integration_module(hass, "hassio.const").DATA_COMPONENT
 
         raw = hass.data.get(DATA_COMPONENT)
         if raw is None or raw.websession is None or raw.websession.closed:
