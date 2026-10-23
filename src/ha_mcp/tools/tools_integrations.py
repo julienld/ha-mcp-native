@@ -212,7 +212,7 @@ class IntegrationTools(
     )
 
     _single_entry_from_component = legacy_errors(
-        legacy_flow(IntegrationReadTools._single_entry_from_component)
+        legacy_flow(IntegrationReadTools._single_entry_from_component), classify=False
     )
 
     _attach_knx_project = legacy_errors(

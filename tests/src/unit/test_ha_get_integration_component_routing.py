@@ -19,6 +19,7 @@ nonexistent id (not-found, never the first entry).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -312,6 +313,9 @@ async def test_single_entry_not_found_via_component_raises() -> None:
         await get_integration(entry_id="ghost")
 
     assert "ghost" in str(excinfo.value)
+    error = json.loads(str(excinfo.value))["error"]
+    assert error["code"] == "RESOURCE_NOT_FOUND"
+    assert "ha_get_integration()" in error["suggestion"]
     assert client.get_config_entry_calls == 0
 
 
