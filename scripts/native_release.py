@@ -3,7 +3,7 @@
 # dependencies = []
 # ///
 
-"""Build a HACS archive and a matching library wheel from one Git revision."""
+"""Build native HACS and optional standalone artifacts from one source/version."""
 
 from __future__ import annotations
 
@@ -75,8 +75,8 @@ def run(*args: str, cwd: Path) -> str:
 
 
 def validate_options(version: str, tag: str, github: str) -> None:
-    if not re.fullmatch(r"\d+\.\d+\.\d+\.dev\d+", version):
-        raise ValueError("Use an explicit X.Y.Z.devN development library version")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:\.dev\d+)?", version):
+        raise ValueError("Use an explicit X.Y.Z or X.Y.Z.devN library version")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
         raise ValueError("Invalid release tag")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", github):
@@ -126,6 +126,57 @@ def stamp_library(project: Path, version: str) -> None:
     if replacements != 1:
         raise ValueError("Project version was not stamped exactly once")
     project.write_text(source, encoding="utf-8", newline="\n")
+
+
+def build_standalone(staging: Path, output: Path, version: str) -> dict:
+    """Keep canonical PyPI dependency defaults, isolated from native staging."""
+    distribution = "ha-mcp-dev" if ".dev" in version else "ha-mcp"
+    output.mkdir()
+    with tempfile.TemporaryDirectory(prefix="ha-mcp-standalone-release-") as temporary:
+        source = Path(temporary) / "source"
+        shutil.copytree(staging, source)
+        project = source / "pyproject.toml"
+        text = project.read_text(encoding="utf-8")
+        original = tomllib.loads(text)["project"]
+        if original["name"] != "ha-mcp" or not original["dependencies"]:
+            raise ValueError("Standalone requires the full source dependency profile")
+        if distribution == "ha-mcp-dev":
+            text, count = re.subn(
+                r'^name = "ha-mcp"$',
+                'name = "ha-mcp-dev"',
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            if count != 1 or "ha-mcp-dev" in original["scripts"]:
+                raise ValueError("Development distribution stamping needs an update")
+            text = text.replace(
+                "[project.scripts]",
+                '[project.scripts]\nha-mcp-dev = "ha_mcp.__main__:main_dev"',
+                1,
+            )
+            project.write_text(text, encoding="utf-8", newline="\n")
+        # Both channel names are already resolved by ha_mcp._version; the
+        # canonical dev CLI alias is the only extra entry point needed here.
+        subprocess.run(
+            ["uv", "build", "--out-dir", str(output)], cwd=source, check=True
+        )
+    basename = distribution.replace("-", "_") + "-" + version
+    wheel = output / f"{basename}-py3-none-any.whl"
+    sdist = output / f"{basename}.tar.gz"
+    if not wheel.is_file() or not sdist.is_file():
+        raise RuntimeError("Expected both standalone wheel and source distribution")
+    validate_wheel_metadata(wheel, version, distribution=distribution)
+    return {
+        "distribution": distribution,
+        "version": version,
+        "dependency_profile": "standalone with complete default dependency graph",
+        "dependencies": original["dependencies"],
+        "files": {
+            f"standalone/{path.name}": hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in (wheel, sdist)
+        },
+    }
 
 
 def _native_requirement(requirement: str) -> list[str]:
@@ -225,13 +276,22 @@ def build(
     *,
     prepare_hacs: bool = False,
     revision: str = "HEAD",
+    with_standalone: bool = False,
+    source_github: str | None = None,
 ) -> dict:
     """Stage tracked sources, leaving the working tree and user data untouched."""
     validate_options(version, tag, github)
+    source_github = source_github or github
+    validate_options(version, tag, source_github)
     builder_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    if prepare_hacs and tag.removeprefix("v") != version:
+    # The canonical dev mirror spells vX.Y.Z-dev.N; existing candidates use
+    # vX.Y.Z.devN. Both identify the supplied version, never a new calculation.
+    if prepare_hacs and tag.removeprefix("v") not in {
+        version,
+        version.replace(".dev", "-dev."),
+    }:
         raise ValueError(
-            "A HACS distribution tag must match its X.Y.Z.devN manifest version"
+            "A HACS distribution tag must match its library manifest version"
         )
     revision = run(
         "git", "rev-parse", "--verify", f"{revision}^{{commit}}", cwd=repository
@@ -249,6 +309,11 @@ def build(
         staging = Path(temporary)
         gitlinks = stage_revision(repository, staging, revision)
         stamp_library(staging / "pyproject.toml", version)
+        standalone = (
+            build_standalone(staging, output / "standalone", version)
+            if with_standalone
+            else None
+        )
         native_requirements = select_native_dependencies(staging / "pyproject.toml")
         subprocess.run(
             ["uv", "build", "--wheel", "--out-dir", str(output)],
@@ -273,10 +338,19 @@ def build(
         write_component_archive(component, staging / "LICENSE", component_zip)
         if prepare_hacs:
             prepare_hacs_snapshot(
-                staging, component, output, version, tag, github, revision, dependency
+                staging,
+                component,
+                output,
+                version,
+                tag,
+                github,
+                revision,
+                dependency,
+                source_github=source_github,
             )
     evidence = {
         "repository": github,
+        "source_repository": source_github,
         "revision": revision,
         "builder_sha256": builder_sha256,
         "tag": tag,
@@ -294,6 +368,8 @@ def build(
         },
         "hacs_snapshot": "hacs-repository" if prepare_hacs else None,
     }
+    if standalone is not None:
+        evidence["standalone"] = {**standalone, "source_revision": revision}
     if prepare_hacs:
         snapshot = output / "hacs-repository"
         evidence["hacs_snapshot_files"] = {
@@ -309,7 +385,9 @@ def build(
     return evidence
 
 
-def validate_wheel_metadata(wheel: Path, version: str) -> None:
+def validate_wheel_metadata(
+    wheel: Path, version: str, *, distribution: str = "ha-mcp"
+) -> None:
     with zipfile.ZipFile(wheel) as archive:
         candidates = [
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
@@ -317,7 +395,7 @@ def validate_wheel_metadata(wheel: Path, version: str) -> None:
         if len(candidates) != 1:
             raise ValueError("Expected one wheel distribution metadata record")
         metadata = BytesParser().parsebytes(archive.read(candidates[0]))
-    if metadata["Name"] != "ha-mcp" or metadata["Version"] != version:
+    if metadata["Name"] != distribution or metadata["Version"] != version:
         raise ValueError("Wheel metadata does not match the candidate library version")
 
 
@@ -420,6 +498,8 @@ def prepare_hacs_snapshot(
     github: str,
     revision: str,
     dependency: str,
+    *,
+    source_github: str | None = None,
 ) -> None:
     """Prepare a reviewable tag tree; never create a commit, tag or release."""
     destination = output / "hacs-repository"
@@ -451,21 +531,25 @@ def prepare_hacs_snapshot(
     (destination / "hacs.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8", newline="\n"
     )
-    source_url = f"https://github.com/{github}/tree/{revision}"
+    source_github = source_github or github
+    source_url = f"https://github.com/{source_github}/tree/{revision}"
+    release_kind = "pre-release" if ".dev" in version else "release"
+    hacs_selection = " with pre-releases enabled" if ".dev" in version else ""
     (destination / "README.md").write_text(
         f"# HA-MCP native candidate {version}\n\n"
         f"Prepared distribution snapshot from [{revision}]({source_url}).\n\n"
-        "This tree becomes installable only after its matching GitHub pre-release and assets are published. "
-        f"Select tag `{tag}` with pre-releases enabled in HACS; the default branch is not this candidate.\n\n"
+        f"This tree becomes installable only after its matching GitHub {release_kind} and assets are published. "
+        f"Select tag `{tag}`{hacs_selection} in HACS; the default branch is not this candidate.\n\n"
         f"Requires Home Assistant {minimum} or newer. Install the attached `ha_mcp_tools.zip`, then restart Home Assistant. "
         "The library wheel is installed by Home Assistant from the exact URL and SHA-256 in the integration manifest.\n\n"
-        f"Read the [installation, permissions and rollback guide](https://github.com/{github}/blob/{revision}/docs/native-migration/installation.md) before switching runtimes. "
+        f"Read the [installation, permissions and rollback guide](https://github.com/{source_github}/blob/{revision}/docs/native-migration/installation.md) before switching runtimes. "
         "Existing configuration IDs remain in place. Do not delete the integration as an upgrade step.\n",
         encoding="utf-8",
         newline="\n",
     )
     proof = {
         "source_revision": revision,
+        "source_repository": source_github,
         "source_url": source_url,
         "release_tag": tag,
         "library_version": version,
@@ -487,11 +571,20 @@ def main() -> None:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--github", default="julienld/ha-mcp-native")
     parser.add_argument(
+        "--source-github",
+        help="Source repository for provenance links when distribution uses a mirror",
+    )
+    parser.add_argument(
         "--revision",
         default="HEAD",
         help="Committed source to export, resolved once before building",
     )
     parser.add_argument("--output", type=Path, default=Path("dist/native"))
+    parser.add_argument(
+        "--with-standalone",
+        action="store_true",
+        help="Also build complete canonical PyPI wheel/sdist in standalone/; never publish",
+    )
     parser.add_argument(
         "--prepare-hacs",
         action="store_true",
@@ -506,6 +599,8 @@ def main() -> None:
         options.github,
         prepare_hacs=options.prepare_hacs,
         revision=options.revision,
+        with_standalone=options.with_standalone,
+        source_github=options.source_github,
     )
     print(json.dumps(result, indent=2))
 

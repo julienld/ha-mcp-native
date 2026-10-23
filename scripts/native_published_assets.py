@@ -158,7 +158,7 @@ def release_contract(
     version = proof.get("library_version")
     if (
         not isinstance(version, str)
-        or re.fullmatch(r"\d+\.\d+\.\d+\.dev\d+", version) is None
+        or re.fullmatch(r"\d+\.\d+\.\d+(?:\.dev\d+)?", version) is None
     ):
         raise ValueError("Invalid native library version")
     if (

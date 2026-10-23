@@ -163,6 +163,47 @@ together. Verify that the snapshot's component files match the archive, that its
 manifest names that wheel and hash, and that the source commit links resolve.
 Use the same artifacts for the qualification run and eventual upload.
 
+### Build the canonical standalone and native profiles together
+
+`--with-standalone` adds a complete standalone wheel and source distribution in
+`standalone/`, while the native wheel, component ZIP and payload index keep their
+existing layout. Both builds use one exported source commit, its pinned
+submodules and one supplied version. The native wheel retains zero active
+dependency edges; the standalone wheel and sdist retain the source's complete
+default dependency graph, so ordinary `uvx ha-mcp` installations remain viable.
+The package names remain `ha-mcp` for stable and `ha-mcp-dev` for the existing
+development channel. The native URL wheel remains `ha-mcp` in either channel.
+Never upload that native wheel to PyPI as the ordinary standalone distribution.
+
+Stable builds are supported without publishing a release:
+
+```powershell
+uv run -s scripts/native_release.py --revision SOURCE_SHA --version 9.0.0 --tag v9.0.0 --with-standalone --prepare-hacs --output dist/profiles-9.0.0
+```
+
+For dev, supply the version already produced by the canonical `dev-version`
+artifact, such as `9.0.0.dev123`, and its matching tag. Both the existing candidate
+spelling `v9.0.0.dev123` and the mirror spelling `v9.0.0-dev.123` are accepted.
+For stable, use the version and source commit of the semantic-release tag.
+The profile builder does not calculate a replacement version or resolve a
+moving "latest release".
+
+`native-build.json` records both profiles' artifact digests and their common
+source revision. `--source-github OWNER/REPO` separates source links from the
+`--github` repository that would host distribution assets. The source SHA is
+never claimed as the future HACS snapshot commit; that distribution commit does
+not exist during preparation.
+
+The reusable/manual `native-distribution.yml` workflow qualifies these builds
+only in `julienld/ha-mcp-native`. It accepts the explicit version, tag and source
+revision, has read-only repository permissions, and uploads an Actions artifact.
+It creates no Git tag, release, PyPI upload or mirror push. Its output is ready
+for a future caller to consume: `standalone/` for the canonical PyPI build and
+the native artifacts plus `hacs-repository/` for HACS. Adoption by upstream's
+SemVer Release, Publish Dev Channel and mirror jobs remains a separate reviewed
+change; their current triggers, distribution names and legacy mirror behavior
+are unchanged. Local/fork qualification does not authorize that publication.
+
 After artifact review and qualification, the minimal publication sequence is:
 
 1. Initialize a separate local Git checkout from `hacs-repository/`, without

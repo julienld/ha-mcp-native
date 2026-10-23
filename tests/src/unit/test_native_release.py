@@ -1,15 +1,19 @@
 """Candidate archives must select and identify the exact paired distribution."""
 
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tomllib
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 from packaging.version import Version
 
 
@@ -67,24 +71,40 @@ ha-mcp = "ha_mcp:main"
     def wheel_build(args, *, cwd, **kwargs):
         output = Path(args[args.index("--out-dir") + 1])
         output.mkdir(parents=True, exist_ok=True)
-        version = tomllib.loads((cwd / "pyproject.toml").read_text())["project"][
-            "version"
-        ]
-        with zipfile.ZipFile(
-            output / f"ha_mcp-{version}-py3-none-any.whl", "w"
-        ) as wheel:
+        project = tomllib.loads((cwd / "pyproject.toml").read_text())["project"]
+        version, name = project["version"], project["name"]
+        basename = f"{name.replace('-', '_')}-{version}"
+        dependencies = [f"Requires-Dist: {item}\n" for item in project["dependencies"]]
+        dependencies.extend(
+            f"Requires-Dist: {item}; extra == '{extra}'\n"
+            for extra, requirements in project.get("optional-dependencies", {}).items()
+            for item in requirements
+        )
+        with zipfile.ZipFile(output / f"{basename}-py3-none-any.whl", "w") as wheel:
             wheel.writestr("ha_mcp/__init__.py", "# fixture library\n")
             wheel.writestr(
-                f"ha_mcp-{version}.dist-info/METADATA",
-                f"Metadata-Version: 2.3\nName: ha-mcp\nVersion: {version}\n",
+                f"{basename}.dist-info/METADATA",
+                f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
+                + "".join(dependencies),
             )
             wheel.writestr(
-                f"ha_mcp-{version}.dist-info/WHEEL",
+                f"{basename}.dist-info/WHEEL",
                 "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             )
+            wheel.writestr(f"{basename}.dist-info/RECORD", "installer rewrites this\n")
             wheel.writestr(
-                f"ha_mcp-{version}.dist-info/RECORD", "installer rewrites this\n"
+                f"{basename}.dist-info/entry_points.txt",
+                "[console_scripts]\n"
+                + "\n".join(
+                    f"{key} = {value}" for key, value in project["scripts"].items()
+                ),
             )
+        if "--wheel" not in args:
+            with tarfile.open(output / f"{basename}.tar.gz", "w:gz") as archive:
+                payload = (cwd / "pyproject.toml").read_bytes()
+                member = tarfile.TarInfo(f"{basename}/pyproject.toml")
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(release_builder, "stage_revision", stage)
@@ -247,3 +267,93 @@ def test_wheel_filename_cannot_conceal_a_different_distribution(
         )
     with pytest.raises(ValueError, match="metadata does not match"):
         release_builder.validate_wheel_metadata(path, "9.0.0.dev1")
+
+
+@pytest.mark.parametrize(
+    "version,tag", [("9.0.0", "v9.0.0"), ("9.0.0.dev123", "v9.0.0-dev.123")]
+)
+def test_native_profile_accepts_canonical_release_versions_without_recomputing_them(
+    source, tmp_path, release_builder, version, tag
+):
+    output = tmp_path / "release"
+    proof = release_builder.build(
+        source, output, version, tag, "julienld/ha-mcp-native", prepare_hacs=True
+    )
+    assert proof["library_version"] == proof["component_version"] == version
+    assert proof["tag"] == tag
+    assert (output / f"ha_mcp-{version}-py3-none-any.whl").is_file()
+    if ".dev" not in version:
+        assert "pre-release" not in (output / "hacs-repository/README.md").read_text()
+
+
+@pytest.mark.parametrize("version", ["9.0.0", "9.0.0.dev123"])
+def test_coupled_profiles_keep_cli_graph_and_native_wheel_separate(
+    source, tmp_path, release_builder, version, monkeypatch
+):
+    from unittest.mock import Mock
+
+    stage = Mock(wraps=release_builder.stage_revision)
+    monkeypatch.setattr(release_builder, "stage_revision", stage)
+    output = tmp_path / "coupled"
+    original = (source / "pyproject.toml").read_bytes()
+    proof = release_builder.build(
+        source,
+        output,
+        version,
+        f"v{version}",
+        "julienld/ha-mcp-native",
+        with_standalone=True,
+        prepare_hacs=True,
+        source_github="homeassistant-ai/ha-mcp",
+    )
+    stage.assert_called_once()
+    assert (source / "pyproject.toml").read_bytes() == original
+    standalone = proof["standalone"]
+    assert standalone["source_revision"] == proof["revision"] == "a" * 40
+    assert standalone["version"] == proof["library_version"] == version
+    assert proof["source_repository"] == "homeassistant-ai/ha-mcp"
+    name = "ha-mcp-dev" if ".dev" in version else "ha-mcp"
+    assert standalone["distribution"] == name
+    basename = f"{name.replace('-', '_')}-{version}"
+    wheel = output / "standalone" / f"{basename}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel) as archive:
+        metadata = BytesParser().parsebytes(
+            archive.read(f"{basename}.dist-info/METADATA")
+        )
+        assert {str(Requirement(r)) for r in metadata.get_all("Requires-Dist")} == {
+            str(Requirement(r))
+            for r in tomllib.loads(original.decode())["project"]["dependencies"]
+        }
+        scripts = archive.read(f"{basename}.dist-info/entry_points.txt").decode()
+        assert ("ha-mcp-dev = ha_mcp.__main__:main_dev" in scripts) == (
+            ".dev" in version
+        )
+    with tarfile.open(output / "standalone" / f"{basename}.tar.gz") as archive:
+        project = tomllib.loads(
+            archive.extractfile(f"{basename}/pyproject.toml").read().decode()
+        )["project"]
+        assert project["dependencies"] == standalone["dependencies"]
+        assert project["name"] == name and project["version"] == version
+    with zipfile.ZipFile(output / f"ha_mcp-{version}-py3-none-any.whl") as archive:
+        metadata = BytesParser().parsebytes(
+            archive.read(f"ha_mcp-{version}.dist-info/METADATA")
+        )
+        assert not any(
+            requirement.marker is None or requirement.marker.evaluate({"extra": ""})
+            for value in metadata.get_all("Requires-Dist")
+            for requirement in [Requirement(value)]
+        )
+    assert set(standalone["files"]) == {
+        f"standalone/{basename}-py3-none-any.whl",
+        f"standalone/{basename}.tar.gz",
+    }
+    assert not (set(standalone["files"]) & set(proof["files"]))
+    provenance = json.loads((output / "hacs-repository/native-source.json").read_text())
+    assert (
+        provenance["source_url"]
+        == f"https://github.com/homeassistant-ai/ha-mcp/tree/{'a' * 40}"
+    )
+    assert provenance["release_tag"] == f"v{version}"
+    assert (
+        "distribution_revision" not in provenance
+    )  # No distribution commit exists yet.

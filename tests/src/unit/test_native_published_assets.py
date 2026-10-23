@@ -26,11 +26,11 @@ def published_assets():
 
 
 @pytest.fixture
-def public_release(tmp_path, published_assets):
+def public_release(tmp_path, published_assets, request):
     folder = tmp_path / "public"
     folder.mkdir()
-    tag = "v9.0.0.dev123"
-    version = "9.0.0.dev123"
+    version = getattr(request, "param", "9.0.0.dev123")
+    tag = f"v{version}"
     wheel = f"ha_mcp-{version}-py3-none-any.whl"
     with zipfile.ZipFile(folder / wheel, "w") as archive:
         archive.writestr(
@@ -182,6 +182,7 @@ def test_explicit_repository_sets_public_request_url(
     )
 
 
+@pytest.mark.parametrize("public_release", ["9.0.0.dev123", "9.0.0"], indirect=True)
 def test_public_archive_reaches_image_unchanged_without_preinstalled_wheel(
     tmp_path, monkeypatch, published_assets, public_release
 ):
@@ -200,6 +201,7 @@ def test_public_archive_reaches_image_unchanged_without_preinstalled_wheel(
     assert not list(component.rglob("*.whl"))
 
 
+@pytest.mark.parametrize("public_release", ["9.0.0.dev123", "9.0.0"], indirect=True)
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -222,6 +224,7 @@ def test_mixed_provenance_is_rejected_before_binary_download(
     assert calls == ["native-build.json"]
 
 
+@pytest.mark.parametrize("public_release", ["9.0.0.dev123", "9.0.0"], indirect=True)
 @pytest.mark.parametrize("asset", ["wheel", "zip"])
 def test_changed_public_bytes_fail_digest_check(
     tmp_path, monkeypatch, published_assets, public_release, asset
