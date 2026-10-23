@@ -94,7 +94,7 @@ async def test_older_read_cannot_reenable_an_admitted_write(restriction: str) ->
     finally:
         resume_write.set()
         await runtime.engine.stop()
-        await pending_write
+        _ = await pending_write
 
 
 @pytest.mark.parametrize("phase", ["read", "instructions"])
@@ -132,7 +132,7 @@ async def test_cancelled_refresh_releases_next_reader(phase: str) -> None:
     await asyncio.sleep(0)
     interrupted.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await interrupted
+        _ = await interrupted
     await asyncio.wait_for(following, 1)
     assert runtime.policy is latest
     assert runtime.engine.read_only
