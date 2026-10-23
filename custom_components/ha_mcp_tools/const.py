@@ -25,6 +25,9 @@ DOMAIN = "ha_mcp_tools"
 # ``websocket_api.constants.CAPABILITIES``).
 COMPONENT_VERSION = "8.7.0"
 
+CONFIG_ENTRY_VERSION = 1
+CONFIG_ENTRY_MINOR_VERSION = 2
+
 # Config-entry discriminator (``entry.data[CONF_ENTRY_TYPE]``). A missing value
 # means "tools" so the pre-existing services entry keeps working across the
 # component update with no migration.

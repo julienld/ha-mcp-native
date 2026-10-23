@@ -57,6 +57,8 @@ from .const import (
     BIND_HOST_ALL,
     BIND_HOST_LOOPBACK,
     CONF_ENTRY_TYPE,
+    CONFIG_ENTRY_MINOR_VERSION,
+    CONFIG_ENTRY_VERSION,
     DATA_ADMIN_TOKEN,
     DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
@@ -193,7 +195,8 @@ def _bind_host_selector() -> SelectSelector:
 class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     """Handle the config flow for the HA-MCP custom component (both entry types)."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
+    MINOR_VERSION = CONFIG_ENTRY_MINOR_VERSION
 
     @staticmethod
     @callback
@@ -423,7 +426,13 @@ class HaMcpServerOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show / apply the server options."""
-        opts = self.config_entry.options
+        # Disabled entries can reach Configure before Core runs their migration.
+        opts = bridge_options(
+            self.config_entry.options,
+            export_default=(
+                self.config_entry.version == 1 and self.config_entry.minor_version < 2
+            ),
+        )
         errors: dict[str, str] = {}
         invalid: list[str] = []
         if user_input is not None:

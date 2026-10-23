@@ -27,6 +27,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ._config_flow_factories import options_flow
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -156,17 +158,7 @@ def _make_flow() -> cf.HaMcpToolsConfigFlow:
 
 
 def _make_options_flow(*, options=None, data=None) -> cf.HaMcpServerOptionsFlow:
-    flow = cf.HaMcpServerOptionsFlow()
-    flow.config_entry = SimpleNamespace(options=options or {}, data=data or {})
-    # Bare hass with empty data: legacy_credentials_active() resolves False
-    # (nothing bound) unless a test monkeypatches it.
-    flow.hass = MagicMock(name="hass")
-    flow.hass.data = {}
-    flow.async_show_form = MagicMock(side_effect=lambda **kw: {"type": "form", **kw})
-    flow.async_create_entry = MagicMock(
-        side_effect=lambda **kw: {"type": "entry", **kw}
-    )
-    return flow
+    return options_flow(cf, options=options, data=data)
 
 
 class TestMenuStep:

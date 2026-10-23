@@ -1,7 +1,7 @@
 """Setup and options share independent default-off Core LLM bridge controls."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -31,6 +31,20 @@ async def test_setup_bridge_defaults_and_saved_choices(
     empty = await flow.async_step_server({const.DATA_NATIVE_OWNER_ID: "owner"})
     assert empty["options"]["enable_llm_api"] is False
     assert empty["options"]["enable_native_llm_import"] is False
+    # New entries carry the current schema, so a later setup must not apply
+    # the historical export-on default to a newly created default-off entry.
+    import custom_components.ha_mcp_tools as component
+
+    entry = SimpleNamespace(
+        version=flow.VERSION,
+        minor_version=flow.MINOR_VERSION,
+        data=empty["data"],
+        options=empty["options"],
+    )
+    assert (entry.version, entry.minor_version) > (1, 1)
+    hass = MagicMock()
+    assert await component.async_migrate_entry(hass, entry)
+    hass.config_entries.async_update_entry.assert_not_called()
     enabled = await flow.async_step_server(
         {
             const.DATA_NATIVE_OWNER_ID: "owner",
@@ -81,3 +95,21 @@ async def test_disabling_import_keeps_ids_for_later_reactivation() -> None:
     assert result["data"]["enable_llm_api"] is True
     assert result["data"]["enable_native_llm_import"] is False
     assert result["data"]["native_import_apis"] == ["assist"]
+
+
+@pytest.mark.parametrize(
+    "saved,enabled", [({}, True), ({"enable_llm_api": False}, False)]
+)
+async def test_configure_before_first_setup_preserves_old_effective_export(
+    saved: dict, enabled: bool
+) -> None:
+    """A disabled old entry can open Configure before Core migrates its setup."""
+    flow = _make_options_flow(options=saved)
+    flow.config_entry.version = 1
+    flow.config_entry.minor_version = 1
+    form = await flow.async_step_init()
+    markers = {marker.schema: marker for marker in form["data_schema"].schema}
+    assert markers["enable_llm_api"].default() is enabled
+    result = await flow.async_step_init({"enable_webhook": False})
+    assert result["data"]["enable_llm_api"] is enabled
+    assert result["data"]["enable_native_llm_import"] is False

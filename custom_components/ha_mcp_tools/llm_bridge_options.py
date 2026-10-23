@@ -1,4 +1,4 @@
-"""Independent Core LLM bridges and migration of explicit earlier choices."""
+"""Independent Core LLM bridges and normalization of saved choices."""
 
 from __future__ import annotations
 
@@ -41,8 +41,11 @@ def selected_import_apis(options: Mapping[str, Any]) -> frozenset[str]:
     return _api_ids(options) if import_enabled(options) else frozenset()
 
 
-def bridge_options(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Persist defaults once without resetting either explicit bridge choice."""
+def bridge_options(
+    options: Mapping[str, Any], *, export_default: bool = DEFAULT_ENABLE_LLM_API
+) -> dict[str, Any]:
+    """Materialize effective flags without resetting either explicit choice."""
+    options = {OPT_ENABLE_LLM_API: export_default, **options}
     return {
         **options,
         OPT_ENABLE_LLM_API: export_enabled(options),

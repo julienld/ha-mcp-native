@@ -63,6 +63,7 @@ from .const import (
     YAML_KEY_POST_ACTIONS,
 )
 from .entry_device import async_register_entry_device
+from .entry_migration import async_migrate_entry as async_migrate_entry
 from .file_access import (
     _HASS_DATA_ALLOWED_PATHS_KEY as _HASS_DATA_ALLOWED_PATHS_KEY,
 )

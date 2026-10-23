@@ -218,15 +218,18 @@ Core admission enforces its own minimum even if an archive is copied manually.
 
 ## Credentials and rollback
 
-The two LLM bridges are independent and **off by default**, in both initial setup
-and Configure. `enable_llm_api=true` offers HA-MCP tools as an API that an Assist
-agent can select. `enable_native_llm_import=true` lets MCP clients discover and
+The two LLM bridges are independent and **off by default for new entries**.
+Configure preserves each entry's saved choices. `enable_llm_api=true` offers
+HA-MCP tools as an API that an Assist agent can select.
+`enable_native_llm_import=true` lets MCP clients discover and
 call the explicit `native_import_apis` selection in Native mode. Switching either
 bridge off preserves the selected APIs and exposure mode. Home Assistant's own
 built-in Assist tools are unchanged.
 
-An existing explicit `enable_llm_api=true` remains enabled; an old entry with
-that option absent now has export disabled. For compatibility, an existing
+On upgrade, config-entry schema 1.2 preserves the previous effective export
+setting: an old server entry with no `enable_llm_api` option gets an explicit
+`true`, matching upstream's former default. Explicit `true` and `false` choices
+remain unchanged, in both Legacy and Native mode. For compatibility, an existing
 nonempty `native_import_apis` list with no import switch is migrated to an
 explicit enabled import. A saved `false` always wins over the retained list.
 Legacy runtime supports export, but retains the native import choice for a later
