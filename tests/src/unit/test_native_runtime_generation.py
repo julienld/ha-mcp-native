@@ -8,6 +8,88 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize("replacement", ["none", "same_version", "upgrade"])
+def test_first_native_start_rejects_component_interfaces_from_an_older_import(
+    replacement: str,
+) -> None:
+    script = """
+        import asyncio
+        import importlib
+        import sys
+        from pathlib import Path
+        from types import ModuleType, SimpleNamespace
+        from tests.src.unit._embedded_stubs import install
+        install()
+        package = ModuleType('custom_components.ha_mcp_tools')
+        package.__path__ = [str(Path.cwd() / 'custom_components' / 'ha_mcp_tools')]
+        sys.modules[package.__name__] = package
+        from custom_components.ha_mcp_tools import file_access, embedded_server, runtime_generation
+        import ha_mcp
+        ha_mcp.__version__ = '9.0.0.post998'
+        old_failure = file_access.ToolFailure
+        old_lock = file_access.registry_update_lock
+        assert runtime_generation.native_bound_version() is None
+        if REPLACEMENT != 'none':
+            embedded_server._purge_ha_mcp_modules()
+            import ha_mcp
+            from ha_mcp.tool_api import ToolFailure
+            from ha_mcp.utils.registry_update_lock import registry_update_lock
+            from ha_mcp.utils.owned_executor import await_owned_io
+            ha_mcp.__version__ = '9.0.0.post999' if REPLACEMENT == 'upgrade' else '9.0.0.post998'
+            assert old_failure is not ToolFailure
+            assert old_lock is not registry_update_lock
+            owner = file_access.FileAccess(SimpleNamespace(config=SimpleNamespace(config_dir='.')))
+            owner.active = False
+            try:
+                asyncio.run(owner._authorize(None, False))
+            except old_failure as error:
+                assert not isinstance(error, ToolFailure), 'Real component failure still belongs to the old generation'
+            else:
+                raise AssertionError('Inactive file owner did not reject the call')
+        runtime_generation._installed_version = lambda: ha_mcp.__version__
+        from custom_components.ha_mcp_tools import native_server
+        class ReachedBindings(Exception):
+            pass
+        original_import = importlib.import_module
+        def stop_at_bindings(name, *args, **kwargs):
+            if name == 'ha_mcp.runtime.catalog':
+                raise ReachedBindings
+            return original_import(name, *args, **kwargs)
+        importlib.import_module = stop_at_bindings
+        try:
+            try:
+                native_server._prewarm()
+            except ReachedBindings:
+                assert REPLACEMENT == 'none', 'Mixed component interfaces reached native binding imports'
+            except RuntimeError as error:
+                assert REPLACEMENT != 'none', str(error)
+                assert 'restart Home Assistant' in str(error)
+                assert runtime_generation.native_bound_version() is None, 'A rejected native entry must not reserve legacy package mutation'
+            else:
+                raise AssertionError('Prewarm did not reach either boundary')
+        finally:
+            importlib.import_module = original_import
+        if REPLACEMENT != 'none':
+            manager = embedded_server.EmbeddedServerManager.__new__(embedded_server.EmbeddedServerManager)
+            manager._orphaned_thread = None
+            manager._pip_spec_override = ''
+            embedded_server._CACHED_IMPORT_VERSION = None
+            manager._maybe_purge_stale_modules(ha_mcp.__version__)
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"REPLACEMENT = {replacement!r}\n" + textwrap.dedent(script),
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("installed", ["same", "changed", "unknown"])
 def test_legacy_switch_never_replaces_native_resource_generation(
     installed: str,

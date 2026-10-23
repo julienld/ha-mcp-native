@@ -35,6 +35,9 @@ from .file_paths import (
 )
 from .file_views import _shape_read_file_response
 from .package_dirs import _detect_package_dirs
+from .runtime_generation import capture_component_generation
+
+capture_component_generation(ToolFailure, await_owned_io, registry_update_lock)
 
 _LOGGER = logging.getLogger(__package__)
 DATA_FILE_ACCESS = "file_access_owner"

@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from ha_mcp.tool_api import ToolFailure
+
+from .test_component_ws_search import _REAL_VOL
 from .test_native_engine_backend import native as native
 from .test_native_radios import call
 from .test_native_radios import radios as radios
@@ -17,7 +20,19 @@ from .test_native_radios import radios as radios
 @pytest.fixture
 def thread_store(radios: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     radios.hass.config.components.add("thread")
-    radios.command("thread/list_datasets")
+    handler = Mock(
+        side_effect=AssertionError("Native validation must not call the WS handler")
+    )
+    radios.hass.data["websocket_api"]["thread/list_datasets"] = (handler, False)
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.websocket_api.messages",
+        SimpleNamespace(
+            BASE_COMMAND_MESSAGE_SCHEMA=_REAL_VOL.Schema(
+                {_REAL_VOL.Required("id"): int}
+            )
+        ),
+    )
     owner = SimpleNamespace(datasets={}, preferred_dataset=None)
 
     async def load(hass: Any) -> Any:
@@ -33,7 +48,9 @@ def thread_store(radios: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     module = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.radio_thread"
     )
-    return SimpleNamespace(radios=radios, owner=owner, getter=getter, module=module)
+    return SimpleNamespace(
+        radios=radios, owner=owner, getter=getter, module=module, handler=handler
+    )
 
 
 async def test_cold_thread_read_uses_core_singleton_loader(thread_store: Any) -> None:
@@ -44,6 +61,18 @@ async def test_cold_thread_read_uses_core_singleton_loader(thread_store: Any) ->
     assert result.data["datasets"] == {"datasets": []}
     world.getter.assert_awaited_once_with(world.radios.hass)
     assert world.radios.hass.data["thread.datasets"] is world.owner
+    world.handler.assert_not_called()
+
+
+def test_core_type_only_schema_still_rejects_extra_arguments(thread_store: Any) -> None:
+    world = thread_store
+    session = world.radios.access.RadioSession(
+        world.radios.hass, world.radios.actor, world.radios.authorize
+    )
+    with pytest.raises(ToolFailure, match="extra keys not allowed") as failed:
+        session.validate("thread/list_datasets", {"unexpected": True})
+    assert failed.value.status == "not_started"
+    world.handler.assert_not_called()
 
 
 async def test_cancelling_a_waiter_never_cancels_shared_core_loading(

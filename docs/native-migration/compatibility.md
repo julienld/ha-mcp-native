@@ -31,6 +31,19 @@ bindings have loaded, the legacy installer refuses package replacement and a
 changed or ambiguous installed version requires a full Home Assistant restart.
 Purging Python modules cannot safely update references retained by Core.
 
+The reverse switch has a separate boundary: the component's FileAccess owner
+already retains `ToolFailure`, the owned-I/O helper and registry-lock function
+before Native is ever selected. A legacy hot upgrade may reload `ha_mcp` while
+those references survive. Since 2026-10-23 the first Native start compares those
+retained interfaces with the current module generation before importing native
+bindings. A mismatch files the existing startup repair with a Core-restart
+instruction, even if the two package versions have the same string. This failed
+Native attempt does not reserve a native generation or disable legacy upgrades.
+An unchanged component generation still starts Native normally. The local
+two-generation tests exercise actual module purge/reimport and the retained
+FileAccess exception class; live legacy package-update checks do not establish
+that every subsequent runtime-switch sequence is safe without a Core restart.
+
 Long Apps, full-backup and configured Code executions receive finite Engine
 budgets derived from their existing domain limits. Ordinary operations retain
 the default budget. Result filtering has a separate bounded window, so an

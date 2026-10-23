@@ -16,12 +16,21 @@ def _validated_payload(
     if {"id", "type"}.intersection(payload):
         raise UnsupportedOperation("registry.payload.envelope")
     registration = (hass.data.get("websocket_api") or {}).get(command)
-    if not registration or not callable(registration[1]):
+    if not registration:
+        raise UnsupportedOperation(command + ".validator")
+    schema = registration[1]
+    if schema is False:
+        # Core marks type-only commands False; it still rejects extra keys.
+        # Reuse its public base schema instead of invoking a WS handler.
+        from homeassistant.components.websocket_api.messages import (
+            BASE_COMMAND_MESSAGE_SCHEMA,
+        )
+
+        schema = BASE_COMMAND_MESSAGE_SCHEMA.extend({"type": command})
+    if not callable(schema):
         raise UnsupportedOperation(command + ".validator")
     try:
-        validated: dict[str, Any] = registration[1](
-            {"id": 1, "type": command, **payload}
-        )
+        validated: dict[str, Any] = schema({"id": 1, "type": command, **payload})
     except _INVALID_ERRORS as error:
         data = create_validation_error(str(error))
         raise ToolFailure(
