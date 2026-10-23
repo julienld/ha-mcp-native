@@ -83,7 +83,7 @@ async def schedule_full_restore(
         )
     if row is None:
         raise ToolFailure(
-            "RESOURCE_NOT_FOUND", "Target backup does not exist", status="not_started"
+            "RESOURCE_NOT_FOUND", "Target backup not found", status="not_started"
         )
     image = json.loads(json_bytes(row))
     agent_id, agent, password = access.credentials()

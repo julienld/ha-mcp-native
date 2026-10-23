@@ -5,6 +5,15 @@ from typing import Any, NoReturn
 from ha_mcp.tool_api import ToolFailure
 
 
+def with_recovery_hint(failure: ToolFailure, hint: str) -> ToolFailure:
+    """Enrich one domain's refusal without changing its code or write outcome."""
+    error = failure.data["error"]
+    assert isinstance(error, dict)
+    error["suggestion"] = hint
+    error["suggestions"] = [hint, *error.get("suggestions", [])]
+    return failure
+
+
 def registry_outcome_unknown(
     domain: str,
     action: str,

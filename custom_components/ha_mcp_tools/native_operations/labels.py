@@ -39,7 +39,11 @@ from .registry_access import (
     registry_failure,
     registry_json,
 )
-from .registry_failures import registry_outcome_unknown, registry_target_missing
+from .registry_failures import (
+    registry_outcome_unknown,
+    registry_target_missing,
+    with_recovery_hint,
+)
 
 _CURRENT = object()
 
@@ -246,7 +250,16 @@ class NativeLabels:
                 else None
             )
             if identifier is not None and before is None:
-                registry_target_missing("label", identifier)
+                raise with_recovery_hint(
+                    ToolFailure(
+                        "RESOURCE_NOT_FOUND",
+                        f"Label not found: {identifier}",
+                        status="not_started",
+                    ),
+                    "To create a new label, omit label_id; use ha_config_get_label() to find an existing label"
+                    if action == "update"
+                    else "Use ha_config_get_label() to find an existing label before removing it",
+                )
             if expected is not _CURRENT and not json_values_equal(before, expected):
                 raise ToolFailure(
                     "CONFIG_CONFLICT",

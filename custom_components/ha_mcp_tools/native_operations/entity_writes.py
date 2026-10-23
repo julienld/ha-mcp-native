@@ -150,6 +150,18 @@ class NativeEntityWrites(NativeEntityRegistry):
         target = _validated_payload(
             self.hass, "config/entity_registry/get", {"entity_id": target}
         )["entity_id"]
+        self._references(
+            {
+                "area_id": clearable_value(fields.get("area_id"), "area_id"),
+                "labels": fields["labels"]
+                if fields["label_operation"] in {"set", "add"}
+                else None,
+                "categories": fields["categories"] or {},
+            }
+        )
+        if fields.get("new_entity_id") is not None:
+            apply_entity_rename(target, fields["new_entity_id"], {}, [])
+        self._exposure_payloads(target, fields["expose_to"])
         registry = self._owner()
         initial = registry.async_get(target)
         if initial is None:
@@ -180,7 +192,7 @@ class NativeEntityWrites(NativeEntityRegistry):
                 )
                 return await service.set(target, fields["expose_to"])
             raise ToolFailure(
-                "ENTITY_NOT_FOUND",
+                "SERVICE_CALL_FAILED",
                 f"Entity '{target}' not found in registry",
                 status="not_started",
             )
@@ -261,19 +273,7 @@ class NativeEntityWrites(NativeEntityRegistry):
             )
             for domain, values in (fields["options"] or {}).items()
         )
-        exposure = [
-            _validated_payload(
-                self.hass,
-                "homeassistant/expose_entity",
-                {
-                    "assistants": [assistant],
-                    "entity_ids": [target],
-                    "should_expose": value,
-                },
-            )
-            for assistant, value in (fields["expose_to"] or {}).items()
-        ]
-        exposure.sort(key=lambda payload: not payload["should_expose"])
+        exposure = self._exposure_payloads(target, fields["expose_to"])
         references = {
             "area_id": message.get("area_id"),
             "labels": fields["labels"]
@@ -287,6 +287,42 @@ class NativeEntityWrites(NativeEntityRegistry):
         return _EntityPlan(
             registry, before, payloads, exposure, references, updates, fields
         )
+
+    def _exposure_payloads(
+        self, target: str, exposure: dict[str, bool] | None
+    ) -> list[dict[str, Any]]:
+        try:
+            payloads = [
+                _validated_payload(
+                    self.hass,
+                    "homeassistant/expose_entity",
+                    {
+                        "assistants": [assistant],
+                        "entity_ids": [target],
+                        "should_expose": value,
+                    },
+                )
+                for assistant, value in (exposure or {}).items()
+            ]
+        except ToolFailure as error:
+            if error.code != "VALIDATION_FAILED":
+                raise
+            details = error.data["error"]
+            assert isinstance(details, dict)
+            payload = {
+                **error.data,
+                "error": {
+                    **details,
+                    "code": "VALIDATION_INVALID_PARAMETER",
+                },
+            }
+            raise ToolFailure(
+                "VALIDATION_INVALID_PARAMETER",
+                str(error),
+                data=payload,
+                status=error.status,
+            ) from error
+        return sorted(payloads, key=lambda payload: not payload["should_expose"])
 
     async def _prepare_device(self, plan: _EntityPlan, owners: AsyncExitStack) -> None:
         from homeassistant.helpers import device_registry as dr

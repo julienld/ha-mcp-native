@@ -28,6 +28,7 @@ from .registry_access import (
     capture_registry_before,
     registry_failure,
 )
+from .registry_failures import with_recovery_hint
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,8 +415,11 @@ class NativeCalendars:
                 )
             await operation
         except Exception as error:  # Provider may raise after storing the event.
-            raise ToolFailure(
-                "OUTCOME_UNKNOWN",
-                f"The calendar provider raised {type(error).__name__} after {action} was dispatched. Inspect the calendar before retrying.",
-                status="outcome_unknown",
+            raise with_recovery_hint(
+                ToolFailure(
+                    "OUTCOME_UNKNOWN",
+                    f"The calendar provider raised {type(error).__name__} after {action} was dispatched. Inspect the calendar before retrying.",
+                    status="outcome_unknown",
+                ),
+                "Inspect the calendar event and confirm its current state before retrying; the dispatched change may already have been applied",
             ) from error

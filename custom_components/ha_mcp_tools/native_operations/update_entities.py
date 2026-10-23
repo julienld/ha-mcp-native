@@ -6,6 +6,7 @@ from typing import Any
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 
 from ..optional_integrations import loaded_integration_module
+from .registry_failures import with_recovery_hint
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,8 +25,11 @@ def update_target(hass: Any, entity_id: str) -> UpdateTarget:
         raise UnsupportedOperation("Core update integration is not loaded")
     entity = component.get_entity(entity_id)
     if not isinstance(entity, UpdateEntity) or hass.states.get(entity_id) is None:
-        raise ToolFailure(
-            "ENTITY_NOT_FOUND", "Update entity not found", status="not_started"
+        raise with_recovery_hint(
+            ToolFailure(
+                "ENTITY_NOT_FOUND", "Update entity not found", status="not_started"
+            ),
+            "Use ha_manage_updates(action='list') to find an available update entity",
         )
     return UpdateTarget(entity_id, entity.unique_id, component, entity)
 

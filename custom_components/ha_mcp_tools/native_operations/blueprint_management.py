@@ -31,6 +31,7 @@ from .registry_access import (
     registry_failure,
     registry_json,
 )
+from .registry_failures import with_recovery_hint
 
 
 @dataclass(slots=True)
@@ -44,7 +45,7 @@ class NativeBlueprints:
         if domain not in {"automation", "script"}:
             raise ToolFailure(
                 "VALIDATION_INVALID_PARAMETER",
-                "Blueprint domain must be automation or script",
+                f"Invalid domain {domain!r}: blueprint domain must be automation or script",
                 status="not_started",
             )
         return BlueprintOwner(self.hass, self.actor, domain, authorize=self.authorize)
@@ -93,7 +94,7 @@ class NativeBlueprints:
         if domain not in {"automation", "script"}:
             raise ToolFailure(
                 "VALIDATION_INVALID_PARAMETER",
-                "Blueprint domain must be automation or script",
+                f"Invalid domain {domain!r}: blueprint domain must be automation or script",
                 status="not_started",
             )
         if action == "list" and domain not in self.hass.data.get("blueprint", {}):
@@ -147,10 +148,13 @@ class NativeBlueprints:
     async def installed(self, store: BlueprintOwner, path: str) -> dict[str, Any]:
         entries = await self.entries(store)
         if path not in entries:
-            raise ToolFailure(
-                "RESOURCE_NOT_FOUND",
-                f"Blueprint not found: {path}",
-                status="not_started",
+            raise with_recovery_hint(
+                ToolFailure(
+                    "RESOURCE_NOT_FOUND",
+                    f"Blueprint not found: {path}",
+                    status="not_started",
+                ),
+                "Use ha_manage_blueprints(action='list', domain=...) to find an installed blueprint path",
             )
         entry: dict[str, Any] = entries[path]
         return entry
@@ -270,10 +274,13 @@ class NativeBlueprints:
             await self.installed(store, path)
             before = await store.read(path)
             if before.text is None:
-                raise ToolFailure(
-                    "RESOURCE_NOT_FOUND",
-                    f"Blueprint not found: {path}",
-                    status="not_started",
+                raise with_recovery_hint(
+                    ToolFailure(
+                        "RESOURCE_NOT_FOUND",
+                        f"Blueprint not found: {path}",
+                        status="not_started",
+                    ),
+                    "Use ha_manage_blueprints(action='list', domain=...) to find an installed blueprint path",
                 )
             warnings = await self.capture(store, path, before)
             try:
@@ -318,7 +325,10 @@ class NativeBlueprints:
         try:
             imported = await await_owned_io(fetch())
         except Exception as error:
-            raise registry_failure(error, {"action": "import", "url": url}) from error
+            raise with_recovery_hint(
+                registry_failure(error, {"action": "import", "url": url}),
+                "Verify the blueprint URL is reachable and points to a supported blueprint source before importing again",
+            ) from error
         await authorize_actor(self.actor, self.authorize)
         if imported is None:
             raise ToolFailure(

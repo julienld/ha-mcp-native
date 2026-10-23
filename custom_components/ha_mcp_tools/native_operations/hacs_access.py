@@ -204,7 +204,7 @@ class HacsAccess:
         if repository is None:
             raise ToolFailure(
                 "RESOURCE_NOT_FOUND",
-                f"Repository '{identifier}' is not registered in HACS",
+                f"Repository '{identifier}' not found in HACS; it is not registered",
                 status="not_started",
             )
         self.remember(repository)

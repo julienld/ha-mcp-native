@@ -174,6 +174,7 @@ async def test_calendar_provider_failure_after_dispatch_is_unknown_without_retry
             )
     assert error.value.code == "OUTCOME_UNKNOWN"
     assert error.value.status == "outcome_unknown"
+    assert "Inspect" in error.value.data["error"]["suggestions"][0]
     assert operation.await_count == 1
 
 

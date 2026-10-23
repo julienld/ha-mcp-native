@@ -196,7 +196,11 @@ class UpdateWrites(UpdateReads):
                 await self._repair(item, action == "ignore_repair")
             except Exception as error:  # noqa: BLE001 - preserve per-item failures and stop the tail
                 failure = registry_failure(error, item)
-                results.append(failure.data)
+                if failure.code == "RESOURCE_NOT_FOUND":
+                    details = failure.data["error"]
+                    assert isinstance(details, dict)
+                    details["code"] = "SERVICE_CALL_FAILED"
+                results.append({**item, **failure.data})
                 unknown |= failure.status == "outcome_unknown"
                 stopped = failure.code != "RESOURCE_NOT_FOUND"
             else:

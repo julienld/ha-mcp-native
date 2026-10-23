@@ -31,6 +31,7 @@ from ha_mcp.utils.owned_executor import await_owned_io
 
 from .native_operations.dashboard_storage import DashboardStorage
 from .native_operations.registry_access import admit_registry_write, authorize_actor
+from .native_operations.registry_failures import with_recovery_hint
 from .native_operations.screenshot_theme import NativeThemeObserver
 from .native_server_policy import setting_value
 from .optional_integrations import loaded_integration_module
@@ -109,10 +110,13 @@ class NativeScreenshots:
         if not available:
             if explicit:
                 return explicit, None
-            raise ToolFailure(
-                "SERVICE_CALL_FAILED",
-                "No screenshot engine is configured. Set the screenshot engine URL for this entry, or install and start the Puppet app on Home Assistant OS.",
-                status="not_started",
+            raise with_recovery_hint(
+                ToolFailure(
+                    "SERVICE_CALL_FAILED",
+                    "No screenshot engine is configured. Set the screenshot engine URL for this entry, or install and start the Puppet app on Home Assistant OS.",
+                    status="not_started",
+                ),
+                "Set the screenshot engine URL in this entry, or install and start the Puppet app on Home Assistant OS",
             )
         try:
             discovered, token = await self._discover()

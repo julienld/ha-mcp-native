@@ -39,7 +39,7 @@ class NativeUpdates(UpdateWrites):
                 return await self._repairs(action, repairs)
             raise ToolFailure(
                 "VALIDATION_INVALID_PARAMETER",
-                f"Invalid update action: {action}",
+                f"Invalid action for update management: {action}",
                 status="not_started",
             )
         except Exception as error:

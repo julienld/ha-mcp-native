@@ -151,7 +151,7 @@ class NativeEnergy(EnergyChanges):
     async def preview(self, config: dict[str, Any]) -> dict[str, Any]:
         await self._owner()
         # Validation only: never call the manager's write or acquire a snapshot.
-        _validated_payload(self.hass, _COMMAND, config)
+        self._validated_config(config)
         proposal = validate_request(self.hass, _COMMAND, config)
         errors, failure, validation = await await_owned_io(self._validation())
         await authorize_actor(self.actor, self.authorize)
@@ -170,6 +170,23 @@ class NativeEnergy(EnergyChanges):
             )
         return result
 
+    def _validated_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return _validated_payload(self.hass, _COMMAND, config)
+        except ToolFailure as error:
+            if error.code != "VALIDATION_FAILED":
+                raise
+            message = f"Core rejected Energy preferences: {error}"
+            details = error.data["error"]
+            assert isinstance(details, dict)
+            payload = {
+                **error.data,
+                "error": {**details, "message": message},
+            }
+            raise ToolFailure(
+                error.code, message, data=payload, status=error.status
+            ) from error
+
     async def save(
         self, config: dict[str, Any], config_hash: str | dict[str, str]
     ) -> dict[str, Any]:
@@ -184,7 +201,7 @@ class NativeEnergy(EnergyChanges):
         before = copy.deepcopy(owner.data)
         _check_config_hash(config, config_hash, self._prefs(owner))
         registration = self.hass.data["websocket_api"][_COMMAND]
-        payload = _validated_payload(self.hass, _COMMAND, config)
+        payload = self._validated_config(config)
         return await await_owned_io(self._commit(owner, registration, before, payload))
 
     async def _commit(
