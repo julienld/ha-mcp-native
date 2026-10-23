@@ -92,6 +92,11 @@ async def async_setup_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     # harmless.
     async_register_commands(hass)
 
+    from .llm_bridge_options import bridge_options
+
+    options = bridge_options(entry.options)
+    if options != entry.options:
+        hass.config_entries.async_update_entry(entry, options=options)
     _ensure_secrets(hass, entry)
     # Bind every applicable OAuth route synchronously here — before the slow
     # background bring-up below — so it is live at boot (see the helper).

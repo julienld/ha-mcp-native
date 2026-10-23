@@ -611,7 +611,7 @@ class TestServerOptionsFlow:
             const.OPT_WEBHOOK_AUTH: const.WEBHOOK_AUTH_HA,
             const.OPT_PIP_SPEC: "ha-mcp==0.0.1",
             const.OPT_SERVER_URL: "https://ha.example:8123",
-            # Saved False (non-default) proves the LLM-API toggle prefills.
+            const.OPT_ENABLE_NATIVE_LLM_IMPORT: True,
             const.OPT_ENABLE_LLM_API: False,
             # Saved full (non-default) proves the exposure selector prefills.
             const.OPT_LLM_API_EXPOSURE: const.EXPOSURE_FULL,
@@ -683,11 +683,11 @@ class TestServerOptionsFlow:
         result = asyncio.run(flow.async_step_init(user_input))
         assert result["type"] == "entry"
         assert result["title"] == ""
-        # A genuine override is stored verbatim; the channel rides along.
-        # _normalize adds the (empty) URL/secret management fields when the
-        # submission omits them; an omitted callback list is an emptied one.
+        # Omitted URL/secret/callback fields normalize to empty values.
         assert result["data"] == {
             **user_input,
+            "enable_llm_api": False,
+            "enable_native_llm_import": False,
             const.OPT_EXTERNAL_URL: "",
             const.OPT_WEBHOOK_ID_OVERRIDE: "",
             const.OPT_SECRET_PATH_OVERRIDE: "",
@@ -1545,7 +1545,6 @@ class TestOptionsFormTranslations:
         assert "Could not read the tools-entry state" in caplog.text
 
     def test_connect_and_oauth_prose_follow_the_catalog(self, monkeypatch):
-        """The two hints were the last all-English blocks in the paragraph."""
         monkeypatch.setattr(
             cf,
             "async_get_integration",
@@ -1557,6 +1556,7 @@ class TestOptionsFormTranslations:
             "_fetch_common_translations",
             AsyncMock(
                 return_value=self._catalog(
+                    connect_urls_label="Remote-Verbindungs-URL:",
                     connect_remote_url="Remote-Verbindungs-URL: {url}",
                     oauth_select_legacy_mode="Setze den Authentifizierungsmodus.",
                 )
@@ -1568,7 +1568,7 @@ class TestOptionsFormTranslations:
             "description_placeholders"
         ]
 
-        assert placeholders["connect_url"].startswith("Remote-Verbindungs-URL: ")
+        assert placeholders["connect_url"].startswith("Remote-Verbindungs-URL:")
         assert "/api/webhook/mcp_abc" in placeholders["connect_url"]
         assert placeholders["oauth_creds"] == "Setze den Authentifizierungsmodus."
 

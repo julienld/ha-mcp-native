@@ -52,7 +52,9 @@ def runtime() -> SimpleNamespace:
         hass=object(),
         backend=backend,
         engine=Engine(backend),
-        entry=SimpleNamespace(options={OPT_NATIVE_IMPORT_APIS: ["assist"]}),
+        entry=SimpleNamespace(
+            options={OPT_NATIVE_IMPORT_APIS: ["assist"], "enable_llm_api": True}
+        ),
     )
 
 
@@ -267,8 +269,9 @@ async def test_import_failure_after_dispatch_preserves_unknown_outcome(
 
 
 @pytest.mark.parametrize("suspension", ["authorization", "approval"])
+@pytest.mark.parametrize("disable_bridge", [False, True])
 async def test_assist_exposure_removed_during_admission_cannot_execute(
-    monkeypatch: pytest.MonkeyPatch, suspension: str
+    monkeypatch: pytest.MonkeyPatch, suspension: str, disable_bridge: bool
 ) -> None:
     manager = runtime()
     manager.policy = SimpleNamespace(llm_overrides={})
@@ -300,7 +303,10 @@ async def test_assist_exposure_removed_during_admission_cannot_execute(
         native_llm.call_exposed(manager, "write", {}, context("alice"))
     )
     await asyncio.wait_for(suspended.wait(), 1)
-    manager.policy.llm_overrides["write"] = False
+    if disable_bridge:
+        manager.entry.options["enable_llm_api"] = False
+    else:
+        manager.policy.llm_overrides["write"] = False
     resume.set()
     result = await asyncio.wait_for(task, 1)
     handler.assert_not_awaited()

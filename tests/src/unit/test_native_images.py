@@ -166,6 +166,7 @@ async def test_assist_reports_image_limit_without_base64_or_losing_write_outcome
 ):
     manager, _mcp = image_runtime
     manager.policy = SimpleNamespace(llm_overrides={})
+    manager.entry = SimpleNamespace(options={"enable_llm_api": True})
     monkeypatch.setattr(
         native_llm,
         "exposed_catalog",

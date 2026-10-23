@@ -46,6 +46,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.loader import async_get_integration
 
 from . import server_credentials
+from .config_flow_llm import schema_fields
 from .config_flow_text import (
     _COMMON_FALLBACKS,
     _common_strings,
@@ -64,8 +65,6 @@ from .const import (
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
-    DEFAULT_ENABLE_LLM_API,
-    DEFAULT_LLM_API_EXPOSURE,
     DEFAULT_LOOPBACK_URL,
     DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
@@ -74,20 +73,17 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_SERVER,
     ENTRY_TYPE_TOOLS,
-    EXPOSURE_BOTH,
-    EXPOSURE_FULL,
-    EXPOSURE_TOOL_SEARCH,
     LLM_API_DOCS_URL,
     MAX_OAUTH_CALLBACKS,
     MIN_NATIVE_HOME_ASSISTANT_VERSION,
     OPT_ADMIN_TOKEN_REPLACEMENT,
     OPT_BIND_HOST,
     OPT_ENABLE_LLM_API,
+    OPT_ENABLE_NATIVE_LLM_IMPORT,
     OPT_ENABLE_SIDEBAR_PANEL,
     OPT_ENABLE_STARTUP_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
-    OPT_LLM_API_EXPOSURE,
     OPT_NATIVE_HTTP_LIMIT,
     OPT_NATIVE_IMPORT_APIS,
     OPT_NATIVE_STREAM_SECONDS,
@@ -111,6 +107,7 @@ from .const import (
     WEBHOOK_AUTH_LEGACY,
     WEBHOOK_AUTH_NONE,
 )
+from .llm_bridge_options import bridge_options, submitted_options
 from .oauth_redirect_allowlist import (
     effective_allowlist,
     normalize_allowlist,
@@ -286,6 +283,18 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                     title=SERVER_ENTRY_TITLE,
                     data=data,
                     options={
+                        **bridge_options(
+                            {
+                                key: value
+                                for key, value in user_input.items()
+                                if key
+                                in (
+                                    OPT_ENABLE_LLM_API,
+                                    OPT_ENABLE_NATIVE_LLM_IMPORT,
+                                    OPT_NATIVE_IMPORT_APIS,
+                                )
+                            }
+                        ),
                         OPT_ENABLE_WEBHOOK: enabled,
                         # Later enabling the webhook keeps HA sign-in queued.
                         OPT_WEBHOOK_AUTH: remote if enabled else WEBHOOK_AUTH_HA,
@@ -297,6 +306,7 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             errors=errors,
             data_schema=vol.Schema(
                 {
+                    **schema_fields(values),
                     vol.Required(DATA_NATIVE_OWNER_ID): SelectSelector(
                         SelectSelectorConfig(
                             options=[
@@ -445,7 +455,7 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     )
                     errors[field] = err.reason
             if not errors:
-                data = self._normalize(user_input)
+                data = self._normalize(submitted_options(opts, user_input))
                 data.pop(DATA_NATIVE_OWNER_ID, None)
                 self._adopt_owner(owner)
                 data.pop(OPT_OAUTH_REDIRECT_ALLOWLIST, None)
@@ -477,12 +487,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                         )
                     },
                 ): str,
-                vol.Optional(
-                    OPT_NATIVE_IMPORT_APIS,
-                    default=form_values.get(OPT_NATIVE_IMPORT_APIS, []),
-                ): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.TEXT, multiple=True)
-                ),
                 vol.Required(
                     OPT_NATIVE_HTTP_LIMIT,
                     default=form_values.get(OPT_NATIVE_HTTP_LIMIT, 32),
@@ -542,24 +546,7 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     OPT_ENABLE_SIDEBAR_PANEL,
                     default=bool(form_values.get(OPT_ENABLE_SIDEBAR_PANEL, True)),
                 ): bool,
-                vol.Required(
-                    OPT_ENABLE_LLM_API,
-                    default=bool(
-                        form_values.get(OPT_ENABLE_LLM_API, DEFAULT_ENABLE_LLM_API)
-                    ),
-                ): bool,
-                vol.Required(
-                    OPT_LLM_API_EXPOSURE,
-                    default=str(
-                        form_values.get(OPT_LLM_API_EXPOSURE, DEFAULT_LLM_API_EXPOSURE)
-                    ),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[EXPOSURE_TOOL_SEARCH, EXPOSURE_FULL, EXPOSURE_BOTH],
-                        translation_key="llm_api_exposure",
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
+                **schema_fields(form_values, exposure=True),
                 vol.Optional(
                     OPT_EXTERNAL_URL,
                     description={

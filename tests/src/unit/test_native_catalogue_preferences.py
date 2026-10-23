@@ -75,6 +75,7 @@ async def test_hidden_tools_are_absent_from_search_and_assist_keeps_full_catalog
         engine=SimpleNamespace(tools=definitions),
         policy=NativePolicy(tool_states={"hidden_write": "disabled"}),
         refresh_policy=AsyncMock(),
+        entry=SimpleNamespace(options={"enable_llm_api": True}),
     )
     mcp.add_transform(catalogue_transform(manager))
     mcp.add_transform(CategorizedSearchTransform(always_visible=[]))

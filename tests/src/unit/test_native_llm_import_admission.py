@@ -26,6 +26,7 @@ from ha_mcp.tool_api import CallContext  # noqa: E402
         "credential",
         "owner",
         "deselected",
+        "bridge_disabled",
     ],
 )
 async def test_import_refuses_revocation_during_api_resolution(
@@ -101,7 +102,12 @@ async def test_import_refuses_revocation_during_api_resolution(
     elif revocation == "owner":
         registered[:] = [SimpleNamespace(id="fixture")]
     else:
-        manager.entry.options[OPT_NATIVE_IMPORT_APIS] = []
+        manager.entry.options.update(
+            {
+                "bridge_disabled": {"enable_native_llm_import": False},
+                "deselected": {OPT_NATIVE_IMPORT_APIS: []},
+            }[revocation]
+        )
     resume.set()
     result = await asyncio.wait_for(task, 1)
     instance.async_call_tool.assert_not_awaited()

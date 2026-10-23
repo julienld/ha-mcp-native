@@ -1338,7 +1338,7 @@ class TestThreadEnvStaging:
             "http://ha.local:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
         )
         # _serve raised on the ha_mcp.server import → captured, thread didn't hang.
         assert mgr._thread_exc is not None
@@ -1367,7 +1367,7 @@ class TestThreadEnvStaging:
             "https://127.0.0.1:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
             verify_ssl=False,
         )
 

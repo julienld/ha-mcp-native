@@ -438,7 +438,11 @@ class NativeServerManager:
         )
         self.policy = policy
         self.engine.read_only = policy.read_only
-        names = {*self.engine.tools, "ha_native_llm_tools", "ha_native_llm_call"}
+        from .llm_bridge_options import selected_import_apis
+
+        names = set(self.engine.tools)
+        if selected_import_apis(self.entry.options):
+            names.update({"ha_native_llm_tools", "ha_native_llm_call"})
         self.engine.enabled_tools = {
             name
             for name in names

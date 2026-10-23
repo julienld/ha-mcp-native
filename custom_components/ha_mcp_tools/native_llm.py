@@ -20,6 +20,7 @@ from .const import (
     OPT_LLM_API_EXPOSURE,
 )
 from .llm_api_search import CALL_TOOL_NAME
+from .llm_bridge_options import export_enabled, require_export_enabled
 from .llm_projection import (
     _FALLBACK_API_PROMPT,
     _TOOL_SEARCH_PROMPT,
@@ -57,7 +58,11 @@ async def exposed_catalog(manager: NativeServerManager) -> tuple[list[Any], set[
     """Share the server's exposure and pinned policy, including its env overrides."""
     from ha_mcp.llm_exposure import effective_llm_api_exposed
 
+    if not export_enabled(manager.entry.options):
+        return [], set()
     await manager.refresh_policy()
+    if not export_enabled(manager.entry.options):
+        return [], set()
     policy = manager.policy
     overrides, pinned = policy.llm_overrides, set(policy.pinned)
     exposed = []
@@ -99,8 +104,12 @@ async def call_exposed(
 
     def check_exposure(tool_name: str) -> None:
         definition = manager.engine.tools.get(tool_name)
-        if definition is None or not effective_llm_api_exposed(
-            tool_name, definition.tags, manager.policy.llm_overrides
+        if (
+            not export_enabled(manager.entry.options)
+            or definition is None
+            or not effective_llm_api_exposed(
+                tool_name, definition.tags, manager.policy.llm_overrides
+            )
         ):
             raise ToolFailure(
                 "TOOL_DISABLED", f"Unknown tool '{tool_name}'.", status="not_started"
@@ -209,7 +218,9 @@ class NativeLlmApi(llm.API):
             raise HomeAssistantError(
                 "HA-MCP requires an identified, active administrator"
             ) from err
+        self._check_enabled()
         exposed, pinned = await exposed_catalog(self.manager)
+        self._check_enabled()
         prompt = self.manager.instructions or _FALLBACK_API_PROMPT
         if self.mode == EXPOSURE_FULL:
             tools = build_full_tools(exposed, self._mirror)
@@ -220,9 +231,13 @@ class NativeLlmApi(llm.API):
                 self._mirror,
                 convert_parameters,
                 lambda _names: NativeCallTool(self.manager),
+                check_enabled=self._check_enabled,
             )
             prompt += _TOOL_SEARCH_PROMPT
         return llm.APIInstance(self, prompt, llm_context, tools)
+
+    def _check_enabled(self) -> None:
+        require_export_enabled(self.manager.entry.options)
 
     def _mirror(self, tool: Any, parameters: Any) -> NativeTool:
         return NativeTool(self.manager, tool, parameters)
@@ -232,8 +247,12 @@ async def async_register_native_llm(
     hass: HomeAssistant, entry: ConfigEntry, manager: NativeServerManager
 ) -> None:
     """Preserve full and tool-search API IDs selected in existing agents."""
-    await hass.async_add_executor_job(_schema_converter)
     async_unregister_llm_api(hass)
+    if not export_enabled(entry.options):
+        return
+    await hass.async_add_executor_job(_schema_converter)
+    if not export_enabled(entry.options):
+        return
     exposure = str(entry.options.get(OPT_LLM_API_EXPOSURE, DEFAULT_LLM_API_EXPOSURE))
     modes = (
         [EXPOSURE_FULL, EXPOSURE_TOOL_SEARCH]

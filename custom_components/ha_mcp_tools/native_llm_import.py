@@ -13,7 +13,8 @@ from homeassistant.helpers.json import json_bytes
 
 from ha_mcp.tool_api import ToolFailure
 
-from .const import DOMAIN, OPT_NATIVE_IMPORT_APIS
+from .const import DOMAIN
+from .llm_bridge_options import selected_import_apis
 
 if TYPE_CHECKING:
     from ha_mcp.tool_api import CallContext
@@ -26,10 +27,7 @@ _IMPORT_STACK: ContextVar[tuple[str, ...]] = ContextVar(
 
 
 def selected_apis(manager: NativeServerManager) -> frozenset[str]:
-    raw = manager.entry.options.get(OPT_NATIVE_IMPORT_APIS, [])
-    return frozenset(
-        item for item in raw if isinstance(item, str) and not item.startswith(DOMAIN)
-    )
+    return selected_import_apis(manager.entry.options)
 
 
 async def resolve_api(
@@ -47,6 +45,9 @@ async def resolve_api(
         device_id=None,
     )
     instance = await llm.async_get_api(manager.hass, api_id, context)
+    await manager.backend.authorize(actor)
+    if api_id not in selected_apis(manager):
+        raise PermissionError("LLM API import is disabled or no longer selected")
     if instance.api.id.startswith(DOMAIN):
         raise PermissionError("Cannot import an HA-MCP exported API")
     return instance

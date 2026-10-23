@@ -150,6 +150,14 @@ directory and inspect the complete evidence before continuing. The builder uses
 tracked `HEAD`, ignores uncommitted source edits, performs no installation in the
 working environment and creates no commit, tag, remote branch or release.
 
+For another GitHub repository, pass `--github OWNER/REPOSITORY` to the builder
+and the same trusted `--repository OWNER/REPOSITORY` to release qualification.
+The workflow passes its own `GITHUB_REPOSITORY` through the builder, public
+fetch, image verification and minimal Core worker. The old fork remains the
+default for manual preview commands. Never derive the expected repository
+from downloaded metadata: it must match the independently selected repository,
+source revision, tag, wheel URL and digests before execution.
+
 Review the wheel, component ZIP, `native-build.json` and `hacs-repository/`
 together. Verify that the snapshot's component files match the archive, that its
 manifest names that wheel and hash, and that the source commit links resolve.
@@ -203,12 +211,26 @@ Core admission enforces its own minimum even if an archive is copied manually.
 4. Configure the existing HA-MCP Server entry. New entries default to native;
    existing entries without `runtime_mode` retain legacy until an explicit
    change. Keep the File & YAML Tools entry when those opt-in capabilities are
-   needed. Webhook-off remains Assist-only.
+   needed. With the webhook off, the administrator sidebar remains available; Assist requires its separate opt-in.
 5. Verify the selected HACS tag, manifest and installed library version, the
    configured webhook/Assist access, and the native Core log. The previous
    legacy-only listener URL needs legacy mode or an explicitly updated HA URL.
 
 ## Credentials and rollback
+
+The two LLM bridges are independent and **off by default**, in both initial setup
+and Configure. `enable_llm_api=true` offers HA-MCP tools as an API that an Assist
+agent can select. `enable_native_llm_import=true` lets MCP clients discover and
+call the explicit `native_import_apis` selection in Native mode. Switching either
+bridge off preserves the selected APIs and exposure mode. Home Assistant's own
+built-in Assist tools are unchanged.
+
+An existing explicit `enable_llm_api=true` remains enabled; an old entry with
+that option absent now has export disabled. For compatibility, an existing
+nonempty `native_import_apis` list with no import switch is migrated to an
+explicit enabled import. A saved `false` always wins over the retained list.
+Legacy runtime supports export, but retains the native import choice for a later
+runtime switch without exposing an import bridge.
 
 Native calls use validated Home Assistant identity. They do not create an
 internal administrator token or reconnect to HA. Secret-URL and legacy OAuth

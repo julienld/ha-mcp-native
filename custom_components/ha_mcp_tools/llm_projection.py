@@ -73,6 +73,7 @@ def build_search_tools(
     caller: Callable[[set[str]], llm.Tool],
     *,
     normalize: Callable[[Any, str], Any] = normalise_schema,
+    check_enabled: Callable[[], None] | None = None,
 ) -> list[llm.Tool]:
     tools: list[llm.Tool] = []
     catalog = []
@@ -93,7 +94,7 @@ def build_search_tools(
             mirrored.add(tool.name)
     # Only successfully converted pins are direct tools; every other tool
     # retains its complete schema in discovery and can use the call callback.
-    tools.append(HaMcpSearchTool(catalog, mirrored))
+    tools.append(HaMcpSearchTool(catalog, mirrored, check_enabled=check_enabled))
     tools.append(caller({tool.name for tool in exposed}))
     return tools
 

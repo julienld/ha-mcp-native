@@ -37,7 +37,6 @@ from .const import (
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
-    DEFAULT_ENABLE_LLM_API,
     DEFAULT_SERVER_PORT,
     DOMAIN,
     ISSUE_COMPONENT_OUTDATED,
@@ -46,7 +45,6 @@ from .const import (
     ISSUE_START_FAILED,
     ISSUE_TOKEN_NEEDED,
     OPT_BIND_HOST,
-    OPT_ENABLE_LLM_API,
     OPT_ENABLE_SIDEBAR_PANEL,
     OPT_ENABLE_STARTUP_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
@@ -62,6 +60,7 @@ from .const import (
 )
 from .embedded_server import EmbeddedServerError, EmbeddedServerManager
 from .llm_api import async_register_llm_api, async_unregister_llm_api
+from .llm_bridge_options import export_enabled
 from .mcp_webhook import async_register_webhook, async_unregister_webhook
 from .oauth_legacy import legacy_credentials_active
 from .runtime_version import require_native_version
@@ -153,10 +152,10 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
             oauth_creds_active=oauth_creds_active,
             oauth_restart_pending=oauth_restart_needed,
         )
-        # Conversation-agent LLM API (#1745), gated on its option (default on).
+        # Conversation-agent LLM API (#1745), gated on its explicit opt-in.
         # Advisory: registration failures are contained inside (logged, feature
         # absent) — the running server must never be taken down by them.
-        if bool(entry.options.get(OPT_ENABLE_LLM_API, DEFAULT_ENABLE_LLM_API)):
+        if export_enabled(entry.options):
             await _register_entry_llm(hass, entry, manager, native, secret_path)
         else:
             _LOGGER.info(

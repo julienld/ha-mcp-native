@@ -54,7 +54,7 @@ def _make_entry(options: dict[str, Any] | None = None) -> MagicMock:
     entry = MagicMock(name="entry")
     entry.entry_id = "entry-1745"
     entry.title = "HA-MCP Server"
-    entry.options = options or {}
+    entry.options = {"enable_llm_api": True, **(options or {})}
     return entry
 
 
@@ -117,7 +117,6 @@ class TestRegistrationLifecycle:
 
         apis = fake_llm_apis(hass)
         assert set(apis) == {FULL_ID, _SEARCH_ID}
-        # One server: both registrations point at the same loopback URL.
         assert {a.server_url for a in apis.values()} == {
             "http://127.0.0.1:9584/private_x"
         }
@@ -536,6 +535,7 @@ class TestToolSearchModeInstance:
             "http://127.0.0.1:9584/private_x",
             "ha_get_state",
             {"entity_id": "sun.sun"},
+            check_enabled=instance.api._check_enabled,
         )
         assert result == {"content": [{"type": "text", "text": "ok"}]}
 

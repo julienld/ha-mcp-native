@@ -52,7 +52,7 @@ import asyncio
 import importlib
 import logging
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -96,6 +96,7 @@ from .const import (
 from .llm_api_search import CALL_TOOL_NAME as _CALL_TOOL_NAME
 from .llm_api_search import SEARCH_TOOL_NAME as _SEARCH_TOOL_NAME
 from .llm_api_search import HaMcpSearchTool as HaMcpSearchTool
+from .llm_bridge_options import export_enabled, require_export_enabled
 from .llm_projection import (
     _FALLBACK_API_PROMPT as _FALLBACK_API_PROMPT,
 )
@@ -375,12 +376,14 @@ class HaMcpTool(llm.Tool):
         *,
         title: str | None = None,
         hints: dict[str, Any] | None = None,
+        check_enabled: Callable[[], None] | None = None,
     ) -> None:
         """Store the converted schema, the server's metadata and the endpoint."""
         self.name = name
         self.description = description
         self.parameters = parameters
         self._server_url = server_url
+        self._check_enabled = check_enabled
         declare_metadata(self, title=title, hints=hints)
 
     async def async_call(
@@ -391,20 +394,33 @@ class HaMcpTool(llm.Tool):
     ) -> Any:
         """Call the tool on the in-process server and return its result."""
         dumped = await _forward_tool_call(
-            hass, self._server_url, self.name, tool_input.tool_args
+            hass,
+            self._server_url,
+            self.name,
+            tool_input.tool_args,
+            check_enabled=self._check_enabled,
         )
         return tool_result(dumped, error=dumped.get("isError") is True)
 
 
 async def _forward_tool_call(
-    hass: HomeAssistant, server_url: str, name: str, arguments: dict[str, Any]
+    hass: HomeAssistant,
+    server_url: str,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    check_enabled: Callable[[], None] | None = None,
 ) -> JsonObjectType:
     """Forward one tool call over loopback and dump the result for the agent."""
+    if check_enabled is not None:
+        check_enabled()
     try:
         async with (
             asyncio.timeout(_CALL_TOOL_TIMEOUT_SECONDS),
             _mcp_session(server_url) as (session, _init),
         ):
+            if check_enabled is not None:
+                check_enabled()
             result = await session.call_tool(name, arguments)
     except _transport_errors() as err:
         if not _is_transport_failure(err):
@@ -446,10 +462,17 @@ class HaMcpCallTool(llm.Tool):
     description = CALL_TOOL_DESCRIPTION
     parameters = CALL_TOOL_PARAMETERS
 
-    def __init__(self, server_url: str, exposed_names: set[str]) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        exposed_names: set[str],
+        *,
+        check_enabled: Callable[[], None] | None = None,
+    ) -> None:
         """Hold the loopback endpoint and the exposed-name allowlist."""
         self._server_url = server_url
         self._exposed_names = exposed_names
+        self._check_enabled = check_enabled
         # Dispatches any exposed tool, so no hints: Core's least-safe defaults.
         declare_metadata(self, title="Call HA-MCP Tool", hints=None)
 
@@ -472,7 +495,9 @@ class HaMcpCallTool(llm.Tool):
                 },
                 error=True,
             )
-        dumped = await _forward_tool_call(hass, self._server_url, name, arguments)
+        dumped = await _forward_tool_call(
+            hass, self._server_url, name, arguments, check_enabled=self._check_enabled
+        )
         return tool_result(dumped, error=dumped.get("isError") is True)
 
 
@@ -481,6 +506,7 @@ class HaMcpLlmApi(llm.API):
     """The in-process ha-mcp server's toolset as a Home Assistant LLM API."""
 
     server_url: str
+    entry: ConfigEntry | None = None
     # Valid instance modes are only tool_search and full — EXPOSURE_BOTH is
     # an option value that _apis_for_mode expands into two instances and must
     # never reach here. The default is the compact/safe shape, matching the
@@ -497,6 +523,7 @@ class HaMcpLlmApi(llm.API):
         server's own initialize ``instructions`` become the API prompt, so the
         agent gets the same guidance every MCP client gets.
         """
+        self._check_enabled()
         try:
             async with (
                 asyncio.timeout(_LIST_TOOLS_TIMEOUT_SECONDS),
@@ -505,6 +532,7 @@ class HaMcpLlmApi(llm.API):
                     init_result,
                 ),
             ):
+                self._check_enabled()
                 list_result = await session.list_tools()
         except _transport_errors() as err:
             if not _is_transport_failure(err):
@@ -513,6 +541,7 @@ class HaMcpLlmApi(llm.API):
                 f"Could not reach the in-process HA-MCP server: {err}"
             ) from err
 
+        self._check_enabled()
         exposed, pinned, stamped = partition_tools(list_result.tools)
         # Never mirror or search a server-side tool that shares a synthesized
         # meta-tool's name (the server's own tool-search mode registers an
@@ -539,6 +568,10 @@ class HaMcpLlmApi(llm.API):
 
         return llm.APIInstance(self, prompt, llm_context, tools)
 
+    def _check_enabled(self) -> None:
+        if self.entry is not None:
+            require_export_enabled(self.entry.options)
+
     def _convert_parameters(self, tool: Any, schema: Any) -> vol.Schema | None:
         return cast(
             vol.Schema | None,
@@ -554,6 +587,7 @@ class HaMcpLlmApi(llm.API):
             self.server_url,
             title=tool_title(tool),
             hints=tool_hints(tool),
+            check_enabled=self._check_enabled,
         )
 
     def _build_full_tools(self, exposed: list[Any]) -> list[llm.Tool]:
@@ -569,7 +603,10 @@ class HaMcpLlmApi(llm.API):
             pinned,
             self._mirror,
             self._convert_parameters,
-            lambda names: HaMcpCallTool(self.server_url, names),
+            lambda names: HaMcpCallTool(
+                self.server_url, names, check_enabled=self._check_enabled
+            ),
+            check_enabled=self._check_enabled,
             normalize=_normalise_schema,
         )
 
@@ -583,6 +620,7 @@ def _apis_for_mode(
         id=f"{DOMAIN}-{entry.entry_id}",
         name=entry.title,
         server_url=server_url,
+        entry=entry,
         mode=EXPOSURE_FULL,
     )
     search = HaMcpLlmApi(
@@ -590,6 +628,7 @@ def _apis_for_mode(
         id=f"{DOMAIN}-{entry.entry_id}-toolsearch",
         name=f"{entry.title} (tool search)",
         server_url=server_url,
+        entry=entry,
         mode=EXPOSURE_TOOL_SEARCH,
     )
     if exposure == EXPOSURE_FULL:
@@ -619,7 +658,10 @@ async def async_register_llm_api(
     Cancellation (a BaseException) still propagates.
     """
     try:
-        if not await async_probe_mcp_sdk(hass):
+        if not export_enabled(entry.options):
+            async_unregister_llm_api(hass)
+            return
+        if not await async_probe_mcp_sdk(hass) or not export_enabled(entry.options):
             return
 
         # Re-registration guard: a bring-up after a teardown that could not

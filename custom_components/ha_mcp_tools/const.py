@@ -340,13 +340,10 @@ OPT_REGENERATE_SECRETS = "regenerate_secrets"
 # server through Home Assistant; only the direct server port (+ the
 # admin-only sidebar panel, which proxies over loopback) remains.
 OPT_ENABLE_WEBHOOK = "enable_webhook"
-# Conversation-agent LLM API (#1745): when False, the toolset is not
-# registered as a Home Assistant LLM API, so it never appears in any
-# conversation agent's "Control Home Assistant" selector. On by default —
-# registering the API only makes it selectable; nothing is exposed until a
-# user picks it on an agent.
+# Both Core LLM bridges are optional and independent; fresh entries enable neither.
 OPT_ENABLE_LLM_API = "enable_llm_api"
-DEFAULT_ENABLE_LLM_API = True
+DEFAULT_ENABLE_LLM_API = False
+OPT_ENABLE_NATIVE_LLM_IMPORT = "enable_native_llm_import"
 # Which exposure shape(s) the LLM API offers to conversation agents:
 # ``tool_search`` (default) registers a compact API — pinned tools plus
 # search/execute meta-tools — the shape context-limited models need; ``full``

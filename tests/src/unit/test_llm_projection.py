@@ -98,6 +98,7 @@ async def test_native_search_keeps_unconvertible_pin_discoverable_without_mcp(
         backend=backend,
         engine=Engine(backend, definitions),
         refresh_policy=AsyncMock(),
+        entry=SimpleNamespace(options={"enable_llm_api": True}),
         policy=NativePolicy(pinned=frozenset({"converted", "unconverted"})),
         instructions="Owner instructions",
     )

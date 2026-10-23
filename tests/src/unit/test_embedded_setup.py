@@ -180,7 +180,7 @@ class TestBringUp:
 
     async def test_success_starts_registers_and_surfaces(self, fake_manager):
         hass = _make_hass()
-        entry = _make_entry()
+        entry = _make_entry(options={"enable_llm_api": True})
 
         await esetup.async_bring_up_server(hass, entry)
 
@@ -258,7 +258,7 @@ class TestBringUp:
         import logging
 
         hass = _make_hass()
-        entry = _make_entry(options={esetup.OPT_ENABLE_LLM_API: False})
+        entry = _make_entry(options={"enable_llm_api": False})
 
         with caplog.at_level(logging.INFO):
             await esetup.async_bring_up_server(hass, entry)
