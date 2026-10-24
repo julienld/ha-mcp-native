@@ -525,7 +525,7 @@ class TestSetLabelAssignsAreas:
                 snaps.append((domain, entity_id))
 
         monkeypatch.setattr(
-            "ha_mcp.tools.tools_labels.get_backup_manager",
+            "ha_mcp.backends.legacy_labels.get_backup_manager",
             lambda *_a, **_k: FakeMgr(),
         )
         mock_client.send_websocket_message = AsyncMock(

@@ -149,21 +149,32 @@ await exercise({
   },
 });
 
-await exercise({
-  script: 'vendor_fastmcp.py',
-  depName: 'fastmcp-slim',
-  pins: 'fastmcp-slim==4.0.2\nmcp==2.2.0\nmcp-types==2.2.0\n',
-  bumped: {
-    currentValue: '4.0.2', newValue: '4.0.3', pins: 'fastmcp-slim==4.0.3\nmcp==2.2.0\nmcp-types==2.2.0\n',
-  },
-  vendorDirs: ['src/ha_mcp/_vendor/fastmcp', 'src/ha_mcp/_vendor/mcp', 'src/ha_mcp/_vendor/mcp_types'],
-  extraFiles: {},
-  check: (localDir) => {
-    const vendor = join(localDir, 'src/ha_mcp/_vendor');
-    assert.match(readFileSync(join(vendor, 'fastmcp/VENDORED'), 'utf8'), /^fastmcp-slim==4\.0\.3\n/);
-    assert.match(readFileSync(join(vendor, 'fastmcp/__init__.py'), 'utf8'), /__version__ = "4\.0\.3"/);
-    assert.doesNotMatch(readFileSync(join(vendor, 'mcp/__init__.py'), 'utf8'), /^\s*from mcp_types\b/m);
-  },
+const sdkPins = 'mcp==2.2.0\nmcp-types==2.2.0\n';
+for (const upgrade of [
+  { depName: 'fastmcp-slim', currentValue: '4.0.2', newValue: '4.0.3',
+    pins: `fastmcp-slim==4.0.2\n${sdkPins}rich==15.0.0\n` },
+  { depName: 'rich', currentValue: '14.3.3', newValue: '15.0.0',
+    pins: `fastmcp-slim==4.0.3\n${sdkPins}rich==14.3.3\n` },
+]) {
+  await exercise({
+    script: 'vendor_fastmcp.py',
+    depName: upgrade.depName,
+    pins: upgrade.pins,
+    bumped: {
+      currentValue: upgrade.currentValue, newValue: upgrade.newValue,
+      pins: `fastmcp-slim==4.0.3\n${sdkPins}rich==15.0.0\n`,
+    },
+    vendorDirs: ['src/ha_mcp/_vendor/rich', 'src/ha_mcp/_vendor/fastmcp',
+      'src/ha_mcp/_vendor/mcp', 'src/ha_mcp/_vendor/mcp_types'],
+    extraFiles: {},
+    check: (localDir) => {
+      const vendor = join(localDir, 'src/ha_mcp/_vendor');
+      assert.match(readFileSync(join(vendor, 'rich/VENDORED'), 'utf8'), /^rich==15\.0\.0\n/);
+      assert.match(readFileSync(join(vendor, 'fastmcp/VENDORED'), 'utf8'), /^fastmcp-slim==4\.0\.3\n/);
+      assert.match(readFileSync(join(vendor, 'fastmcp/__init__.py'), 'utf8'), /__version__ = "4\.0\.3"/);
+      assert.doesNotMatch(readFileSync(join(vendor, 'mcp/__init__.py'), 'utf8'), /^\s*from mcp_types\b/m);
+    },
 });
+}
 
-console.log('Pinned Renovate executor regenerated the websockets and FastMCP/MCP SDK trees, licenses and manifests; collected additions/deletions; rejected unauthorized commands and surfaced generator failures.');
+console.log('Pinned Renovate executor regenerated the websockets and Rich/FastMCP/MCP SDK trees, licenses and manifests; collected additions/deletions; rejected unauthorized commands and surfaced generator failures.');

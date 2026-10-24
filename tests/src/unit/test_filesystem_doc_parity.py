@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ._tool_ast_parameters import resolved_tool_function
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _COMPONENT_DIR = _REPO_ROOT / "custom_components" / "ha_mcp_tools"
 _TOOLS_FILE = _REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_filesystem.py"
@@ -42,14 +44,12 @@ ALLOWED_WRITE_DIRS = _CONST.ALLOWED_WRITE_DIRS
 
 
 def _tool_docstrings():
-    """Map every top-level/def name in tools_filesystem.py to its docstring."""
-    tree = ast.parse(_TOOLS_FILE.read_text(encoding="utf-8"))
+    """Read the declarations bound by the legacy and native filesystem facades."""
     docs = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            doc = ast.get_docstring(node)
-            if doc is not None:
-                docs[node.name] = doc
+    for name in ("ha_list_files", "ha_read_file", "ha_write_file", "ha_delete_file"):
+        node = resolved_tool_function(_TOOLS_FILE, name)
+        assert node is not None, f"{name} declaration disappeared"
+        docs[name] = ast.get_docstring(node) or ""
     return docs
 
 

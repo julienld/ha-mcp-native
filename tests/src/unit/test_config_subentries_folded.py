@@ -25,7 +25,12 @@ def mock_client():
             "supports_options": False,
         }
     )
-    client.list_config_subentries = AsyncMock()
+    client.list_config_subentries = AsyncMock(
+        return_value={
+            "success": True,
+            "result": [{"subentry_id": "subentry-1", "subentry_type": "conversation"}],
+        }
+    )
     client.start_config_subentry_flow = AsyncMock()
     client.submit_config_subentry_flow_step = AsyncMock()
     client.abort_config_subentry_flow = AsyncMock()
@@ -197,7 +202,7 @@ async def test_get_integration_subentries_rejects_non_list_result(mock_client):
 
 
 async def test_get_integration_list_mode_warning_names_only_supplied_keys(mock_client):
-    mock_client._request = AsyncMock(return_value=[])
+    mock_client.list_config_entries = AsyncMock(return_value=[])
 
     result = await IntegrationTools(mock_client).ha_get_integration(
         include_subentries=True,

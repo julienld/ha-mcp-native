@@ -44,9 +44,9 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 from homeassistant.loader import async_get_integration
-from packaging.version import InvalidVersion, Version
 
 from . import server_credentials
+from .config_flow_llm import schema_fields
 from .config_flow_text import (
     _COMMON_FALLBACKS,
     _common_strings,
@@ -57,16 +57,16 @@ from .const import (
     BIND_HOST_ALL,
     BIND_HOST_LOOPBACK,
     CONF_ENTRY_TYPE,
+    CONFIG_ENTRY_MINOR_VERSION,
+    CONFIG_ENTRY_VERSION,
     DATA_ADMIN_TOKEN,
-    DATA_ISSUED_TOKEN_ID,
+    DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
     DATA_OAUTH_CLIENT_SECRET,
     DATA_OAUTH_SIGNING_KEY,
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
-    DEFAULT_ENABLE_LLM_API,
-    DEFAULT_LLM_API_EXPOSURE,
     DEFAULT_LOOPBACK_URL,
     DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
@@ -75,42 +75,47 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_SERVER,
     ENTRY_TYPE_TOOLS,
-    EXPOSURE_BOTH,
-    EXPOSURE_FULL,
-    EXPOSURE_TOOL_SEARCH,
     LLM_API_DOCS_URL,
     MAX_OAUTH_CALLBACKS,
-    MIN_EMBEDDED_HOME_ASSISTANT_VERSION,
+    MIN_NATIVE_HOME_ASSISTANT_VERSION,
     OPT_ADMIN_TOKEN_REPLACEMENT,
     OPT_BIND_HOST,
     OPT_ENABLE_LLM_API,
+    OPT_ENABLE_NATIVE_LLM_IMPORT,
     OPT_ENABLE_SIDEBAR_PANEL,
     OPT_ENABLE_STARTUP_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
-    OPT_LLM_API_EXPOSURE,
+    OPT_NATIVE_HTTP_LIMIT,
+    OPT_NATIVE_IMPORT_APIS,
+    OPT_NATIVE_STREAM_SECONDS,
     OPT_OAUTH_CLIENT_ID,
     OPT_OAUTH_CLIENT_SECRET,
     OPT_OAUTH_REDIRECT_ALLOWLIST,
     OPT_OAUTH_REGENERATE,
     OPT_PIP_SPEC,
     OPT_REGENERATE_SECRETS,
+    OPT_RUNTIME_MODE,
     OPT_SECRET_PATH_OVERRIDE,
     OPT_SERVER_PORT,
     OPT_SERVER_URL,
     OPT_WEBHOOK_AUTH,
     OPT_WEBHOOK_ID_OVERRIDE,
+    RUNTIME_LEGACY,
+    RUNTIME_NATIVE,
     SERVER_ENTRY_TITLE,
     TOOLS_ENTRY_TITLE,
     WEBHOOK_AUTH_HA,
     WEBHOOK_AUTH_LEGACY,
     WEBHOOK_AUTH_NONE,
 )
+from .llm_bridge_options import bridge_options, submitted_options
 from .oauth_redirect_allowlist import (
     effective_allowlist,
     normalize_allowlist,
     stored_allowlist,
 )
+from .runtime_version import runtime_version_errors, version_supported
 
 # The single-instance server entry's unique id — distinct from the tools entry's
 # unique id (``DOMAIN``) so both entry types coexist under the one domain.
@@ -190,7 +195,8 @@ def _bind_host_selector() -> SelectSelector:
 class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     """Handle the config flow for the HA-MCP custom component (both entry types)."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
+    MINOR_VERSION = CONFIG_ENTRY_MINOR_VERSION
 
     @staticmethod
     @callback
@@ -247,67 +253,55 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     async def async_step_server(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose remote and network access, then create the server entry.
-
-        A new install starts with the webhook off and the server port bound to
-        loopback (#2427): nothing beyond the Home Assistant machine can reach
-        the server until the administrator chooses a remote-access mode or LAN
-        access here or later in the options. The choice is saved explicitly,
-        so entries created before these defaults keep the behaviour they
-        inherit. The server runs with the administrator token entered here.
-        """
-        try:
-            supported = Version(HA_VERSION) >= Version(
-                MIN_EMBEDDED_HOME_ASSISTANT_VERSION
-            )
-        except InvalidVersion:
-            supported = False
-        if not supported:
+        """Choose an owner and optional remote access for a native server."""
+        if not version_supported(HA_VERSION, MIN_NATIVE_HOME_ASSISTANT_VERSION):
             return self.async_abort(
                 reason="unsupported_home_assistant",
                 description_placeholders={
                     "installed": HA_VERSION,
-                    "required": MIN_EMBEDDED_HOME_ASSISTANT_VERSION,
+                    "required": MIN_NATIVE_HOME_ASSISTANT_VERSION,
                 },
             )
 
-        # A dialog closed without aborting (tab closed mid-setup) stays open
-        # until Home Assistant restarts and must not block a new setup. This
-        # step runs again on every submit, so the configured check below still
-        # stops a second dialog from replacing a finished entry.
+        # Ignore abandoned dialogs, but reject every duplicate submitted entry.
         await self.async_set_unique_id(_SERVER_UNIQUE_ID, raise_on_progress=False)
         self._abort_if_unique_id_configured()
 
         errors: dict[str, str] = {}
         values = user_input or {}
+        users = [
+            user
+            for user in await self.hass.auth.async_get_users()
+            if user.is_active and user.is_admin and not user.system_generated
+        ]
         if user_input is not None:
-            fields = server_credentials.credential_fields(user_input, SETUP_ADMIN_TOKEN)
-            try:
-                token, issued = await server_credentials.async_credential_from_input(
-                    self.hass, **fields
-                )
-            except server_credentials.CredentialRefused as err:
-                errors[server_credentials.error_field(fields, SETUP_ADMIN_TOKEN)] = (
-                    err.reason
-                )
+            owner = self._setup_owner(user_input)
+            if owner not in {user.id for user in users}:
+                errors[DATA_NATIVE_OWNER_ID] = "token_not_admin"
             else:
                 remote = user_input.get(SETUP_REMOTE_ACCESS, REMOTE_ACCESS_DISABLED)
                 enabled = remote != REMOTE_ACCESS_DISABLED
-                data = {CONF_ENTRY_TYPE: ENTRY_TYPE_SERVER, DATA_ADMIN_TOKEN: token}
-                if issued:
-                    data[DATA_ISSUED_TOKEN_ID] = issued
+                data = {CONF_ENTRY_TYPE: ENTRY_TYPE_SERVER, DATA_NATIVE_OWNER_ID: owner}
                 return self.async_create_entry(
                     title=SERVER_ENTRY_TITLE,
                     data=data,
                     options={
-                        OPT_ENABLE_WEBHOOK: enabled,
-                        # Disabled keeps Home Assistant sign-in queued, so
-                        # enabling the webhook later never lands on the
-                        # secret-URL mode.
-                        OPT_WEBHOOK_AUTH: remote if enabled else WEBHOOK_AUTH_HA,
-                        OPT_BIND_HOST: user_input.get(
-                            OPT_BIND_HOST, BIND_HOST_LOOPBACK
+                        **bridge_options(
+                            {
+                                key: value
+                                for key, value in user_input.items()
+                                if key
+                                in (
+                                    OPT_ENABLE_LLM_API,
+                                    OPT_ENABLE_NATIVE_LLM_IMPORT,
+                                    OPT_NATIVE_IMPORT_APIS,
+                                )
+                            }
                         ),
+                        OPT_ENABLE_WEBHOOK: enabled,
+                        # Later enabling the webhook keeps HA sign-in queued.
+                        OPT_WEBHOOK_AUTH: remote if enabled else WEBHOOK_AUTH_HA,
+                        OPT_RUNTIME_MODE: RUNTIME_NATIVE,
                     },
                 )
         return self.async_show_form(
@@ -315,11 +309,16 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
             errors=errors,
             data_schema=vol.Schema(
                 {
-                    # The server acts with an administrator account the user
-                    # chose (#2427): its login, or a token pasted instead. The
-                    # component no longer creates an account for itself.
-                    **server_credentials.credential_schema(
-                        vol, SETUP_ADMIN_TOKEN, values
+                    **schema_fields(values),
+                    vol.Required(DATA_NATIVE_OWNER_ID): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(
+                                    value=user.id, label=user.name or user.id
+                                )
+                                for user in users
+                            ]
+                        )
                     ),
                     vol.Required(
                         SETUP_REMOTE_ACCESS,
@@ -336,13 +335,20 @@ class HaMcpToolsConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                             mode=SelectSelectorMode.LIST,
                         )
                     ),
-                    vol.Required(
-                        OPT_BIND_HOST,
-                        default=values.get(OPT_BIND_HOST, BIND_HOST_LOOPBACK),
-                    ): _bind_host_selector(),
                 }
             ),
         )
+
+    def _setup_owner(self, values: Mapping[str, Any]) -> str | None:
+        """Accept the previous API setup payload without retaining its token."""
+        owner = values.get(DATA_NATIVE_OWNER_ID)
+        if owner:
+            return str(owner)
+        token = str(values.get(SETUP_ADMIN_TOKEN, "")).strip()
+        if not token:
+            return None
+        refresh = self.hass.auth.async_validate_access_token(token)
+        return str(refresh.user.id) if refresh is not None else None
 
 
 class HaMcpToolsInfoOptionsFlow(OptionsFlow):
@@ -420,11 +426,19 @@ class HaMcpServerOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show / apply the server options."""
-        opts = self.config_entry.options
+        # Disabled entries can reach Configure before Core runs their migration.
+        opts = bridge_options(
+            self.config_entry.options,
+            export_default=(
+                self.config_entry.version == CONFIG_ENTRY_VERSION
+                and self.config_entry.minor_version < CONFIG_ENTRY_MINOR_VERSION
+            ),
+        )
         errors: dict[str, str] = {}
         invalid: list[str] = []
         if user_input is not None:
             errors = self._connect_path_override_errors(user_input)
+            errors.update(runtime_version_errors(user_input, opts, HA_VERSION))
             entries, invalid = normalize_allowlist(
                 user_input.get(OPT_OAUTH_REDIRECT_ALLOWLIST) or []
             )
@@ -432,6 +446,8 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 errors[OPT_OAUTH_REDIRECT_ALLOWLIST] = "invalid_oauth_callback"
             elif len(entries) > MAX_OAUTH_CALLBACKS:
                 errors[OPT_OAUTH_REDIRECT_ALLOWLIST] = "too_many_oauth_callbacks"
+            owner = str(user_input.get(DATA_NATIVE_OWNER_ID, "")).strip()
+            errors.update(await self._owner_errors(owner))
             fields = server_credentials.credential_fields(
                 user_input, OPT_ADMIN_TOKEN_REPLACEMENT
             )
@@ -449,7 +465,9 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     )
                     errors[field] = err.reason
             if not errors:
-                data = self._normalize(user_input)
+                data = self._normalize(submitted_options(opts, user_input))
+                data.pop(DATA_NATIVE_OWNER_ID, None)
+                self._adopt_owner(owner)
                 data.pop(OPT_OAUTH_REDIRECT_ALLOWLIST, None)
                 if (stored := stored_allowlist(opts, entries)) is not None:
                     data[OPT_OAUTH_REDIRECT_ALLOWLIST] = stored
@@ -465,10 +483,28 @@ class HaMcpServerOptionsFlow(OptionsFlow):
         suggested_values = opts if user_input is None else user_input
         schema = vol.Schema(
             {
-                # Authentication mode first, directly under the connect URLs
-                # shown in the step description (#1875): it is the setting users
-                # most need to find, and legacy mode is what unblocks OAuth-only
-                # clients such as Google Gemini Spark and Copilot CLI.
+                vol.Required(
+                    OPT_RUNTIME_MODE,
+                    default=form_values.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY),
+                ): SelectSelector(
+                    SelectSelectorConfig(options=[RUNTIME_NATIVE, RUNTIME_LEGACY])
+                ),
+                vol.Optional(
+                    DATA_NATIVE_OWNER_ID,
+                    description={
+                        "suggested_value": self.config_entry.data.get(
+                            DATA_NATIVE_OWNER_ID, ""
+                        )
+                    },
+                ): str,
+                vol.Required(
+                    OPT_NATIVE_HTTP_LIMIT,
+                    default=form_values.get(OPT_NATIVE_HTTP_LIMIT, 32),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=256)),
+                vol.Required(
+                    OPT_NATIVE_STREAM_SECONDS,
+                    default=form_values.get(OPT_NATIVE_STREAM_SECONDS, 900),
+                ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3600)),
                 vol.Required(
                     OPT_WEBHOOK_AUTH,
                     default=form_values.get(OPT_WEBHOOK_AUTH, WEBHOOK_AUTH_NONE),
@@ -493,30 +529,15 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 ): _bind_host_selector(),
                 vol.Optional(
                     OPT_PIP_SPEC,
-                    # Pre-fill via suggested_value, NOT a schema default: a
-                    # default equal to the saved value makes the field
-                    # impossible to clear. HA's frontend drops an emptied
-                    # optional field from the submitted payload, so voluptuous
-                    # re-applies the default (the old override) and clearing
-                    # never sticks. suggested_value pre-fills the same value but
-                    # is not re-injected on an empty submit. (Applies to every
-                    # optional text field below.) Only a genuinely saved
-                    # override is suggested; the normalized "no override" state
-                    # renders an EMPTY field — the help text says "Leave empty",
-                    # and pre-filling DEFAULT_PIP_SPEC would show the stable dist
-                    # name even when a HACS pre-release pins ha-mcp-dev.
+                    # Suggested values preserve intentional clearing: frontend
+                    # omissions must not reinsert a stored schema default.
                     description={
                         "suggested_value": suggested_values.get(OPT_PIP_SPEC, "")
                     },
                 ): str,
                 vol.Optional(
                     OPT_SERVER_URL,
-                    # Only a genuinely saved override is suggested (same
-                    # pattern as OPT_PIP_SPEC above). Pre-filling
-                    # DEFAULT_LOOPBACK_URL made every options save store the
-                    # constant as an explicit override, which would pin the
-                    # scheme/port even after issue #1890's SSL/port-aware
-                    # loopback derivation.
+                    # An absent override follows HA's live port and SSL config.
                     description={
                         "suggested_value": suggested_values.get(OPT_SERVER_URL, "")
                     },
@@ -535,26 +556,7 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     OPT_ENABLE_SIDEBAR_PANEL,
                     default=bool(form_values.get(OPT_ENABLE_SIDEBAR_PANEL, True)),
                 ): bool,
-                vol.Required(
-                    OPT_ENABLE_LLM_API,
-                    default=bool(
-                        form_values.get(OPT_ENABLE_LLM_API, DEFAULT_ENABLE_LLM_API)
-                    ),
-                ): bool,
-                vol.Required(
-                    OPT_LLM_API_EXPOSURE,
-                    default=str(
-                        form_values.get(OPT_LLM_API_EXPOSURE, DEFAULT_LLM_API_EXPOSURE)
-                    ),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[EXPOSURE_TOOL_SEARCH, EXPOSURE_FULL, EXPOSURE_BOTH],
-                        translation_key="llm_api_exposure",
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                # suggested_value (not default) so these clear properly on an
-                # empty submit — see the OPT_PIP_SPEC note above.
+                **schema_fields(form_values, exposure=True),
                 vol.Optional(
                     OPT_EXTERNAL_URL,
                     description={
@@ -581,9 +583,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                     OPT_REGENERATE_SECRETS,
                     default=False,
                 ): bool,
-                # Legacy OAuth mode (Google Gemini Spark) credential overrides —
-                # same shape as the webhook id/secret-path overrides above.
-                # Empty = auto-generate/keep the current value.
                 vol.Optional(
                     OPT_OAUTH_CLIENT_ID,
                     description={
@@ -606,8 +605,6 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 **server_credentials.credential_schema(
                     vol, OPT_ADMIN_TOKEN_REPLACEMENT, {}
                 ),
-                # suggested_value, not default: an emptied list must save as
-                # empty rather than fall back (see the OPT_PIP_SPEC note).
                 vol.Optional(
                     OPT_OAUTH_REDIRECT_ALLOWLIST,
                     description={
@@ -621,6 +618,9 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 ),
             }
         )
+        from .native_config import runtime_schema
+
+        schema = runtime_schema(schema, form_values)
         # The sidebar-panel sentence in the description is only truthful while
         # the panel is registered; drop it (from the CURRENT stored options, not
         # the unsaved form state) when the panel is off so the link cannot point
@@ -653,8 +653,30 @@ class HaMcpServerOptionsFlow(OptionsFlow):
                 "panel_hint": panel_hint,
                 "invalid_callbacks": ", ".join(invalid),
                 "max_callbacks": str(MAX_OAUTH_CALLBACKS),
+                "installed": HA_VERSION,
+                "required": MIN_NATIVE_HOME_ASSISTANT_VERSION,
             },
         )
+
+    async def _owner_errors(self, owner: str) -> dict[str, str]:
+        if not owner:
+            return {}
+        user = await self.hass.auth.async_get_user(owner)
+        if (
+            user is None
+            or not user.is_active
+            or not user.is_admin
+            or user.system_generated
+        ):
+            return {DATA_NATIVE_OWNER_ID: "token_not_admin"}
+        return {}
+
+    def _adopt_owner(self, owner: str) -> None:
+        if owner:
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data={**self.config_entry.data, DATA_NATIVE_OWNER_ID: owner},
+            )
 
     def _adopt_token(
         self, token: str, issued: str | None, options: Mapping[str, Any]

@@ -36,7 +36,7 @@ dependencies = [
     "cyclopts>=4.0.0",
     "exceptiongroup>=1.2.2",
     "griffelib>=2.0.0",
-    "httpx2>=2.10.0",
+    "httpx2>=2.10.0,<3",
     "joserfc>=1.5.0",
     "jsonref>=1.1.0",
     "jsonschema>=4.20.0",
@@ -53,6 +53,9 @@ dependencies = [
     "pywin32>=311; sys_platform == 'win32'",
     "pyyaml>=6.0,<7.0",
     "rich>=13.9.4",
+    # Runtime requirements of the private Rich copy used by MCP logging.
+    "markdown-it-py>=2.2.0",
+    "pygments>=2.13.0,<3.0.0",
     "sse-starlette>=3.0.0",
     "starlette>=1.0.1",
     "typing-extensions>=4.13.0",
@@ -104,6 +107,10 @@ ha-mcp-smoke-test = "ha_mcp.smoke_test:main"
 ha-mcp-web = "ha_mcp.__main__:main_web"
 ha-mcp-oauth = "ha_mcp.__main__:main_oauth"
 ha-mcp-oidc = "ha_mcp.__main__:main_oidc"
+
+[tool.uv]
+# Keep isolated CI/app builds consistent with the committed lock's P7D policy.
+exclude-newer = "7 days"
 
 [tool.uv.build-backend]
 # Explicit because publish-dev.yml renames the project to ha-mcp-dev, which
@@ -177,6 +184,7 @@ extend-exclude = [
     "src/ha_mcp/_vendor/fastmcp",
     "src/ha_mcp/_vendor/mcp",
     "src/ha_mcp/_vendor/mcp_types",
+    "src/ha_mcp/_vendor/rich",
     # Vendored skills submodule (src/ha_mcp/resources/skills-vendor) — upstream's
     # code, shipped as package data. Kept in sync with PATHS_IGNORE in
     # scripts/codeql_quality_gate.py.
@@ -318,6 +326,7 @@ markers = [
     "beta_haos_only: beta HAOS image lanes with Supervisor/Core version expectations configured",
     "container_only: skip when HAOS backend is active (testcontainer-specific behavior; #1281)",
     "embedded_only: only the embedded testcontainer backend (E2E_BACKEND=embedded), the one lane that installs ha-mcp into the HA image (#2245)",
+    "legacy_runtime_only: raw REST/WebSocket transport contract, exercised on legacy runtimes; native dedicated APIs have separate coverage",
     "external_only: in-process-server tiers only - skip for inaddon, stdio, container-embedded, and HAOS-embedded servers; #1349, #1527, #2233",
     "inaddon_only: HAOS inaddon mode only - exercises is_running_in_addon()=True paths; #1349",
     "haos_stdio_only: HAOS stdio mode only - exercises the installed ha-mcp command over a real stdio subprocess transport; #2233",

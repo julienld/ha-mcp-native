@@ -68,7 +68,7 @@ from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
 from ..errors import ErrorCode, create_entity_not_found_error, create_error_response
 from ..renamed_tools import current_tool_name
 from ..tool_dispatch import CALL_PROXY_META_TOOLS
-from ..tools.helpers import raise_tool_error
+from ..utils.tool_errors import raise_tool_error
 from . import resolver
 from .model import VisibilityConfig
 from .resolver import (
@@ -163,22 +163,25 @@ def _outbound_reason(name: str) -> str:
     )
 
 
+def enforcement_error(tool_name: str, reason: str) -> dict[str, Any]:
+    """The same non-disclosing error for native and remote enforcement."""
+    return create_error_response(
+        ErrorCode.ENTITY_VISIBILITY_ENFORCED,
+        "Entity visibility enforce mode is active on this Home Assistant MCP "
+        f"server. {reason} No data was returned.",
+        suggestions=[
+            "The entity is restricted by the entity visibility filter's enforce "
+            + "mode; do not retry the same request.",
+            "If the user wants this data, they must adjust or turn off enforce "
+            + "mode in the ha-mcp settings UI (Entity Visibility tab).",
+        ],
+        context={"tool_name": tool_name, "visibility_enforced": True},
+    )
+
+
 def _raise_enforced(tool_name: str, reason: str) -> NoReturn:
     """Refuse a call with the generic enforce-mode error (never names an entity)."""
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.ENTITY_VISIBILITY_ENFORCED,
-            "Entity visibility enforce mode is active on this Home Assistant MCP "
-            f"server. {reason} No data was returned.",
-            suggestions=[
-                "The entity is restricted by the entity visibility filter's enforce "
-                + "mode; do not retry the same request.",
-                "If the user wants this data, they must adjust or turn off enforce "
-                + "mode in the ha-mcp settings UI (Entity Visibility tab).",
-            ],
-            context={"tool_name": tool_name, "visibility_enforced": True},
-        )
-    )
+    raise_tool_error(enforcement_error(tool_name, reason))
 
 
 def _conceal_as_not_found(entity_id: str) -> NoReturn:
@@ -475,6 +478,18 @@ def _unscannable_reason(name: str, args: dict[str, Any]) -> str | None:
         return _SCREENSHOT_REASON.format(name=name)
     if name == _CUSTOM_TOOL and (args.get("code") or args.get("run_saved")):
         return _SANDBOX_REASON.format(name=name)
+    if name == "ha_manage_pipeline" and args.get("action") == "process":
+        return (
+            "Conversation processing can read or act on hidden entities without "
+            "naming them in its input or response. It is unavailable while entity "
+            "visibility enforcement has active hiding rules."
+        )
+    if name == "ha_manage_radio":
+        return (
+            "Radio operations address devices, nodes, groups and networks outside "
+            "the entity visibility boundary; their access cannot be safely "
+            "constrained by scanning entity IDs."
+        )
     return None
 
 

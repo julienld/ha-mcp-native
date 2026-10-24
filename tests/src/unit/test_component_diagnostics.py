@@ -131,6 +131,14 @@ def _server_entry(
     return _entry({CONF_ENTRY_TYPE: ENTRY_TYPE_SERVER, **(data or {})}, options)
 
 
+async def test_native_manager_is_reported_running_without_a_legacy_package_override():
+    entry = _server_entry({"runtime_mode": "native", "pip_spec": "ha-mcp-dev==0.1.0"})
+    hass = FakeHass([entry], data={DATA_MANAGER: SimpleNamespace(is_running=True)})
+    result = await diag.async_get_config_entry_diagnostics(hass, entry)
+    assert result["server"]["running"] is True
+    assert result["server"]["package_override_set"] is False
+
+
 @pytest.fixture(autouse=True)
 def registry(monkeypatch: pytest.MonkeyPatch) -> RecordingIssueRegistry:
     """One registry behind both the producer and the handler.

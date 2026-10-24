@@ -718,6 +718,15 @@ def _extract_tool_from_node(
 
 def extract_tools() -> list[dict]:
     """Extract all tool metadata from source files via AST parsing."""
+    spec = importlib.util.spec_from_file_location(
+        "extract_tools_shared", Path(__file__).with_name("extract_tools_shared.py")
+    )
+    assert spec is not None and spec.loader is not None
+    shared_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shared_module)
+    shared = shared_module.SharedToolExtractor(
+        _import_source, _module_scope, _extract_tool_from_node
+    )
     tools = []
 
     for f in TOOL_FILES:
@@ -727,9 +736,12 @@ def extract_tools() -> list[dict]:
         scope = _module_scope(f)
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.AsyncFunctionDef):
+            if isinstance(node, ast.AsyncFunctionDef):
+                tool = _extract_tool_from_node(node, f.name, scope)
+            elif isinstance(node, ast.Assign | ast.Expr):
+                tool = shared.extract(node, f)
+            else:
                 continue
-            tool = _extract_tool_from_node(node, f.name, scope)
             if tool is not None:
                 tools.append(tool)
 

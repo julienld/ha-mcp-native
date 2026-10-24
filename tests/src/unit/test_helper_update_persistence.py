@@ -11,15 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ._created_helper_registry import with_resolved_registry
+
 
 @pytest.fixture
 def mock_client():
-    """Create a mock client with WebSocket support for helper updates."""
     client = MagicMock()
 
     def make_ws_responses(helper_type: str, unique_id: str = "abc123"):
-        """Build side_effect for send_websocket_message based on message type."""
-
         async def ws_handler(msg: dict) -> dict:
             msg_type = msg.get("type", "")
 
@@ -64,7 +63,7 @@ def mock_client():
 
             return {"success": True, "result": {}}
 
-        return ws_handler
+        return with_resolved_registry(ws_handler)
 
     client._make_ws_responses = make_ws_responses
     return client
@@ -101,7 +100,7 @@ class TestInputSelectUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -135,7 +134,7 @@ class TestInputSelectUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -165,7 +164,7 @@ class TestInputNumberUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -206,7 +205,7 @@ class TestInputTextUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -242,7 +241,7 @@ class TestInputBooleanUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -274,7 +273,7 @@ class TestInputDatetimeUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -308,7 +307,7 @@ class TestCounterUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -348,7 +347,7 @@ class TestTimerUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -382,7 +381,7 @@ class TestInputButtonUpdatePersistence:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -1202,7 +1201,7 @@ class TestOptionalNameOnUpdate:
         )
 
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):

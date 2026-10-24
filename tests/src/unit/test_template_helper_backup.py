@@ -201,7 +201,7 @@ async def test_restore_refuses_changed_identity_before_starting_flow(
 async def test_restore_does_not_report_success_on_readback_mismatch(
     manager, monkeypatch
 ):
-    from ha_mcp.tools import config_entry_flow
+    from ha_mcp.runtime import snapshot_flow_restore as config_entry_flow
 
     monkeypatch.setattr(
         bm,
@@ -230,7 +230,7 @@ async def test_restore_does_not_report_success_on_readback_mismatch(
 async def test_readback_transport_failure_reports_applied_but_unverified(
     manager, monkeypatch
 ):
-    from ha_mcp.tools import config_entry_flow
+    from ha_mcp.runtime import snapshot_flow_restore as config_entry_flow
 
     monkeypatch.setattr(
         bm,

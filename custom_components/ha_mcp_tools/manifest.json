@@ -2,15 +2,21 @@
     "domain": "ha_mcp_tools",
     "name": "HA-MCP Custom Component",
     "after_dependencies": [
+        "auth",
         "backup",
-        "cloud",
+        "blueprint",
+        "config",
         "energy",
         "frontend",
         "http",
         "logbook",
+        "logger",
         "lovelace",
         "network",
-        "recorder"
+        "recorder",
+        "search",
+        "tag",
+        "trace"
     ],
     "codeowners": [
         "@homeassistant-ai"

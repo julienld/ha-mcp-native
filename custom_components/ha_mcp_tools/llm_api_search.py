@@ -8,6 +8,7 @@ it with ``ha_call_tool``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -68,8 +69,15 @@ class HaMcpSearchTool(llm.Tool):
     )
     parameters = vol.Schema({vol.Optional("query"): str, vol.Optional("tools"): [str]})
 
-    def __init__(self, catalog: list[dict[str, Any]], pinned: set[str]) -> None:
+    def __init__(
+        self,
+        catalog: list[dict[str, Any]],
+        pinned: set[str],
+        *,
+        check_enabled: Callable[[], None] | None = None,
+    ) -> None:
         """Hold the exposed-catalog snapshot (name/description/schema dicts)."""
+        self._check_enabled = check_enabled
         self._catalog = catalog
         self._pinned = pinned
         declare_metadata(
@@ -97,6 +105,8 @@ class HaMcpSearchTool(llm.Tool):
         accepted as a one-item list, anything but a list of names is an
         error.
         """
+        if self._check_enabled is not None:
+            self._check_enabled()
         names = tool_input.tool_args.get("tools")
         if isinstance(names, str):
             names = [names]

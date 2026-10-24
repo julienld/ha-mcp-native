@@ -22,17 +22,9 @@ Three auth postures, chosen in the options flow:
   authorization server with a static client_id/secret, for MCP clients (Google
   Gemini Spark) that need a credential to paste rather than an HA sign-in.
 
-The forwarding handler mirrors ``mcp_proxy._handle_webhook`` exactly (hop-by-hop
-header stripping, the SSE streaming branch with anti-buffering headers, the
-content-type whitelist, ``Mcp-Session-Id`` propagation, and the 502/500 error
-mapping); the ``ha_auth`` bearer check + discovery documents mirror the add-on's
-``auth_native.py`` + the ``ha_auth`` subset of ``oauth.py``; the ``legacy``
-provider + its root ``/authorize`` + ``/token`` views live in
-:mod:`oauth_legacy`, ported from the ``legacy`` subset of the add-on's
-``oauth.py``. The six RFC 8414 / RFC 9728 discovery views below are shared by
-``ha_auth``, ``legacy``, and ``none`` (which serves a distinct auto-approve
-authorization-server document pointing at :mod:`oauth_autoapprove`'s endpoints)
-— see :func:`active_auth_mode`.
+The same discovery and authentication surface serves the native runtime and
+the explicitly selected legacy loopback relay. Native requests invoke the
+ASGI application directly on Home Assistant's event loop.
 """
 
 from __future__ import annotations
@@ -46,6 +38,7 @@ import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.webhook import async_register, async_unregister
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.util.aiohttp import MockRequest
 
@@ -65,6 +58,7 @@ from .oauth_autoapprove import (
     AutoApproveProvider,
     bind_autoapprove_views,
 )
+from .oauth_core import authorization_server_document as _authorization_server_document
 from .oauth_dcr import CFG_DCR_SIGNING_KEY, bind_dcr_view
 from .oauth_legacy import (
     OAUTH_ROUTE_OWNER_KEY,
@@ -168,40 +162,6 @@ def _build_base_url(request: web.Request) -> str:
         "X-Forwarded-Proto", getattr(request, "scheme", "https")
     )
     return f"{scheme}://{host}"
-
-
-def _authorization_server_document(base: str) -> dict[str, Any]:
-    """RFC 8414 metadata for ha_auth mode — component-owned endpoints only.
-
-    HA core is still the authorization server (the scoped /authorize 302s into
-    core's /auth/authorize and /token forwards server-side — see
-    oauth_autoapprove's ha_auth branches), but every URL a client can CACHE is
-    ours: a later auth-mode switch re-dispatches per request instead of
-    stranding the client on core paths we can never retract (#2188's
-    stickiness). ``registration_endpoint`` serves DCR-fallback brokers;
-    both CIMD-selection flags stay pinned (see
-    test_as_documents_pin_the_claude_cimd_selection_contract).
-
-    ``revocation_endpoint`` is ours for a second reason (#2248): the refresh
-    token the client holds is a signed envelope, and core's own
-    ``/auth/revoke`` answers 200 without revoking anything for a value it
-    cannot recognise. Only ha_auth mints those, so only this document
-    advertises it. The endpoint takes no client authentication, matching
-    ``token_endpoint_auth_methods_supported``.
-    """
-    return {
-        "issuer": f"{base}{OAUTH_BASE}",
-        "authorization_endpoint": f"{base}{OAUTH_BASE}/authorize",
-        "token_endpoint": f"{base}{OAUTH_BASE}/token",
-        "registration_endpoint": f"{base}{OAUTH_BASE}/register",
-        "revocation_endpoint": f"{base}{OAUTH_BASE}/revoke",
-        "revocation_endpoint_auth_methods_supported": ["none"],
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-        "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
-        "client_id_metadata_document_supported": True,
-    }
 
 
 class ResourceServer:
@@ -437,7 +397,7 @@ class _AuthorizationServerMetadataView(HomeAssistantView):
             return web.json_response(_legacy_authorization_server_document(base))
         if mode == WEBHOOK_AUTH_NONE:
             return web.json_response(_none_mode_authorization_server_document(base))
-        return web.json_response(_authorization_server_document(base))
+        return web.json_response(_authorization_server_document(base, HA_VERSION))
 
 
 class _WellKnownProtectedResourceView(HomeAssistantView):
@@ -634,6 +594,20 @@ async def _async_handle_webhook(
     auth_response = await _check_webhook_auth(request, cfg)
     if auth_response is not None:
         return auth_response
+
+    if (native := cfg.get("native_manager")) is not None:
+        response: web.StreamResponse = await native.async_handle_http(
+            request, cfg, read_only=read_only
+        )
+        return response
+
+    return await _relay_legacy_request(request, cfg, read_only=read_only)
+
+
+async def _relay_legacy_request(
+    request: web.Request, cfg: dict[str, Any], *, read_only: bool
+) -> web.StreamResponse:
+    """Keep the explicitly selected legacy runtime's HTTP forwarding contract."""
 
     target_url: str = (
         readonly_url(cfg["target_url"]) if read_only else cfg["target_url"]
@@ -834,6 +808,7 @@ async def async_register_webhook(
     oauth_client_secret: str | None = None,
     oauth_signing_key: str | None = None,
     dcr_signing_key: str | None = None,
+    native_manager: Any = None,
 ) -> bool:
     """Register the ingress webhook (and, for ha_auth/legacy, the OAuth surface).
 
@@ -875,9 +850,13 @@ async def async_register_webhook(
     # Runs before the session opens so a raise here cannot leak it.
     _unregister_webhook(hass, webhook_id)
     target_url = f"http://127.0.0.1:{port}{secret_path}"
-    session = aiohttp.ClientSession(
-        timeout=_CLIENT_TIMEOUT,
-        connector=aiohttp.TCPConnector(keepalive_timeout=_RELAY_KEEPALIVE_SECONDS),
+    session = (
+        None
+        if native_manager is not None
+        else aiohttp.ClientSession(
+            timeout=_CLIENT_TIMEOUT,
+            connector=aiohttp.TCPConnector(keepalive_timeout=_RELAY_KEEPALIVE_SECONDS),
+        )
     )
     cimd_session: aiohttp.ClientSession | None = None
     if register_endpoint and auth_mode == WEBHOOK_AUTH_HA:
@@ -888,13 +867,14 @@ async def async_register_webhook(
         except Exception:
             # Creating the isolated pool is part of fail-closed ha_auth setup.
             # Do not leak the already-open relay session if it fails.
-            await session.close()
+            await _close_optional_session(session)
             raise
 
     cfg: dict[str, Any] = {
         "webhook_id": webhook_id,
         "target_url": target_url,
         "session": session,
+        "native_manager": native_manager,
         CFG_CIMD_SESSION: cimd_session,
         "auth_mode": auth_mode,
         "resource_server": None,
@@ -932,7 +912,7 @@ async def async_register_webhook(
             with suppress(Exception):
                 _unregister_webhook(hass, webhook_id)
             with suppress(Exception):
-                await session.close()
+                await _close_optional_session(session)
             if cimd_session is not None:
                 with suppress(Exception):
                     await cimd_session.close()
@@ -951,6 +931,11 @@ async def async_register_webhook(
 
     hass.data.setdefault(DOMAIN, {})[DATA_WEBHOOK] = cfg
     return oauth_restart_needed
+
+
+async def _close_optional_session(session: aiohttp.ClientSession | None) -> None:
+    if session is not None:
+        await session.close()
 
 
 async def async_unregister_webhook(hass: HomeAssistant) -> None:

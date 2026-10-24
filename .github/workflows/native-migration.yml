@@ -1,0 +1,164 @@
+name: Native migration
+
+on:
+  push:
+    branches: [feat/native-hacs]
+    paths:
+      - 'src/**'
+      - 'custom_components/**'
+      - 'tests/**'
+      - 'scripts/native_*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/native-migration.yml'
+  workflow_dispatch:
+    inputs:
+      published_tag:
+        description: 'Existing public native release tag to qualify from its unchanged manifest URL'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-migration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    if: ${{ !inputs.published_tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.0"
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked project and browser test dependencies
+        run: |
+          uv sync --frozen --group dev
+          npm ci --prefix tests/js
+      - name: Run complete unit suite
+        working-directory: tests
+        run: uv run --frozen pytest src/unit/ -n 2 --tb=short -q --maxfail=0 --junitxml=unit-results.xml
+      - name: Preserve unit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-unit-results
+          path: tests/unit-results.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package:
+    name: Native installation (HA ${{ matrix.core }}, ${{ matrix.os }})
+    if: ${{ !inputs.published_tag }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ['2026.8.0', '2026.9.4', '2026.10.3']
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ matrix.core }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.0"
+          python-version: '3.14'
+      - name: Build matching integration and library
+        env:
+          NATIVE_VERSION: 9.0.0.dev${{ github.run_number }}
+          NATIVE_TAG: native-ci-${{ github.run_id }}
+        run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG" --github "$GITHUB_REPOSITORY"
+      - name: Qualify dependencies and imports on minimal Core
+        run: |
+          mkdir -p tests/native/out
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint python "$HA_IMAGE_GHCR" -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
+      - name: Validate library against Home Assistant constraints
+        run: docker build --build-arg "HA_IMAGE=$HA_IMAGE_GHCR" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+      - name: Exercise candidate on the real HA HTTP server
+        run: uv run -s tests/native/run_container.py
+      - name: Reject Core deprecations and blocking calls attributed to HA-MCP
+        run: uv run -s scripts/native_core_warnings.py tests/native/out/ha.log --output tests/native/out/core-warnings.json
+      - name: Preserve sanitized native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-container-evidence-HA${{ matrix.core }}-${{ runner.arch }}
+          path: |
+            tests/native/out/evidence.json
+            tests/native/out/candidate-install.json
+            tests/native/out/minimal-install.json
+            tests/native/out/minimal-install.log
+            tests/native/out/ha.log
+            tests/native/out/core-warnings.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Preserve HACS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-hacs-candidate-HA${{ matrix.core }}-${{ runner.arch }}
+          path: dist/native/
+          retention-days: 14
+      - name: Stop disposable HA
+        if: always()
+        run: docker rm -f ha-mcp-native-migration 2>/dev/null || true
+
+  published:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.published_tag != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+      PUBLISHED_TAG: ${{ inputs.published_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.0"
+          python-version: '3.14'
+      - name: Verify publicly available assets against this checkout
+        run: uv run --locked -s scripts/native_published_assets.py fetch --tag "$PUBLISHED_TAG" --repository "$GITHUB_REPOSITORY"
+      - name: Build Core without preinstalling the published wheel
+        run: docker build --target published --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)" --build-arg "RELEASE_REPOSITORY=$GITHUB_REPOSITORY" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+      - name: Exercise managed installation and the complete existing Core bench
+        run: uv run -s tests/native/run_container.py --published-tag "$PUBLISHED_TAG"
+      - name: Preserve published-install qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-published-container-evidence
+          path: |
+            tests/native/out/evidence.json
+            tests/native/out/published-install.json
+            tests/native/out/ha.log
+            dist/native/native-build.json
+            dist/native/published-verification.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stop disposable HA
+        if: always()
+        run: docker rm -f ha-mcp-native-migration 2>/dev/null || true

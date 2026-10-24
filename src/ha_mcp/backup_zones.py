@@ -16,9 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .backup_entity_ids import _manager, restore_registry_icon, with_registry_icon
+from .backup_entity_ids import _manager, with_registry_icon
 from .backup_helper_target import stored_target
-from .client.rest_client import HomeAssistantCommandError
 
 
 async def fetch_zone(client: Any, zone_id: str) -> Any:
@@ -39,69 +38,29 @@ async def fetch_zone(client: Any, zone_id: str) -> Any:
 
 
 async def _recreate(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """Create the removed zone again, unless an earlier restore already did.
+    from .backends.remote_snapshot_storage import RemoteStoredRestorePorts
+    from .runtime.snapshot_storage_restore import recreate_zone
 
-    Core takes a created zone's id from the slug of its name. When that is the
-    snapshot's id, a zone an earlier restore created has it, and a repeated
-    restore is a plain ``zone/update`` that never gets here. When it is not
-    (a zone renamed since it was created, or one created with a suffix), this
-    restore's update fails too: a stored zone whose stored fields all equal the
-    snapshot's is taken for the zone the earlier restore created and left as
-    it is; Core allows identical zones, so ``restore_zone`` names it in a
-    warning. Any other zone, even one with the same name, is not touched.
-    """
-    bm = _manager()
-    fields = {k: v for k, v in payload.items() if k not in ("type", "zone_id")}
-    zones = bm._require_list(
-        await bm._ws_send(client, {"type": "zone/list"}), "zone/list"
+    return await recreate_zone(
+        RemoteStoredRestorePorts(client, "zone"),
+        {
+            key: value
+            for key, value in payload.items()
+            if key not in ("type", "zone_id")
+        },
     )
-    restored = next((z for z in zones if bm._strip_readonly(z, "id") == fields), None)
-    if restored is not None:
-        return {**restored, "restore_mode": "already_recreated"}
-    created = await bm._ws_send(client, {**fields, "type": "zone/create"})
-    return {**created, "restore_mode": "recreated"}
 
 
 async def restore_zone(client: Any, zone_id: str, payload: dict[str, Any]) -> Any:
-    """``zone/update``, or a recreate when the zone was removed; then the
-    registry icon the snapshot recorded. A snapshot without a ``registry_icon``
-    key leaves the registry alone; a recorded ``None`` clears it. A repeated
-    restore updates the zone again when the earlier one recreated it under the
-    snapshot's id. Under another id (see ``_recreate``) that zone is left as it
-    is, registry icon included, since it may be another, identical zone. A
-    zone created since the removal can hold the freed id; the update then
-    writes it, after the restore's safety backup of it.
-    """
-    bm = _manager()
-    recorded = "registry_icon" in payload
-    registry_icon = payload.pop("registry_icon", None)
-    try:
-        result = await bm._ws_send(client, dict(payload))
-    except HomeAssistantCommandError as err:
-        if err.code != "not_found":
-            raise
-        result = await _recreate(client, payload)
-        zone_id = result.get("id", zone_id)
-    if result.get("restore_mode") == "already_recreated":
-        warning = (
-            f"Zone {zone_id} matches every stored field of the snapshot, so it was "
-            "taken for the zone an earlier restore of this snapshot created and "
-            "left unchanged, its registry icon included. Core allows identical "
-            f"zones: if {zone_id} is a different zone, the removed zone was not "
-            "created again."
-        )
-        if registry_icon is not None:
-            warning += (
-                f" The snapshot's registry icon is {registry_icon}; set it with "
-                "ha_set_entity if the earlier restore could not."
-            )
-        return {**result, "warnings": [warning]}
-    warnings: list[str] = []
-    if result.get("icon") != payload.get("icon"):
-        warnings.append(
-            f"The zone keeps its stored icon {result.get('icon')}: Core's zone "
-            "update cannot remove an icon stored after the snapshot."
-        )
-    if recorded:
-        warnings += await restore_registry_icon(client, "zone", zone_id, registry_icon)
-    return {**result, "warnings": warnings} if warnings else result
+    from .backends.remote_snapshot_storage import RemoteStoredRestorePorts
+    from .runtime.snapshot_storage_restore import restore_zone as restore
+
+    return await restore(
+        RemoteStoredRestorePorts(client, "zone"),
+        zone_id,
+        {
+            key: value
+            for key, value in payload.items()
+            if key not in ("type", "zone_id")
+        },
+    )

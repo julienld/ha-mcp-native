@@ -121,7 +121,7 @@ class TestInputTextFields:
         """Core's input_text STORAGE_FIELDS carry both keys."""
         _wire_default_ws(mock_client, "input_text")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -236,7 +236,7 @@ class TestAllowedParamsControl:
     async def test_input_boolean_with_initial_only(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_boolean")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -250,7 +250,7 @@ class TestAllowedParamsControl:
     async def test_input_number_full_typed_set(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_number")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -269,7 +269,7 @@ class TestAllowedParamsControl:
     async def test_input_select_options_initial(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_select")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -285,7 +285,7 @@ class TestAllowedParamsControl:
         """input_button accepts icon (common) and the universal name/area_id/labels."""
         _wire_default_ws(mock_client, "input_button")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -299,7 +299,7 @@ class TestAllowedParamsControl:
     async def test_person_with_typed_set_no_icon(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "person")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -315,7 +315,7 @@ class TestAllowedParamsControl:
     async def test_tag_with_typed_set_no_icon(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "tag")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):

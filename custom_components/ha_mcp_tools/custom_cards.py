@@ -24,6 +24,7 @@ import re
 import tarfile
 import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
@@ -652,7 +653,10 @@ def _resource_files(config_dir: Path, items: list[dict[str, Any]]) -> dict[Path,
 
 
 async def async_get_custom_cards(
-    hass: HomeAssistant, timeout: float | None = None
+    hass: HomeAssistant,
+    timeout: float | None = None,
+    *,
+    resource_items: list[dict[str, Any]] | None = None,
 ) -> CustomCards | None:
     """Current resources, retaining published metadata during a slow refresh.
 
@@ -661,7 +665,10 @@ async def async_get_custom_cards(
     global _refresh_task
     if _refresh_task is None or _refresh_task.done():
         _refresh_task = hass.async_create_background_task(
-            _async_refresh(hass), "ha_mcp_tools custom cards"
+            _async_refresh(hass, resource_items=deepcopy(resource_items))
+            if resource_items is not None
+            else _async_refresh(hass),
+            "ha_mcp_tools custom cards",
         )
     try:
         return await asyncio.wait_for(asyncio.shield(_refresh_task), timeout)
@@ -669,11 +676,19 @@ async def async_get_custom_cards(
         return _custom
 
 
-async def _async_refresh(hass: HomeAssistant) -> CustomCards | None:
+async def _async_refresh(
+    hass: HomeAssistant, *, resource_items: list[dict[str, Any]] | None = None
+) -> CustomCards | None:
     global _custom, _resource_error
     async with _REFRESH_LOCK:
         try:
-            files = await _async_resource_files(hass)
+            files = (
+                await hass.async_add_executor_job(
+                    _resource_files, Path(hass.config.config_dir), resource_items
+                )
+                if resource_items is not None
+                else await _async_resource_files(hass)
+            )
             _resource_error = None
             if _custom is None or (files and not _custom._dom):
                 dom = await _async_dom(hass) if files else ""

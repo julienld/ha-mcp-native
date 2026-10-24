@@ -1,0 +1,218 @@
+{
+  "format_version": 1,
+  "baseline_revision": "2dc504fd97d8416f87b6ea7f2fd8ce0332615956",
+  "scope": "migration preservation targets; not implementation evidence",
+  "integration": {
+    "domain": "ha_mcp_tools",
+    "entry_type_key": "entry_type",
+    "entry_types": ["tools", "server"],
+    "missing_entry_type": "tools",
+    "unique_ids": {"tools": "ha_mcp_tools", "server": "ha_mcp_tools-server"},
+    "preserve_entry_ids": true,
+    "shared_commands_both_entries": true,
+    "privileged_services_tools_entry_only": true
+  },
+  "llm": {
+    "full_api_id": "ha_mcp_tools-{entry_id}",
+    "toolsearch_api_id": "ha_mcp_tools-{entry_id}-toolsearch",
+    "exposure_values": ["full", "tool_search", "both"],
+    "own_api_import": "refuse to prevent recursion",
+    "anonymous_admin": false
+  },
+  "http": {
+    "mcp": "/api/webhook/{webhook_id}",
+    "readonly_mcp": "/api/webhook/{webhook_id}/readonly",
+    "protected_resource_metadata": "/.well-known/oauth-protected-resource/api/webhook/{webhook_id}",
+    "readonly_protected_resource_metadata": "/.well-known/oauth-protected-resource/api/webhook/{webhook_id}/readonly",
+    "authorization_server_metadata": "/api/ha_mcp_tools/oauth/authorization-server",
+    "authorize": "/api/ha_mcp_tools/oauth/authorize",
+    "token": "/api/ha_mcp_tools/oauth/token",
+    "revoke": "/api/ha_mcp_tools/oauth/revoke",
+    "register": "/api/ha_mcp_tools/oauth/register",
+    "legacy_root_aliases": ["/authorize", "/token"],
+    "fixed_metadata_publishing_webhook_id": false,
+    "preserve_cloudhook_registration": true
+  },
+  "authentication": {
+    "modes": ["none", "ha_auth", "legacy"],
+    "preserve_persisted_data_keys": ["webhook_id", "secret_path", "oauth_client_id", "oauth_client_secret", "oauth_signing_key", "dcr_signing_key", "server_user_id", "refresh_token_id", "admin_token", "issued_token_id"],
+    "preserve_redirect_allowlist_option": "oauth_redirect_allowlist",
+    "core_refresh_envelope_prefix": "hamcp-rt-",
+    "none": "webhook URL is the sole credential; OAuth compatibility bearers are cosmetic",
+    "ha_auth": "Core-issued Bearer, active human administrator; Core refresh/revocation remains authoritative",
+    "legacy": "persisted static client credential and signing key; administrator-equivalent single tenant",
+    "native_execution": "no internally generated access token required; revalidate principal/owner and authorize explicitly"
+  },
+  "generated_ids": {
+    "automation_create_native": "opaque UUID-derived storage ID",
+    "automation_create_remote": "historical millisecond-derived storage ID",
+    "preserve_existing_ids": true,
+    "client_contract": "Reuse the returned unique_id/entity_id; generated formats are not interchangeable algorithms."
+  },
+  "retired_tool_aliases": {
+    "ha_get_addon": "ha_get_app",
+    "ha_manage_addon": "ha_manage_app",
+    "ha_get_blueprint": "ha_manage_blueprints",
+    "ha_import_blueprint": "ha_manage_blueprints"
+  },
+  "entity_edit_history": {
+    "legacy_state_domain": "entity",
+    "registry_domain": "entity_registry",
+    "registry_key": "Core registry entry UUID (config.id), independent of entity_id renames",
+    "preserve_legacy_state_snapshots": true,
+    "registry_restore": "existing identity only; restore user registry fields and options through Core owners, never synthetic state writes",
+    "legacy_exposure_domain": "entity_exposure",
+    "legacy_exposure_restore": "state-only entities retain exact Core exposure preferences, including absent preferences versus explicit false; a new registry registration causes a conflict",
+    "legacy_state_restore": "only state and attributes through the actual StateMachine, with a fresh actor Context; may create a temporary state, trigger automations and be replaced by its provider; does not restore a registration or physical device",
+    "safety_compare": "typed before-image captured before awaits; restore must refuse a change after that same safety image",
+    "missing_registration": "explicit unsupported recreation; restoring history does not recreate an integration-owned entity"
+  },
+  "native_annotation_overrides": {
+    "ha_config_get_dashboard": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Describing a custom card or listing card types can initialize the actual Core resource owner and migrate resources on first inspection. include_screenshot requires write admission because the renderer may persist its user's profile. Native argument policy permits ordinary config/list/search reads and subsequent inspection of loaded resources in read-only mode. The original openWorldHint=true and the standalone annotations remain unchanged."
+    },
+    "ha_get_dashboard_screenshot": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "The renderer may persist its user's profile even without explicit theme arguments. Every native render requires write admission, with a final check before each HTTP request; native execution never retries a failed capture and stops queued viewports after uncertainty. Standalone annotations remain unchanged."
+    },
+    "ha_config_list_dashboard_resources": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "The first Core resource-storage read can migrate and persist dashboard/resource data. Native list discovery discloses that effect and requires write admission while the collection is not loaded; subsequent loaded reads and YAML mode remain read-only. The standalone catalog retains its original annotations."
+    },
+    "ha_get_integration": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Options/subentry schema inspection and password-field redaction initialize actual Core flows, which can mutate immediately. Native argument policy permits persisted metadata/options reads without flows when redaction is disabled. Native parameter descriptions disclose these effects instead of claiming subentry introspection cannot create anything; legacy signatures and metadata remain unchanged."
+    },
+    "ha_config_list_helpers": {
+      "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false},
+      "reason": "Describing a flow-backed helper can call Core async_init, which may immediately create a config entry. Native discovery must disclose that effect; argument-specific policy still permits storage listing/description in read-only mode. The standalone catalog remains unchanged."
+    }
+  },
+  "native_trace_diagnostics": {
+    "script_off": "idle, not disabled",
+    "trace_storage_enabled": "derived from the actual Core owner's _trace_config; null when unavailable",
+    "legacy_diagnostics": "unchanged; these native corrections do not alter tool signatures or safety annotations"
+  },
+  "native_health_diagnostics": {
+    "component_count": "number of loaded component domains, rather than character count of their serialized list",
+    "system_health_probes": "resolve actual Core observations with bounded waiting and owned executor drain; never cancel a shared Core probe Future",
+    "independent_sections": "baseline_available=false when Core system_health is absent; independently available sections remain usable",
+    "update_source": "omit optional ha_mcp_update without authoritative Core/HACS information; PyPI/Supervisor package versions do not establish custom-component or fork updates",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_updates": {
+    "owner": "published UpdateEntity/EntityComponent, original Core update services, and IssueRegistry.async_ignore",
+    "reads": "list/get retain public presentation and add complete provider attributes; provider release notes are read directly and public GitHub enrichment remains best effort",
+    "classification": "actual Supervisor Core/OS/Supervisor entity classes remain protected from category batches even after entity renames",
+    "self_affecting": "Core/OS installs are scheduled and revalidated before a clean-context handoff to Core; remaining batch targets are not dispatched and the reply does not confirm installation completion",
+    "uncertainty": "post-dispatch exceptions, provider cancellation and unverifiable skipped-version readback are outcome_unknown; no replay and no remaining-target dispatch",
+    "update_source": "no PyPI sidecar status is presented as the native HACS component's update authority",
+    "qualification": "unit owners and cold import are exercised; the Container fixture uses real UpdateEntity and Repairs APIs, while actual Supervisor/OS updates are not qualified",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged; prose discloses native scheduling and optional self-update information"
+  },
+  "native_pipelines": {
+    "owner": "published Core Assist pipeline collection and conversation manager/agent",
+    "process": "text conversation with the selected agent, not a complete STT/TTS run",
+    "locking": "release configuration mutex before conversation; retain admission/pins inside the owned worker so an agent can call configuration tools without waiting on its caller's mutex",
+    "visibility": "refuse opaque process while hiding rules are enforced; listing and decluttering retain their behavior",
+    "preferred": "use the listed Core pipeline ID; the historical preferred literal was never a Core alias",
+    "intent_failure": "actions may already have occurred; inspect before repeating",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_themes": {
+    "owner": "actual Core Frontend library/services and engine user's UserStore",
+    "read": "cached loaded store only; never trigger storage initialization or cancel its shared Future",
+    "write": "validate before admitted potentially migrating load; pin user/store/schema, compare typed before-image and drain owned I/O",
+    "identity": "only locally validated effective renderer app token; never substitute caller/server credentials or create a token",
+    "qualification": "Container proves actual theme defaults and absent renderer refusal; real Supervisor/Puppet discovery and engine account are not qualified",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_system_actions": {
+    "self_affecting": "restart/self-reload are scheduled requests, not completed restart/reload promises",
+    "handoff": "revalidate actor, credential, unchanged policy and target, then original Core job with a fresh actor Context and cleared MCP admission context",
+    "shutdown": "cancel pending handoffs before draining Engine; handed-off Core work cannot wait on its own manager",
+    "ordinary_reload": "await Core result and retain partial/unknown outcomes; no transport polling",
+    "qualification": "actual script, config-entry and self reloads; full process restart is not established by this Container bench",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_energy": {
+    "owner": "published Core EnergyManager, installed validator and original source normalizer",
+    "not_ready": "temporary unavailable result for an absent manager or its shared loading Future; never initiate storage load or migration from a read",
+    "normalization": "detached expected and writer payload copies; compare typed Core data after callbacks",
+    "dispatch": "one native save attempt, no rebase or replay after an uncertain outcome",
+    "post_save_race": "withhold config/hash/validation if authority, owner or preferences change during semantic validation; retain write_completed=true, operation_outcome=confirmed and requires_reread=true",
+    "public_contract": "original schemas, coercion and safety annotations remain unchanged"
+  },
+  "native_bulk_operations": {
+    "operation_ids": "device-* IDs are scoped to the invoking user, client and manager; Engine invocation IDs remain distinct",
+    "repeated_target": "serialized per target with its own before-image, confirmation and overlap warning",
+    "after_effect_failure": "partial results and outcome_unknown are preserved; remaining queued targets are not dispatched",
+    "dry_run": "selector preview is read-only according to arguments",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_groups": {
+    "owner": "original Core Group, installed service validators and EntityComponent",
+    "snapshot_fields": ["object_id", "name", "entities", "icon", "all"],
+    "older_snapshot_mode": "preserve the current mode, or Core default during recreation, with an explicit warning",
+    "nullable_icon": "restore null through the original Core setter",
+    "persistence": "runtime only; YAML and startup configuration remain authoritative after reload or restart",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_blueprints": {
+    "snapshots": "installed raw YAML text",
+    "restoration": "Core Blueprint.yaml() normalizes YAML and may remove comments, as in the legacy path",
+    "external_file_writers": "optimistic preflight only; Core has no atomic compare-and-write against simultaneous external edits",
+    "reads": "list, get and substitute are classified as reads by arguments",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_search": {
+    "execution": "detached full Core candidates; visibility and secret filtering precede matching, scores, totals and pagination in an owned worker",
+    "config_bodies": "emit only registered Core config-view reads; loaded YAML stays searchable but its body is withheld even when it has a unique_id",
+    "yaml_dashboards": "match through the actual Core owner; emit metadata, never config or body-derived titles",
+    "scrub_unavailable": "omit all config search and reference graph results with a partial-result reason",
+    "budgets": "config_time_budget scopes automation/script/scene; dashboards retain the HA-scoped individual_config_timeout",
+    "public_contract": "original schemas and safety annotations remain unchanged"
+  },
+  "native_apps": {
+    "owner": "Core HassIO, SupervisorClient and the registered HassIOIngress URL/session owner",
+    "writes": "Every ha_manage_app mode requires write admission, including opaque HTTP GET. Native hidden-entity enforcement refuses this tool; ha_get_app remains a read.",
+    "transport": "Named Supervisor methods and actor-attributed ingress sessions. HTTP borrows Core's session with a per-call no-retry middleware. WebSocket uses the existing library in single-attempt mode and refuses handshake redirects. No Home Assistant connection or transport fallback is introduced.",
+    "configuration": "Supervisor validates options; its model serializes the request. Native does not discard options by treating UI schema fields as authoritative. An optimistic before-image check and an explicit readback result replace claims of atomic update.",
+    "array_patch": "One GET and one POST, serialized among our calls, without a conditional-write guarantee against other app clients. The before-image is detached before shared array edits.",
+    "qualification": "Local real HTTP/WebSocket tests prove single request/command, dropped response and redirect refusal. Core Container proves explicit Supervisor absence; actual HAOS app management remains unqualified."
+  },
+  "native_backups": {
+    "archives": "Core's published backup manager creates and deletes the configured local archives. Creation waits for Core completion and correlates a unique metadata nonce rather than a name or timestamp.",
+    "restore": "A complete safety archive including the database is mandatory. The target, manager, reader/writer, agent and protection remain pinned through safety capture and deferred Core handoff. The reply confirms scheduling only, with restore_completed=false.",
+    "edits": "Existing snapshot store, domain readers and native restore coordinator. Canonical storage keys survive renamed script entities. Integration snapshots restore only an existing entry's enabled state, never credentials or connection options.",
+    "guards": "Newest/manual/age/confirmation controls and human-only deletion settings remain enforced. An incomplete inventory refuses deletion. Full restore is refused under hidden-entity enforcement; edit content and actual target identities are checked.",
+    "concurrency": "Preflight comparisons are optimistic; Core agents and external filesystem writers do not share an atomic lock with HA-MCP. No uncertain mutation is retried.",
+    "qualification": "Container exercises genuine local archives and edit captures. Full installation restore and HAOS/Supervisor reader/writer are not live qualified."
+  },
+  "native_administration": {
+    "developer": "Entry-scoped native configuration only. Shared validators and locked patch producers preserve neighbouring settings and tool overrides. Human-only approval and backup controls remain UI/environment-only.",
+    "source_update": "Native update_source refuses before dispatch; install integration updates through HACS, never pip inside the shared Core process.",
+    "policy": "Canonical document validation, version comparison and explicit approval-queue decisions. Remembered decisions are invalidated after policy changes. Policy reads do not perform hidden migrations; startup owns initial migration.",
+    "reports": "Bounded Engine operation history and Core error-log observations; absent timestamps, startup collection and client identity remain explicit. Reports are returned for review and never published.",
+    "partial_persistence": "Confirmed files or a committed policy remain identified when later persistence, live refresh or authority checks fail. Inspect current state before retrying.",
+    "public_contract": "Original public arguments, coercion and safety annotations are retained; native source-update and diagnostic limits are disclosed."
+  },
+  "conditional_surfaces": [
+    {"name": "ha_get_skill_guide", "owner": "src/ha_mcp/server.py", "kind": "always registered server tool; unavailable is an explicit error"},
+    {"name": "ha_search_tools", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search metatool"},
+    {"name": "ha_call_read_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search read proxy"},
+    {"name": "ha_call_write_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search write proxy"},
+    {"name": "ha_call_delete_tool", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "tool-search delete proxy"},
+    {"name": "skill://...", "owner": "src/ha_mcp/server.py", "kind": "bundled SkillsDirectoryProvider resources and supporting files"},
+    {"name": "FastMCP code-mode transforms", "owner": "src/ha_mcp/transforms/categorized_search.py", "kind": "conditional discovery/execution transform"}
+  ],
+  "explicit_exceptions": [
+    {"surface": "automatic restore of a missing calendar UID", "native_compatibility": "Core exposes bounded occurrences, not authoritative UID absence. Restore updates a located occurrence; an unlocated UID returns calendar_identity_unavailable and saved manual creation arguments. No recreation follows an empty query or a failed provider update."},
+    {"surface": "direct server_port/secret_path URL", "native_compatibility": "requires client URL migration when HA listens on another port; cannot retain exact URL with HA as the sole HTTP listener"},
+    {"surface": "enable_webhook=False", "native_compatibility": "must not silently enable public webhook; preserve legacy runtime or migrate to an explicitly local/authenticated HA route"},
+    {"surface": "ha_call_service.ws_command", "native_compatibility": "Every non-null ws_command is unsupported before Home Assistant command dispatch, including commands with dedicated native tools. No semantic map is implemented. Native MCP/Assist discovery disclose the limitation; remote backend retains transport capability. A future bounded map requires a separate compatibility decision."},
+    {"surface": "ha_manage_custom_tool api_get/api_post/ws_send", "native_compatibility": "callable saved-script ABI names return UNSUPPORTED_OPERATION before Home Assistant I/O; saved source is preserved; call_tool invokes the native Engine with current actor, tool policy and visibility. No REST/WebSocket emulation or semantic-map fallback is provided."},
+    {"surface": "caller attribution", "native_compatibility": "Core Context identifies the native actor rather than necessarily the historical server account; explicit authorization remains required"}
+  ]
+}

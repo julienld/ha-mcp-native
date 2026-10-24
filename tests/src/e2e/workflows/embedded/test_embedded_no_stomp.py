@@ -41,6 +41,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from qualification_artifacts import native_runtime_selected
 from test_constants import HA_TEST_IMAGE
 
 from ..._conftest_embedded import (
@@ -308,14 +309,67 @@ def test_embedded_runtime_install_replaces_nothing_ha_governs(
         f"expected exactly one in-process server config entry, got "
         f"{len(server_entries)} — the conftest seeding changed"
     )
-    assert server_entries[0]["data"].get(DATA_LAST_PIP_SPEC), (
-        "the component's force-install never ran (no last_pip_spec recorded "
-        "on the server config entry), so this guard exercised no runtime "
-        "install — if bring-up now takes the fast path by design, this test "
-        "needs a new way to reach the install path rather than being allowed "
-        "to pass vacuously"
-    )
+    if native_runtime_selected():
+        _assert_native_managed_install(info, before, runtime)
+    else:
+        assert server_entries[0]["data"].get(DATA_LAST_PIP_SPEC), (
+            "the component's force-install never ran (no last_pip_spec recorded "
+            "on the server config entry), so this guard exercised no runtime "
+            "install — if bring-up now takes the fast path by design, this test "
+            "needs a new way to reach the install path rather than being allowed "
+            "to pass vacuously"
+        )
 
     _assert_no_governed_changes(
         before, runtime, _governed_names(config_path), context="runtime install"
     )
+
+
+def _assert_native_managed_install(
+    info, before: dict[str, str], runtime: dict[str, str]
+) -> None:
+    """Native has no legacy force-install marker: prove its cold Core install."""
+    assert not ({"ha-mcp", "ha-mcp-dev"} & before.keys()), (
+        "Native qualification must begin without any preinstalled HA-MCP distribution"
+    )
+    config = Path(info["config_path"])
+    build = json.loads((config / "native-build.json").read_text(encoding="utf-8"))
+    version = build["library_version"]
+    assert runtime["ha-mcp"] == version
+    wheel = f"ha_mcp-{version}-py3-none-any.whl"
+    digest = build["files"][wheel]
+    # uv retains the fragment for file URLs (unlike the published HTTPS
+    # receipt). Verify the staged manifest and pass its exact URL through.
+    wheel_url = f"file:///config/{wheel}#sha256={digest}"
+    manifest = json.loads(
+        (config / "custom_components/ha_mcp_tools/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["requirements"].count("ha-mcp @ " + wheel_url) == 1, (
+        "Native manifest does not declare the exact paired local wheel and hash"
+    )
+    expected = {
+        "wheel_url": wheel_url,
+        "wheel_sha256": digest,
+    }
+    # Reuse the published-install receipt verifier. Besides PEP 610 provenance,
+    # it checks installed payload hashes if uv omitted the archive hash.
+    verifier = (
+        _REPO_ROOT / "tests/native/fixtures/native_fixture/dependency_receipt.py"
+    ).read_text(encoding="utf-8")
+    script = (
+        verifier
+        + "\nprint(json.dumps(wheel_receipt("
+        + repr(expected)
+        + ", index_path=Path('/config/custom_components/ha_mcp_tools/native-wheel.json'))))\n"
+    )
+    result = (
+        info["container"].get_wrapped_container().exec_run(["python3", "-c", script])
+    )
+    output = (result.output or b"").decode("utf-8", "replace")
+    assert result.exit_code == 0, (
+        f"Native installed-wheel provenance failed: {output[-2000:]}"
+    )
+    receipt = json.loads(output.strip().splitlines()[-1])
+    assert receipt["version"] == version and receipt["url"] == expected["wheel_url"]

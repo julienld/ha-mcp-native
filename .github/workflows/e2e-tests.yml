@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, qualify/upstream-main ]
     paths:
       # Only run on code changes, not documentation
       - 'src/**'

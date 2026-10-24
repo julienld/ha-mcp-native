@@ -941,9 +941,8 @@ async def test_unknown_command_invalidates_and_falls_back() -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_error_falls_back_to_legacy() -> None:
-    """A non-unknown command-ERROR response (pre-dispatch / mutate-then-raise
-    residual) → exactly one legacy POST."""
+async def test_command_error_is_ambiguous_and_never_reposts() -> None:
+    """Core can mutate then raise: a generic command error cannot justify replay."""
     ws = make_ws(
         "ha_mcp_tools/call_service",
         info_result=_CAPS_CALL,
@@ -958,7 +957,8 @@ async def test_command_error_falls_back_to_legacy() -> None:
         )
 
     assert resp["success"] is True
-    assert len(client.call_service_calls) == 1
+    assert resp["partial"] is True
+    assert client.call_service_calls == []
 
 
 @pytest.mark.asyncio

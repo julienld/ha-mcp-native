@@ -2,8 +2,9 @@
 
 Proves the whole install method for real, in a throwaway Home Assistant Core
 container: the in-process MCP server entry is installed, its config entry is seeded
-(with a locally-built ha-mcp wheel as the pip spec), HA schedules the background
-bring-up which runtime-installs the server package, starts the FastMCP server on
+(with a locally-built ha-mcp wheel as its manifest requirement and pip spec).
+Core installs that library before importing the component, then HA schedules the
+background bring-up which starts the FastMCP server on
 its worker thread, and registers the ingress webhook. The test then drives the
 real MCP protocol over ``POST /api/webhook/<id>`` — ``initialize`` → ``tools/list``
 → one read-only tool call — asserting a Streamable-HTTP response parses and the
@@ -26,11 +27,11 @@ server thread in every e2e session. It only runs on the testcontainer backend an
 is skipped when Docker is unavailable or the HAOS backend is selected.
 
 Strategy notes:
-- The pip spec is a ``file://`` URL to a wheel built from the local checkout by
+- The manifest requirement and pip spec use a ``file://`` URL to a wheel built by
   ``uv build --wheel`` and copied into the bind-mounted ``/config``; its
   DEPENDENCIES (fastmcp etc.) still resolve from PyPI under HA's constraints file
   — which is exactly the cryptography/py-version compatibility this proves.
-- First bring-up runtime-installs that dependency tree, so readiness is polled
+- Core's initial component installation resolves that dependency tree, so readiness is polled
   with a generous timeout (minutes).
 - The entry-driven pip path and every unit of the webhook / manager / flow logic
   are covered hermetically in tests/src/unit/test_{embedded_server,mcp_webhook,
@@ -56,6 +57,7 @@ from test_constants import HA_TEST_IMAGE, TEST_TOKEN
 
 from ha_mcp.hacs_auto_refresh import MARKER_FILENAME_PREFIX
 
+from ..._conftest_seed import pair_component_library
 from ...utilities.streamable_http import parse_mcp_response
 from ...utilities.wait_helpers import wait_for_condition
 
@@ -172,6 +174,7 @@ def _seed_config(config_path: Path, wheel_name: str) -> None:
     dest = config_path / "custom_components" / _DOMAIN
     dest.mkdir(parents=True, exist_ok=True)
     shutil.copytree(_INTEGRATION_SRC, dest, dirs_exist_ok=True)
+    library_requirement = pair_component_library(config_path, wheel_name)
 
     storage_file = config_path / ".storage" / "core.config_entries"
     data = json.loads(storage_file.read_text())
@@ -190,11 +193,11 @@ def _seed_config(config_path: Path, wheel_name: str) -> None:
             "discovery_keys": {},
             "domain": _DOMAIN,
             "entry_id": _ENTRY_ID,
-            "minor_version": 1,
+            "minor_version": 2,
             "modified_at": "2025-09-07T23:56:28.040747+00:00",
             "options": {
                 # file:// wheel + PyPI-resolved deps under HA's constraints file.
-                "pip_spec": f"ha-mcp @ file:///config/{wheel_name}",
+                "pip_spec": library_requirement,
                 "server_port": _SERVER_PORT,
                 "bind_host": "127.0.0.1",
                 "webhook_auth": "none",

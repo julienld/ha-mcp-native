@@ -288,7 +288,8 @@ def test_main_leaves_live_trees_untouched_when_a_download_fails(tmp_path, monkey
     vendor_dir = tmp_path / "_vendor"
     vendor_dir.mkdir()
     (vendor_dir / "requirements.txt").write_text(
-        "fastmcp-slim==9.9.9\nmcp==8.8.8\nmcp-types==8.8.8\n", encoding="utf-8"
+        "fastmcp-slim==9.9.9\nmcp==8.8.8\nmcp-types==8.8.8\nrich==15.0.0\n",
+        encoding="utf-8",
     )
     for spec in vendor.PACKAGES:
         (vendor_dir / spec.package).mkdir()
@@ -305,6 +306,14 @@ def test_main_leaves_live_trees_untouched_when_a_download_fails(tmp_path, monkey
     def download_wheel(distribution, version):
         if distribution == "mcp":
             raise SystemExit("network down")
+        if distribution == "rich":
+            return _wheel(
+                {
+                    "rich/__init__.py": "",
+                    "rich-15.0.0.dist-info/METADATA": "",
+                    "rich-15.0.0.dist-info/licenses/LICENSE": "MIT",
+                }
+            )
         return good
 
     monkeypatch.setattr(vendor, "_download_wheel", download_wheel)

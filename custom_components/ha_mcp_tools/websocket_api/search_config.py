@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -11,6 +11,7 @@ from .constants import (
     COLLECTION_HELPER_DOMAINS,
     ENTITY_COMPONENTS_KEY,
     FLOW_HELPER_DOMAINS,
+    FUZZY_THRESHOLD,
     MAX_BODY_BYTES,
     SEARCH_TYPE_SCENE,
 )
@@ -33,6 +34,11 @@ def _search_config_surface(
     partial_reasons: list[str],
     diagnostics: dict[str, int],
     secret_values: frozenset[str] = frozenset(),
+    stored_configs: dict[str, dict[str, Any]] | None = None,
+    require_storage_proof: bool = False,
+    record_visible: Callable[[dict[str, Any]], bool] | None = None,
+    record_collector: Callable[[dict[str, Any]], None] | None = None,
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> list[dict[str, Any]]:
     """Score one config domain's loaded entities (raw_config indexed, not emitted for YAML)."""
     component = hass.data.get(domain) if getattr(hass, "data", None) else None
@@ -49,7 +55,22 @@ def _search_config_surface(
         if not entity_id:
             continue
         name, item_id, config_dict = _extract_config(domain, entity)
-        source = _classify_source(item_id)
+        source = (
+            ("storage" if entity_id in stored_configs else "yaml")
+            if stored_configs is not None
+            else ("unknown" if require_storage_proof else _classify_source(item_id))
+        )
+        persisted = (
+            stored_configs.get(entity_id) if stored_configs is not None else config_dict
+        )
+        match_config = (
+            persisted
+            if domain == SEARCH_TYPE_SCENE and persisted is not None
+            else config_dict
+        )
+        candidate = {"entity_id": entity_id, "config": match_config}
+        if not _observe_candidate(candidate, record_collector, record_visible):
+            continue
 
         if match_all:
             score: int | None = 100
@@ -60,28 +81,28 @@ def _search_config_surface(
                 query_lower,
                 entity_id,
                 name,
-                config_dict,
+                match_config,
                 exact=exact,
                 secret_values=secret_values,
+                fuzzy_threshold=fuzzy_threshold,
             )
             if scored is None:
                 continue
             score, match_in_name, match_in_config = scored
 
-        # Scenes never emit a component-served body: a HomeAssistantScene holds no
-        # raw storage dict (its states are runtime State objects), so config stays
-        # None and config_dict is used only as the faithful match corpus.
+        # A live scene's State objects are not its saved body. Only a caller
+        # supplying actual config-owner reads can emit/match its persisted values.
         config_out: dict[str, Any] | None = None
         if (
-            domain != SEARCH_TYPE_SCENE
+            (domain != SEARCH_TYPE_SCENE or stored_configs is not None)
             and include_config
             and source == "storage"
-            and config_dict is not None
+            and persisted is not None
         ):
-            if _too_large(config_dict):
+            if _too_large(persisted):
                 partial_reasons.append(f"{domain} {entity_id} body omitted (too large)")
             else:
-                config_out = config_dict
+                config_out = persisted
 
         rec: dict[str, Any] = {
             "id": item_id,
@@ -258,6 +279,9 @@ def _search_helpers(
     secret_values: frozenset[str] = frozenset(),
     flow_domains: frozenset[str] = FLOW_HELPER_DOMAINS,
     custom_domains: frozenset[str] = frozenset(),
+    record_visible: Callable[[dict[str, Any]], bool] | None = None,
+    record_collector: Callable[[dict[str, Any]], None] | None = None,
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> list[dict[str, Any]]:
     """Index collection helpers (states) + flow helpers (config-entry options).
 
@@ -266,6 +290,9 @@ def _search_helpers(
     ``flow_domains._flow_helper_domains``).
     """
     results: list[dict[str, Any]] = []
+    include_body = (
+        include_config or record_visible is not None or record_collector is not None
+    )
 
     # Collection helpers: entities in the state machine, matched on entity_id /
     # friendly_name AND the searchable config body. That body is the entity's real
@@ -299,6 +326,7 @@ def _search_helpers(
                 body,
                 exact=exact,
                 secret_values=secret_values,
+                fuzzy_threshold=fuzzy_threshold,
             )
             if scored is None:
                 continue
@@ -313,7 +341,7 @@ def _search_helpers(
                 "score": score,
                 "match_in_name": match_in_name,
                 "match_in_config": match_in_config,
-                "config": body if include_config else None,
+                "config": body if include_body else None,
             }
         )
 
@@ -323,13 +351,46 @@ def _search_helpers(
             query_lower,
             match_all=match_all,
             exact=exact,
-            include_config=include_config,
+            include_config=include_body,
             secret_values=secret_values,
             flow_domains=flow_domains,
             custom_domains=custom_domains,
+            fuzzy_threshold=fuzzy_threshold,
         )
     )
-    return results
+    return _filter_helper_records(
+        results, record_visible, include_config, record_collector
+    )
+
+
+def _filter_helper_records(
+    records: list[dict[str, Any]],
+    visible: Callable[[dict[str, Any]], bool] | None,
+    include_config: bool,
+    collector: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
+    if visible is None and collector is None:
+        return records
+    selected = []
+    for record in records:
+        if not _observe_candidate(record, collector, visible):
+            continue
+        if not include_config:
+            for key in ("config", "options"):
+                if key in record:
+                    record[key] = None
+        selected.append(record)
+    return selected
+
+
+def _observe_candidate(
+    record: dict[str, Any],
+    collector: Callable[[dict[str, Any]], None] | None,
+    visible: Callable[[dict[str, Any]], bool] | None,
+) -> bool:
+    if collector is not None:
+        collector(record)
+    return visible is None or visible(record)
 
 
 def _search_flow_helpers(
@@ -342,6 +403,7 @@ def _search_flow_helpers(
     secret_values: frozenset[str],
     flow_domains: frozenset[str],
     custom_domains: frozenset[str],
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> list[dict[str, Any]]:
     """Index flow helpers: config entries, options + title ONLY, never data."""
     results: list[dict[str, Any]] = []
@@ -376,6 +438,7 @@ def _search_flow_helpers(
                 options,
                 exact=exact,
                 secret_values=secret_values,
+                fuzzy_threshold=fuzzy_threshold,
             )
             if scored is None:
                 continue

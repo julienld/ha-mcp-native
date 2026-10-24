@@ -2422,7 +2422,7 @@ class TestReloadCore:
 
     @staticmethod
     def _reloadable_count() -> int:
-        from ha_mcp.tools.tools_system import RELOAD_TARGETS
+        from ha_mcp.runtime.system_values import RELOAD_TARGETS
 
         return sum(1 for info in RELOAD_TARGETS.values() if info is not None)
 

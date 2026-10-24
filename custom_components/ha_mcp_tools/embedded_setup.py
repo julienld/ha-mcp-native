@@ -17,11 +17,12 @@ import asyncio
 import logging
 import secrets
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.components import persistent_notification
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.loader import async_get_integration
@@ -36,7 +37,6 @@ from .const import (
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
-    DEFAULT_ENABLE_LLM_API,
     DEFAULT_SERVER_PORT,
     DOMAIN,
     ISSUE_COMPONENT_OUTDATED,
@@ -45,21 +45,25 @@ from .const import (
     ISSUE_START_FAILED,
     ISSUE_TOKEN_NEEDED,
     OPT_BIND_HOST,
-    OPT_ENABLE_LLM_API,
     OPT_ENABLE_SIDEBAR_PANEL,
     OPT_ENABLE_STARTUP_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
+    OPT_RUNTIME_MODE,
     OPT_SERVER_PORT,
     OPT_WEBHOOK_AUTH,
+    RUNTIME_LEGACY,
+    RUNTIME_NATIVE,
     SERVER_UPDATES_DOCS_URL,
     WEBHOOK_AUTH_LEGACY,
     WEBHOOK_AUTH_NONE,
 )
 from .embedded_server import EmbeddedServerError, EmbeddedServerManager
 from .llm_api import async_register_llm_api, async_unregister_llm_api
+from .llm_bridge_options import export_enabled
 from .mcp_webhook import async_register_webhook, async_unregister_webhook
 from .oauth_legacy import legacy_credentials_active
+from .runtime_version import require_native_version
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -81,10 +85,9 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
     """
     _clear_issues(hass)
 
-    manager = EmbeddedServerManager(hass, entry)
-    hass.data.setdefault(DOMAIN, {})[DATA_MANAGER] = manager
-
     try:
+        manager, native = _server_manager(hass, entry)
+        hass.data.setdefault(DOMAIN, {})[DATA_MANAGER] = manager
         await manager.async_start()
 
         # The package is installed and importable now: verify the running
@@ -114,7 +117,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
         oauth_restart_needed = await async_register_webhook(
             hass,
             entry,
-            port=manager.port,
+            port=0 if native else manager.port,
             secret_path=secret_path,
             auth_mode=auth_mode,
             register_endpoint=webhook_enabled,
@@ -122,6 +125,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
             oauth_client_secret=oauth_client_secret,
             oauth_signing_key=entry.data.get(DATA_OAUTH_SIGNING_KEY),
             dcr_signing_key=entry.data.get(DATA_DCR_SIGNING_KEY),
+            native_manager=manager if native else None,
         )
         _async_update_legacy_oauth_issue(hass, oauth_restart_needed)
         if not webhook_enabled:
@@ -148,13 +152,11 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
             oauth_creds_active=oauth_creds_active,
             oauth_restart_pending=oauth_restart_needed,
         )
-        # Conversation-agent LLM API (#1745), gated on its option (default on).
+        # Conversation-agent LLM API (#1745), gated on its explicit opt-in.
         # Advisory: registration failures are contained inside (logged, feature
         # absent) — the running server must never be taken down by them.
-        if bool(entry.options.get(OPT_ENABLE_LLM_API, DEFAULT_ENABLE_LLM_API)):
-            await async_register_llm_api(
-                hass, entry, port=manager.port, secret_path=secret_path
-            )
+        if export_enabled(entry.options):
+            await _register_entry_llm(hass, entry, manager, native, secret_path)
         else:
             _LOGGER.info(
                 "Conversation-agent LLM API disabled by option - the toolset "
@@ -191,6 +193,36 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
         _create_issue(hass, entry, "start", str(err))
 
 
+def _server_manager(hass: HomeAssistant, entry: ConfigEntry) -> tuple[Any, bool]:
+    """Existing entries retain their transport until native migration is chosen."""
+    mode = entry.options.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY)
+    if mode not in (RUNTIME_NATIVE, RUNTIME_LEGACY):
+        raise ValueError("Unknown HA-MCP runtime mode")
+    if mode == RUNTIME_NATIVE:
+        require_native_version(HA_VERSION)
+        from .native_server import NativeServerManager
+
+        return NativeServerManager(hass, entry), True
+    return EmbeddedServerManager(hass, entry), False
+
+
+async def _register_entry_llm(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    manager: Any,
+    native: bool,
+    secret_path: str,
+) -> None:
+    if native:
+        from .native_llm import async_register_native_llm
+
+        await async_register_native_llm(hass, entry, manager)
+    else:
+        await async_register_llm_api(
+            hass, entry, port=manager.port, secret_path=secret_path
+        )
+
+
 async def async_teardown_server(hass: HomeAssistant) -> None:
     """Unregister the LLM API + webhook and stop the server thread (reload-safe,
     idempotent).
@@ -201,9 +233,10 @@ async def async_teardown_server(hass: HomeAssistant) -> None:
     """
     async_unregister_llm_api(hass)
     await async_unregister_webhook(hass)
-    manager = hass.data.get(DOMAIN, {}).pop(DATA_MANAGER, None)
-    if isinstance(manager, EmbeddedServerManager):
+    manager = hass.data.get(DOMAIN, {}).get(DATA_MANAGER)
+    if manager is not None:
         await manager.async_stop()
+        hass.data[DOMAIN].pop(DATA_MANAGER, None)
 
 
 async def async_revoke_credentials_on_remove(
@@ -329,20 +362,15 @@ def build_connect_urls(
         urls.append(f"{external}/api/webhook/{webhook_id}")
 
     # Nabu Casa remote URL (only when the cloud integration is set up + logged in).
-    try:
-        from homeassistant.components.cloud import (
-            CloudNotAvailable,
-            async_remote_ui_url,
-        )
+    if webhook_id and "cloud" in hass.config.components:
+        from .optional_integrations import loaded_integration_module
 
+        cloud = loaded_integration_module(hass, "cloud")
         try:
-            if webhook_id:
-                cloud_base = async_remote_ui_url(hass)
-                urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
-        except CloudNotAvailable:
+            cloud_base = cloud.async_remote_ui_url(hass)
+            urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
+        except cloud.CloudNotAvailable:
             pass  # Cloud not logged in / remote UI off - no remote URL to show.
-    except ImportError:
-        pass  # Cloud integration not installed (e.g. HA Core) - local URL only.
 
     local_base, local_host = _resolve_local_url(hass)
 
@@ -357,6 +385,8 @@ def build_connect_urls(
     if not urls and webhook_id:
         urls.append(f"/api/webhook/{webhook_id}  (prefix with your Home Assistant URL)")
 
+    if entry.options.get(OPT_RUNTIME_MODE, RUNTIME_LEGACY) == RUNTIME_NATIVE:
+        return urls
     port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
     bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
     secret_path = entry.data.get(DATA_SECRET_PATH)
@@ -559,7 +589,7 @@ def _read_min_component_version() -> str | None:
     server layouts that do not expose the constant by returning None (skip).
     """
     try:
-        from ha_mcp.tools.tools_filesystem import MIN_COMPONENT_VERSION
+        from ha_mcp.component_contract import MIN_COMPONENT_VERSION
     except (ImportError, AttributeError):
         return None
     return str(MIN_COMPONENT_VERSION)

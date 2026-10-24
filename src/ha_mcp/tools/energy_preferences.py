@@ -6,31 +6,14 @@ from typing import Any
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ..errors import ErrorCode, create_error_response
+from ..runtime.energy_values import _statistic_ids
+from ..runtime.energy_values import compute_per_key_hashes as compute_per_key_hashes
 from ..utils.config_hash import compute_config_hash
 from .core_contract import core_contract
 from .helpers import exception_to_structured_error, raise_tool_error
 from .statistics_helpers import fetch_statistics_metadata, statistics_unit
 
 logger = logging.getLogger(__name__)
-
-
-def _statistic_ids(value: Any) -> set[str]:
-    """Collect statistic references across Core's source and device structures."""
-    found: set[str] = set()
-    if isinstance(value, list):
-        for item in value:
-            found.update(_statistic_ids(item))
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            if (
-                (key.startswith("stat_") or key == "included_in_stat")
-                and isinstance(item, str)
-                and item
-            ):
-                found.add(item)
-            elif isinstance(item, (dict, list)):
-                found.update(_statistic_ids(item))
-    return found
 
 
 async def include_energy_statistics(
@@ -54,11 +37,6 @@ async def include_energy_statistics(
     if warnings:
         result.setdefault("warnings", []).extend(warnings)
     return result
-
-
-def compute_per_key_hashes(prefs: dict[str, Any]) -> dict[str, str]:
-    """Hash every native preference slot without an allowlist or invented defaults."""
-    return {key: compute_config_hash({key: value}) for key, value in prefs.items()}
 
 
 def _is_no_prefs_error(error_msg: str) -> bool:

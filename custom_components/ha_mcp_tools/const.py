@@ -25,6 +25,9 @@ DOMAIN = "ha_mcp_tools"
 # ``websocket_api.constants.CAPABILITIES``).
 COMPONENT_VERSION = "8.7.0"
 
+CONFIG_ENTRY_VERSION = 1
+CONFIG_ENTRY_MINOR_VERSION = 3
+
 # Config-entry discriminator (``entry.data[CONF_ENTRY_TYPE]``). A missing value
 # means "tools" so the pre-existing services entry keeps working across the
 # component update with no migration.
@@ -44,6 +47,9 @@ SERVER_ENTRY_TITLE = "HA-MCP Server"
 # that requirement gates the whole integration before any entry's config flow
 # runs, so a lower runtime floor here would promise what the load cannot keep.
 MIN_EMBEDDED_HOME_ASSISTANT_VERSION = "2026.8.0"
+# Native execution is exercised separately on this exact upstream installation
+# minimum and the supported monthly trains; dependency alignment is not parity.
+MIN_NATIVE_HOME_ASSISTANT_VERSION = "2026.8.0"
 
 # Allowed directories for file operations (relative to config dir).
 # "blueprints" is read-only BY DEFAULT — in ALLOWED_READ_DIRS but not
@@ -337,13 +343,10 @@ OPT_REGENERATE_SECRETS = "regenerate_secrets"
 # server through Home Assistant; only the direct server port (+ the
 # admin-only sidebar panel, which proxies over loopback) remains.
 OPT_ENABLE_WEBHOOK = "enable_webhook"
-# Conversation-agent LLM API (#1745): when False, the toolset is not
-# registered as a Home Assistant LLM API, so it never appears in any
-# conversation agent's "Control Home Assistant" selector. On by default —
-# registering the API only makes it selectable; nothing is exposed until a
-# user picks it on an agent.
+# Both Core LLM bridges are optional and independent; fresh entries enable neither.
 OPT_ENABLE_LLM_API = "enable_llm_api"
-DEFAULT_ENABLE_LLM_API = True
+DEFAULT_ENABLE_LLM_API = False
+OPT_ENABLE_NATIVE_LLM_IMPORT = "enable_native_llm_import"
 # Which exposure shape(s) the LLM API offers to conversation agents:
 # ``tool_search`` (default) registers a compact API — pinned tools plus
 # search/execute meta-tools — the shape context-limited models need; ``full``
@@ -417,6 +420,14 @@ DATA_OAUTH_SIGNING_KEY = "oauth_signing_key"
 # 2.0.0 gain one on their first reload after upgrade.
 DATA_DCR_SIGNING_KEY = "dcr_signing_key"
 DATA_SERVER_USER_ID = "server_user_id"
+DATA_NATIVE_OWNER_ID = "native_owner_user_id"
+# Native transport limits apply per config entry, without another listener.
+OPT_NATIVE_HTTP_LIMIT = "native_http_limit"
+OPT_NATIVE_STREAM_SECONDS = "native_stream_seconds"
+OPT_NATIVE_IMPORT_APIS = "native_import_apis"
+OPT_RUNTIME_MODE = "runtime_mode"
+RUNTIME_NATIVE = "native"
+RUNTIME_LEGACY = "legacy"
 DATA_REFRESH_TOKEN_ID = "refresh_token_id"
 # A long-lived access token of an administrator, supplied by the user (#2427).
 # The server runs with it; entries from older releases may instead carry the

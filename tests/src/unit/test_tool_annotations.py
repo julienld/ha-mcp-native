@@ -101,8 +101,23 @@ def _is_class_tool(func: ast.expr) -> bool:
     return isinstance(func, ast.Name) and func.id == "tool"
 
 
+def _assigned_tools(node: ast.Assign, file_name: str) -> list[dict]:
+    """Read ``ha_name = tool(...)(SharedTools.ha_name)`` registrations."""
+    value = node.value
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Call):
+        return []
+    decorator = value.func
+    if not (_is_mcp_tool(decorator.func) or _is_class_tool(decorator.func)):
+        return []
+    return [
+        _tool_info(decorator, target.id, file_name)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    ]
+
+
 def _tools_in_source(content: str, file_name: str) -> list[dict]:
-    """Every tool in a module, both registration forms, read from the AST.
+    """Every decorated function or shared-method assignment, read from the AST.
 
     ``@mcp.tool`` closures and ``@tool(name="ha_...")`` class methods are the
     same shape to the parser — a decorator on an async function — so one walk
@@ -125,6 +140,9 @@ def _tools_in_source(content: str, file_name: str) -> list[dict]:
     """
     tools = []
     for node in ast.walk(ast.parse(content)):
+        if isinstance(node, ast.Assign):
+            tools.extend(_assigned_tools(node, file_name))
+            continue
         if not isinstance(node, ast.AsyncFunctionDef):
             continue
         for decorator in node.decorator_list:
@@ -151,6 +169,27 @@ def get_all_tools() -> list[dict]:
         all_tools.extend(tools)
 
     return all_tools
+
+
+def _declared_tool_names(path: Path) -> set[str]:
+    """Independent declaration scan, including class facade assignments."""
+    nodes = list(ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
+    names = {
+        node.name
+        for node in nodes
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.startswith("ha_")
+    }
+    for owner in nodes:
+        if not isinstance(owner, ast.ClassDef):
+            continue
+        names.update(
+            target.id
+            for member in owner.body
+            if isinstance(member, ast.Assign)
+            for target in member.targets
+            if isinstance(target, ast.Name) and target.id.startswith("ha_")
+        )
+    return names
 
 
 class TestToolAnnotations:
@@ -260,22 +299,20 @@ class TestToolAnnotations:
         read off the AST now, so no decorator text is matched at all.
 
         The expectation is the set of names every tool declares as
-        ``async def ha_*``, read with no decorator parsing at all. A count over
+        ``async def ha_*`` or assigns to ``ha_*``, with no decorator parsing.
+        A count over
         an annotation key cannot carry this: one dropped tool and one prose
         mention of the counted key cancel out, and a count names no tool when
         it does fail.
         """
         scanned = {tool["function"] for tool in get_all_tools()}
-        declared = {
-            name
-            for py_file in sorted(get_tools_dir().glob("*.py"))
-            if not py_file.name.startswith("_")
-            for name in re.findall(
-                r"^\s*async def (ha_\w+)\(",
-                py_file.read_text(encoding="utf-8"),
-                re.MULTILINE,
+        declared = set().union(
+            *(
+                _declared_tool_names(py_file)
+                for py_file in sorted(get_tools_dir().glob("*.py"))
+                if not py_file.name.startswith("_")
             )
-        }
+        )
 
         assert scanned == declared, (
             f"Tool scan and tool sources disagree. Declared but not scanned: "
@@ -372,6 +409,24 @@ class TestToolAnnotations:
         for tool in tools.values():
             assert tool["has_explicit_non_destructive_hint"] is True
             assert tool["has_destructive_hint"] is False
+
+    def test_shared_method_registration_keeps_its_safety_checks(self):
+        """A decorated facade assignment must not escape annotation checks."""
+        source = textwrap.dedent(
+            """
+            class LegacyTools:
+                ha_eval_template = tool(
+                    tags={"Utilities"},
+                    annotations=read_only_hints("Evaluate Template", open_world=False),
+                )(log_tool_usage(TemplateTools.ha_eval_template))
+            """
+        )
+        tools = _tools_in_source(source, "tools_utility.py")
+        assert len(tools) == 1
+        assert tools[0]["function"] == "ha_eval_template"
+        assert tools[0]["has_read_only_hint"]
+        assert tools[0]["has_open_world_hint"]
+        assert tools[0]["has_tags"]
 
     def test_server_registered_tools_have_open_world_hint(self):
         """Tools registered directly on the server must also set openWorldHint.

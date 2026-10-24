@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ha_mcp.runtime.radio_specs import MATTER
+
 from ...errors import ErrorCode, create_error_response
 from ..helpers import raise_tool_error
 from .base import (
-    ActionSpec,
     integration_not_found,
     ok,
     resolve_entry_id,
@@ -21,58 +22,7 @@ from .base import (
     ws_call,
 )
 
-SUPPORTED: dict[str, ActionSpec] = {
-    "diagnostics": ActionSpec(
-        "Per-node Matter diagnostics: network type (wifi/thread), availability, "
-        "IPs, node type, active fabrics.",
-        required=("device_id",),
-    ),
-    "network_status": ActionSpec("Matter fabric / integration summary."),
-    "ping": ActionSpec(
-        "Actively ping a Matter node at its known IP addresses.",
-        required=("device_id",),
-    ),
-    "commission": ActionSpec(
-        "Commission a Matter device from a setup code (QR or manual pairing code).",
-        long_running=True,
-        required=("code",),
-    ),
-    "commission_on_network": ActionSpec(
-        "Commission an already-networked Matter device by its PIN.",
-        long_running=True,
-        required=("pin",),
-    ),
-    "share_out": ActionSpec(
-        "Open a commissioning window and return a pairing code so another "
-        "controller can add this device (multi-admin).",
-        required=("device_id",),
-    ),
-    "interview": ActionSpec(
-        "Re-interview a Matter node to refresh its endpoints/clusters.",
-        long_running=True,
-        required=("device_id",),
-    ),
-    "remove_fabric": ActionSpec(
-        "Remove ANOTHER controller's fabric from a Matter node (pass "
-        "params.fabric_index; see active_fabrics in diagnostics). To detach the "
-        "device from Home Assistant itself, delete it with ha_remove_device.",
-        destructive=True,
-        required=("device_id",),
-    ),
-    "set_thread": ActionSpec(
-        "Provide Thread operational credentials used for the next commissioning.",
-        required=("thread_operation_dataset",),
-    ),
-    "set_wifi_credentials": ActionSpec(
-        "Provide WiFi credentials used for the next commissioning.",
-        required=("network_name", "password"),
-    ),
-    "firmware_update": ActionSpec(
-        "Install an available OTA firmware update for this Matter node.",
-        long_running=True,
-        required=("device_id",),
-    ),
-}
+SUPPORTED = MATTER
 
 
 async def handle(client: Any, action: str, args: dict[str, Any]) -> dict[str, Any]:

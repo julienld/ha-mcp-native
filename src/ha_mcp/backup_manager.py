@@ -43,29 +43,32 @@ One handler per backed-up domain. Storage helper types each register one keyed
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
-import hashlib
 import logging
 import os
-import re
-import tempfile
 import threading
 import time
 import weakref
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from functools import cached_property, partial
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NoReturn
 
 import yaml  # type: ignore[import-untyped]
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.websockets.exceptions import ConnectionClosed
+from ha_mcp.runtime.calendar_values import (
+    _calendar_bound,
+    _recurrence_id_window,
+)
 
+from .backends.legacy_flows import legacy_flow
 from .backup_dashboards import (
     _DASHBOARD_KIND,
     dashboard_comparison,
@@ -75,13 +78,9 @@ from .backup_dashboards import (
     valid_dashboard_capture,
 )
 from .backup_diff import (
-    _TEXT_KIND,
     DiffResponse,
     DiffResponseText,
-    _build_diff_response,
     _build_text_diff_response,
-    _compute_json_patch,
-    _summarize_patch_counts,
 )
 from .backup_entity_ids import (
     _restore_entity_ids,
@@ -103,8 +102,49 @@ from .client.rest_client import (
     HomeAssistantConnectionError,
     HomeAssistantError,
 )
+from .runtime import snapshot_flow_restore as _shared_flow_restore
+from .runtime.entity_snapshot_values import entity_registry_identity
+from .runtime.snapshot_compare import comparison_values, diff_snapshot_values
+from .runtime.snapshot_files import (
+    _TEXT_DOMAINS,
+    SCHEMA_VERSION,
+    SnapshotFilesMixin,
+    SnapshotInUseError,
+    _entity_id_aliases,
+    _flow_entry_id,
+    _flow_label,
+    _flow_type,
+    _is_flow_helper_domain,
+    _now_iso,
+    _now_ts,
+    _require_dict,
+    _require_list,
+    _safe_entity_id,
+)
+from .runtime.snapshot_flow_restore import (
+    _flow_failure_reason,
+    _flow_safe_failure_detail,
+)
+from .runtime.snapshot_flow_values import (
+    _validate_flow_snapshot,
+)
+from .runtime.snapshot_flow_values import _verify_readback as _shared_verify_readback
+from .runtime.snapshot_payloads import (
+    BackupRestoreError,
+    InvalidBackupSnapshotError,
+    MandatoryBackupError,
+    _flow_options,
+    _FlowHelperBackupSkip,
+    _FlowHelperReadError,
+    _snapshot_validation_message,
+    _strip_readonly,
+    _subentry_row,
+    _subentry_target,
+    validate_snapshot_identity,
+)
+from .runtime.snapshot_restore import ApplyStatus, restore_snapshot_data
 from .utils.data_paths import get_data_dir
-from .utils.registry_update_lock import registry_update_lock
+from .utils.owned_executor import await_backup_io as _await_backup_io
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +155,6 @@ logger = logging.getLogger(__name__)
 # renamed every step of a 500-step script".
 _MAX_PATCH_OPS = 200
 
-SCHEMA_VERSION = 1
-_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 # Expected failure modes for the capture pipeline. Anything outside this
 # tuple is a bug (TypeError, AttributeError, KeyError, etc.) and should
@@ -136,93 +174,9 @@ _CAPTURE_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
-class MandatoryBackupError(Exception):
-    """A required pre-write snapshot could not be captured.
-
-    Raised by ``maybe_snapshot(..., mandatory=True)`` when capture genuinely
-    fails (fetch error, snapshot-write failure such as disk-full, or an
-    unusable backup directory) — as opposed to a legitimate skip (nothing to
-    snapshot for a new file/key). Deliberately a plain ``Exception`` and NOT a
-    member of ``_CAPTURE_TRANSIENT_ERRORS`` so the ``@with_auto_backup``
-    decorator's best-effort handler can't swallow it; the decorator maps it to
-    a structured ``BACKUP_CAPTURE_FAILED`` error that fails the write closed.
-
-    ``suggestions`` carries remediation surfaced in that structured error.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        suggestions: list[str] | None = None,
-        safe_detail: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.suggestions = suggestions or []
-        # Only locally authored diagnostics may opt in. Fetch/YAML exceptions
-        # can include configuration values even when wrapped by this class.
-        self.safe_detail = safe_detail
-
-    @property
-    def safe_cause(self) -> str:
-        """The safe detail, else only the failing exception's class name."""
-        return self.safe_detail or type(self.__cause__ or self).__name__
-
-
-class BackupRestoreError(HomeAssistantError):
-    """A restore outcome whose apply knowledge must survive caller mapping."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        apply_status: Literal["not_applied", "unknown", "applied"] = "not_applied",
-        verification_status: Literal[
-            "not_run", "matched", "mismatched", "unavailable"
-        ] = "not_run",
-        **outcome: Any,
-    ) -> None:
-        super().__init__(message)
-        self.outcome = {
-            **outcome,
-            "apply_status": apply_status,
-            "verification_status": verification_status,
-        }
-
-
-class InvalidBackupSnapshotError(ValueError):
-    """Persisted snapshot data is invalid, independently of live HA access."""
-
-
-def _snapshot_validation_message(error: ValueError) -> str:
-    """Keep local field-only validation messages, never raw YAML parser text."""
-    return (
-        str(error)
-        if isinstance(error, InvalidBackupSnapshotError)
-        else "Snapshot is invalid; inspect its YAML and schema version"
-    )
-
-
-class SnapshotInUseError(ValueError):
-    """A snapshot is pinned by capture or restore and cannot be deleted yet."""
-
-
-class BulkDeleteResult(TypedDict):
-    """Keep filename lists stable while explaining safe, actionable refusals."""
-
-    deleted: list[str]
-    failed: list[str]
-    failure_reasons: NotRequired[dict[str, Literal["snapshot_in_use"]]]
-
-
 def _validate_snapshot_envelope(data: dict[str, Any]) -> None:
     """Validate stored identities before selecting or dispatching a handler."""
-    for key in ("domain", "entity_id", "config"):
-        if key not in data:
-            raise InvalidBackupSnapshotError(f"Snapshot is missing {key}")
-    for key in ("domain", "entity_id"):
-        if not isinstance(data[key], str) or (key == "domain" and not data[key]):
-            raise InvalidBackupSnapshotError(f"Snapshot has invalid {key}")
+    validate_snapshot_identity(data)
     if data.get("kind") == _DASHBOARD_KIND and not valid_dashboard_capture(
         data["config"]
     ):
@@ -234,62 +188,6 @@ def _handler_config(data: dict[str, Any]) -> Any:
     if data["domain"] == "dashboard":
         return dashboard_snapshot(data)[0]
     return data["config"]
-
-
-class _FlowHelperReadError(HomeAssistantError):
-    """A local validation failure with a safe diagnostic code."""
-
-    def __init__(self, message: str, reason: str) -> None:
-        super().__init__(message)
-        self.reason = reason
-
-
-class _FlowHelperBackupSkip(_FlowHelperReadError):
-    """Nothing to back up: no stored or disclosed options, or no helper flow Core
-    lists. Best-effort capture logs it at INFO."""
-
-
-def _is_flow_helper_domain(domain: str) -> bool:
-    """A ``helper_<type>`` snapshot domain of a config-entry (flow) helper.
-
-    Any type that is neither a storage helper nor a config subentry counts; the
-    type itself is not checked here. The tools check it against Core's helper
-    flow list (``helper_flows.require_helper_type``; ha_config_set_helper only
-    after its auto-backup capture, which checks an uncovered type itself), as
-    does ``resolve_config_entry_backup_domain`` for an arbitrary config entry.
-    """
-    helper_type = domain[7:] if domain.startswith("helper_") else ""
-    return helper_type not in ("", *_HELPER_LIST_TYPES, "config_subentry")
-
-
-def _flow_failure_reason(step: str, error: BaseException) -> str:
-    if isinstance(error, _FlowHelperReadError):
-        return error.reason
-    if isinstance(error, BackupRestoreError):
-        return str(error.outcome.get("reason") or "restore_refused")
-    if isinstance(error, InvalidBackupSnapshotError):
-        return "invalid_snapshot"
-    if isinstance(error, MandatoryBackupError):
-        return "backup_capture_failed"
-    if step == "safety_backup" and isinstance(error, OSError):
-        return "backup_storage_failed"
-    return "upstream_error"
-
-
-def _flow_safe_failure_detail(step: str, error: BaseException) -> str | None:
-    if isinstance(error, MandatoryBackupError):
-        return error.safe_detail
-    if isinstance(error, _FlowHelperReadError):
-        return str(error)  # locally authored, names no option values
-    if isinstance(error, HomeAssistantCommandError) and error.code:
-        # HA's structured code, not its message: unknown_command is the
-        # ha_mcp_tools component being absent.
-        return f"{type(error).__name__} ({error.code})"
-    # The safety stage wraps remote fetch failures in MandatoryBackupError;
-    # a raw OSError here comes from retained-file I/O. Other stages call HA.
-    if step == "safety_backup" and isinstance(error, OSError):
-        return str(error)
-    return None
 
 
 def _log_flow_helper_failure(step: str, error: BaseException) -> None:
@@ -325,16 +223,10 @@ _TRACKER_PRUNE_BATCH = 1_000
 # a second and the throttle defaults to 0, so a second capture of one entity
 # inside that second takes the next free suffix rather than replacing the
 # first. ``_`` sorts after ``.``, so a suffixed name stays newest-last.
-_FILENAME_RE = re.compile(
-    r"^(?P<domain>[A-Za-z0-9_]+)\."
-    r"(?P<entity_id>[A-Za-z0-9._-]+)\."
-    r"(?P<ts>\d{8}_\d{6})(?:_(?P<seq>\d{2}))?\.yaml$"
-)
 
 # Captures of one entity inside one second before the manager gives up on a
 # free name. Two is the realistic case (a save then a delete of the same
 # blueprint); the cap only bounds the ``exists()`` probe.
-_MAX_SAME_SECOND = 100
 
 # Domains whose snapshot ``config`` is raw text (file/YAML content) rather
 # than a structured dict. They carry a ``kind: "text"`` marker in the
@@ -350,15 +242,6 @@ _MAX_SAME_SECOND = 100
 # ``blueprint_automation`` / ``blueprint_script`` snapshot the blueprint's raw
 # YAML text (#2329): core stores blueprints as files, and ``blueprint/save``
 # takes the same YAML string back, so the round trip is text on both ends.
-_TEXT_DOMAINS = frozenset(
-    {
-        "file",
-        "yaml",
-        "yaml_file",
-        "blueprint_automation",
-        "blueprint_script",
-    }
-)
 
 # Pre-#1579 backups (``.ha_mcp_tools_backups/*.bak``) are surfaced through the
 # same scope="edits" actions under a synthetic name ``legacy:<filename>``. The
@@ -387,84 +270,6 @@ class DomainHandler:
 
 
 # ----------------------------- backup manager -------------------------------
-
-
-def _entity_id_aliases(entity_id: str) -> list[str]:
-    """Every filename stem a snapshot of ``entity_id`` may carry.
-
-    Sanitised ids gained a digest suffix, so snapshots written before that
-    sit under the bare sanitised name. Rotation and entity filtering match
-    both, otherwise those older files would never be counted again: they
-    would never be pruned, and would drop out of an entity-filtered listing.
-    """
-    current = _safe_entity_id(entity_id)
-    legacy = _SAFE_ID_RE.sub("_", entity_id).lstrip(".") or "_"
-    return [current] if legacy == current else [current, legacy]
-
-
-def _safe_entity_id(entity_id: str) -> str:
-    """Sanitize an entity id for use in a filename.
-
-    Replaces any character outside ``[A-Za-z0-9._-]`` with ``_``. Path
-    separators get caught by this (the regex excludes both ``/`` and ``\\``).
-    Strips leading dots to prevent dotfile collisions.
-
-    Sanitizing is lossy, so ids that needed it get a short digest of the
-    ORIGINAL appended. Blueprint domains (#2329) key on paths, where
-    ``user/motion.yaml`` and ``user_motion.yaml`` both clean to
-    ``user_motion.yaml`` -- without the digest they share one snapshot
-    namespace, so captures in the same second overwrite each other and
-    rotation counts both histories as one, able to delete the only restore
-    point for a blueprint that was never written. Entity ids are already
-    within the safe set, so their filenames are unchanged and existing
-    snapshots stay discoverable.
-    """
-    if not entity_id:
-        return "_"
-    cleaned = _SAFE_ID_RE.sub("_", entity_id).lstrip(".")
-    if not cleaned:
-        return "_"
-    if cleaned == entity_id:
-        return cleaned
-    digest = hashlib.sha256(entity_id.encode("utf-8")).hexdigest()[:8]
-    return f"{cleaned}-{digest}"
-
-
-def _snapshot_order(path: Path) -> tuple[str, str, str]:
-    """Sort key placing snapshots in capture order, oldest first.
-
-    Filenames cannot be compared directly: an id the sanitiser rewrote has
-    two stems, and the digest stem sorts before the bare one on every name
-    (``-`` < ``.``) regardless of timestamp, so by name every new capture
-    would age below every pre-digest file. The parsed timestamp and the
-    same-second sequence order them; the name only breaks exact ties.
-    """
-    m = _FILENAME_RE.match(path.name)
-    if m is None:
-        return ("", "", path.name)
-    return (m.group("ts"), m.group("seq") or "", path.name)
-
-
-def _id_matches(payload_id: str | None, wanted: str) -> bool:
-    """Whether a snapshot whose payload names ``payload_id`` is ``wanted``.
-
-    Two spellings select an entity: the id itself, and the digest stem
-    ``_safe_entity_id`` derives from it — the stem a listing used to show and
-    a filename still carries. Both name exactly one entity. The bare
-    pre-digest stem is deliberately not accepted: it is the current stem of a
-    differently-named entity, which is the ambiguity this check exists for.
-    """
-    if payload_id is None:
-        return False
-    return payload_id == wanted or _safe_entity_id(payload_id) == wanted
-
-
-def _now_ts() -> str:
-    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 # Add-on default. Named in the add-on option descriptions, so it stays put.
@@ -528,26 +333,6 @@ def _resolve_default_dir() -> Path:
 _SNAPSHOT_SKIP: Any = object()
 
 
-async def _await_backup_io[T](operation: Callable[..., T], *args: Any) -> T:
-    """Keep backup locks/pins until executor I/O settles, even after cancellation."""
-    worker = asyncio.create_task(asyncio.to_thread(operation, *args))
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        # Cancelling the await cannot stop its executor thread. Releasing the
-        # caller's lock now would let another capture reserve the same filename.
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue  # Repeated cancellation must not release the lock early.
-            except Exception:  # noqa: BLE001
-                break  # Consume the worker failure below; preserve cancellation.
-        if not worker.cancelled():
-            worker.exception()
-        raise
-
-
 def _require_restore_safety(path: Path) -> None:
     """Check the recovery file after its restore pin closes the deletion race."""
     if not path.is_file():
@@ -568,7 +353,7 @@ class _EntryAdmissionState:
     restore_entity_id: str | None = None
 
 
-class BackupManager:
+class BackupManager(SnapshotFilesMixin):
     """Per-entity snapshot manager. One instance per server, cached on client."""
 
     def __init__(self, settings: Any, client: Any) -> None:
@@ -600,6 +385,12 @@ class BackupManager:
         self._init_dir_error: str | None = None
         self._directory_checked = False
         self._directory_check_lock = asyncio.Lock()
+
+    def _snapshot_now_ts(self) -> str:
+        return _now_ts()
+
+    def _snapshot_now_iso(self) -> str:
+        return _now_iso()
 
     # ----- configuration -------------------------------------------------
 
@@ -810,7 +601,9 @@ class BackupManager:
         if handler is None:
             return None
 
-        if _is_flow_helper_domain(domain) and "." in entity_id:
+        if "." in entity_id and (
+            _is_flow_helper_domain(domain) or domain == "entity_registry"
+        ):
             config = await self._fetch_config_for_snapshot(
                 handler,
                 entity_id,
@@ -820,9 +613,80 @@ class BackupManager:
             )
             if config is _SNAPSHOT_SKIP:
                 return None
-            entity_id = _flow_entry_id(entity_id, config, _flow_type(domain))
-            # Resolve before bookkeeping, but read options again under the lock:
+            entity_id = (
+                entity_registry_identity(config)["id"]
+                if domain == "entity_registry"
+                else _flow_entry_id(entity_id, config, _flow_type(domain))
+            )
+            # Resolve before bookkeeping, but read the target again under the lock:
             # another write may complete while this alias capture waits.
+
+        async def fetch() -> Any:
+            return await self._fetch_config_for_snapshot(
+                handler,
+                entity_id,
+                f"{domain}:{entity_id}",
+                mandatory=mandatory,
+                skip_reasons=skip_reasons,
+            )
+
+        return await self._capture_selected(
+            domain,
+            entity_id,
+            fetch,
+            tool_name=tool_name,
+            force=force,
+            mandatory=mandatory,
+            holds=holds,
+        )
+
+    async def maybe_snapshot_known(
+        self,
+        domain: str,
+        entity_id: str,
+        config: Any,
+        *,
+        tool_name: str | None = None,
+        force: bool = False,
+        mandatory: bool = False,
+    ) -> Path | None:
+        """Capture an already resolved preimage through the normal storage policy."""
+        # Freeze before directory I/O; callers retain their own mutable objects.
+        frozen = copy.deepcopy(config)
+        if not force:
+            await self.ensure_directory_ready()
+        if (
+            frozen is None
+            or self._resolve_snapshot_handler(
+                domain, entity_id, force=force, mandatory=mandatory
+            )
+            is None
+        ):
+            return None
+
+        async def fetch() -> Any:
+            return frozen
+
+        return await self._capture_selected(
+            domain,
+            entity_id,
+            fetch,
+            tool_name=tool_name,
+            force=force,
+            mandatory=mandatory,
+        )
+
+    async def _capture_selected(
+        self,
+        domain: str,
+        entity_id: str,
+        fetch: Callable[[], Awaitable[Any]],
+        *,
+        tool_name: str | None,
+        force: bool,
+        mandatory: bool,
+        holds: Any = None,
+    ) -> Path | None:
         key = f"{domain}:{entity_id}"
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -840,9 +704,7 @@ class BackupManager:
                 and (now - self._last_snapshot[key]) < throttle
             ):
                 return None
-            config = await self._fetch_config_for_snapshot(
-                handler, entity_id, key, mandatory=mandatory, skip_reasons=skip_reasons
-            )
+            config = await fetch()
             if config is _SNAPSHOT_SKIP:
                 return None
             if holds is not None:
@@ -1047,396 +909,7 @@ class BackupManager:
             len(self._last_snapshot),
         )
 
-    def _write_snapshot(
-        self, domain: str, entity_id: str, config: Any, tool_name: str | None
-    ) -> Path:
-        try:
-            self._dir.mkdir(parents=True, exist_ok=True)
-        except OSError as err:
-            self._init_dir_error = f"{type(err).__name__}: {err}"
-            self._directory_checked = True
-            raise
-        safe = _safe_entity_id(entity_id)
-        target = self._unclaimed_target(domain, safe, _now_ts())
-        payload: dict[str, Any] = {
-            "schema_version": SCHEMA_VERSION,
-            "domain": domain,
-            "entity_id": entity_id,
-            "captured": _now_iso(),
-            "tool": tool_name,
-            "config": config,
-        }
-        if domain in _TEXT_DOMAINS:
-            payload["kind"] = _TEXT_KIND
-        elif domain == "dashboard":
-            payload["kind"] = _DASHBOARD_KIND
-        body = yaml.safe_dump(payload, default_flow_style=False, sort_keys=False)
-        # mkstemp creates a unique 0600 inode before any configuration is written.
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-        )
-        try:
-            try:
-                stream = os.fdopen(fd, "w")
-            except BaseException:
-                os.close(fd)
-                raise
-            with stream:
-                stream.write("# ha_mcp_backup\n" + body)
-            os.replace(tmp_name, str(target))
-        finally:
-            with suppress(OSError):
-                Path(tmp_name).unlink()
-        self._init_dir_error = None
-        self._directory_checked = True
-        logger.info("Auto-backup: snapshot written")
-        return target
-
-    def _unclaimed_target(self, domain: str, safe: str, ts: str) -> Path:
-        """First filename for ``ts`` that no snapshot of this entity holds yet.
-
-        The bare name is taken when it is free; each later capture inside the
-        same second appends ``_01``, ``_02``, ... so the atomic replace in
-        ``_write_snapshot`` can never discard an earlier pre-write state.
-        ``maybe_snapshot`` serialises captures per key, so the ``exists()``
-        probe is not racing another capture of the same entity.
-        """
-        target = self._dir / f"{domain}.{safe}.{ts}.yaml"
-        for seq in range(1, _MAX_SAME_SECOND):
-            if not target.exists():
-                return target
-            target = self._dir / f"{domain}.{safe}.{ts}_{seq:02d}.yaml"
-        if not target.exists():
-            return target
-        raise OSError(
-            f"{_MAX_SAME_SECOND} snapshots of {domain}:{safe} inside one second"
-        )
-
-    def _payload_entity_id(self, path: Path) -> str | None:
-        """The id the snapshot at ``path`` was taken for, from its payload.
-
-        Filename stems are ambiguous in both directions: the legacy stem for
-        ``user/motion.yaml`` is ``user_motion.yaml``, which is also the
-        CURRENT stem of a differently-named blueprint. The payload keeps the
-        original id, so rotation and the entity filter behind ``list_snapshots``
-        / ``delete_bulk`` ask it rather than trusting the name. A file that
-        cannot be read answers ``None`` and is treated as not ours: skipping it
-        wastes a rotation slot or hides it from one entity's listing, deleting
-        it could destroy another entity's only restore point.
-
-        Only the header is read. ``_write_snapshot`` emits ``entity_id`` before
-        ``config`` (which is the whole automation, dashboard or file), so the
-        read stops at the ``config:`` line and never parses the body: every
-        listing row opens its file, and an unfiltered listing of hundreds of
-        whole-file snapshots has to stay a header read per row. Flow-helper
-        snapshots are the exception: template snapshots from before #2632
-        used entity aliases as headers, so the stable identity of every
-        flow-helper snapshot is read from config.entry_id.
-        """
-        domain = path.name.split(".", 1)[0]
-        if _is_flow_helper_domain(domain):
-            return self._entry_snapshot_identity(path, _flow_type(domain))
-        try:
-            with path.open(encoding="utf-8") as handle:
-                header: list[str] = []
-                for line in handle:
-                    if line.startswith("config:"):
-                        break
-                    header.append(line)
-                loaded = yaml.safe_load("".join(header))
-        except (OSError, yaml.YAMLError) as err:
-            logger.warning(
-                "Auto-backup: cannot identify %s, leaving it in place: %s",
-                path.name,
-                err,
-            )
-            return None
-        if not isinstance(loaded, dict):
-            return None
-        found = loaded.get("entity_id")
-        return found if isinstance(found, str) else None
-
-    def _entry_snapshot_identity(self, path: Path, helper_type: str) -> str | None:
-        """Validate new/changed flow-helper YAML once, including legacy alias headers.
-
-        Rotation still enumerates and stats the history to discover imported or
-        changed files, but it does not repeatedly parse unrelated YAML bodies.
-        The cache is shared with listing/deletion and guarded across IO threads.
-        """
-        try:
-            before = path.stat()
-            signature = (
-                before.st_dev,
-                before.st_ino,
-                before.st_size,
-                before.st_mtime_ns,
-                before.st_ctime_ns,
-            )
-            with self._entry_identity_lock:
-                cached = self._entry_identity_cache.get(path.name)
-                if cached is not None and cached[0] == signature:
-                    return cached[1]
-            identity = None
-            try:
-                data = self.read_snapshot(path.name)
-                entity_id = data.get("entity_id")
-                if isinstance(entity_id, str):
-                    identity = _flow_entry_id(
-                        entity_id, data.get("config"), helper_type
-                    )
-            except (ValueError, HomeAssistantError) as err:
-                # A stable malformed file is cached as unowned, never deleted.
-                # Parser messages may contain option values; retain only type.
-                logger.warning(
-                    "Auto-backup: cannot identify %s, leaving it in place: %s",
-                    path.name,
-                    type(err).__name__,
-                )
-            after = path.stat()
-            if signature != (
-                after.st_dev,
-                after.st_ino,
-                after.st_size,
-                after.st_mtime_ns,
-                after.st_ctime_ns,
-            ):
-                self._forget_entry_identity(path.name)
-                return None
-        except OSError as err:
-            logger.warning(
-                "Auto-backup: cannot identify %s, leaving it in place: %s",
-                path.name,
-                type(err).__name__,
-            )
-            self._forget_entry_identity(path.name)
-            return None
-        with self._entry_identity_lock:
-            self._entry_identity_cache[path.name] = (signature, identity)
-        return identity
-
-    def _forget_entry_identity(self, name: str) -> None:
-        with self._entry_identity_lock:
-            self._entry_identity_cache.pop(name, None)
-
-    def _snapshot_is_for(self, path: Path, entity_id: str) -> bool:
-        """Whether ``path`` holds a snapshot of ``entity_id`` (see ``_id_matches``)."""
-        return _id_matches(self._payload_entity_id(path), entity_id)
-
-    def _rotate(
-        self, domain: str, entity_id: str, protected: frozenset[str] = frozenset()
-    ) -> None:
-        candidates: set[Path] = set()
-        if _is_flow_helper_domain(domain):
-            # Template snapshots from before #2632 used the entity alias as
-            # their filename/header.
-            candidates.update(self._dir.glob(f"{domain}.*.yaml"))
-            names = {path.name for path in candidates}
-            with self._entry_identity_lock:
-                for name in self._entry_identity_cache.keys() - names:
-                    del self._entry_identity_cache[name]
-        else:
-            for safe in _entity_id_aliases(entity_id):
-                candidates.update(self._dir.glob(f"{domain}.{safe}.*.yaml"))
-        files = sorted(
-            (p for p in candidates if self._snapshot_is_for(p, entity_id)),
-            key=_snapshot_order,
-        )
-        excess = len(files) - self.retain_per_entity
-        for old in files:
-            if excess <= 0:
-                break
-            try:
-                # A restore can pin a file after this rotation was dispatched.
-                # Check and unlink atomically against those new pins as well as
-                # the frozen pins retained after a cancelled caller unwinds.
-                with self._snapshot_pin_lock:
-                    if (
-                        old.name in protected
-                        or old.name in self._protected_snapshot_names
-                    ):
-                        continue
-                    old.unlink()
-                    self._forget_entry_identity(old.name)
-                    excess -= 1
-            except OSError as err:
-                logger.warning("Auto-backup: failed to rotate %s: %s", old.name, err)
-
     # ----- list / read / delete ------------------------------------------
-
-    def list_snapshots(
-        self,
-        *,
-        domain: str | None = None,
-        entity_id: str | None = None,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        if not self._dir.exists():
-            return []
-        # ``entity_id`` comparison: filenames hold the sanitized form (see
-        # ``_safe_entity_id`` — any char outside ``[A-Za-z0-9._-]`` becomes
-        # ``_``), so composite IDs like ``area:foo`` / ``automation:UUID``
-        # would otherwise never match a filter passed in original form.
-        # Sanitize the filter once up front so the per-file comparison is
-        # symmetric: filter and ``meta["entity_id"]`` both come from the
-        # same sanitization function. The stem only narrows the candidates:
-        # sanitising is lossy in both directions (``user/motion.yaml``'s
-        # pre-digest stem IS ``user_motion.yaml``'s current stem), so each
-        # stem match is confirmed against the id the payload stores before it
-        # counts as this entity's — ``delete_bulk`` unlinks whatever is
-        # returned here, and the caller named one entity.
-        safe_filter = set(_entity_id_aliases(entity_id)) if entity_id else None
-        out: list[dict[str, Any]] = []
-        # Newest first by capture time — see ``_snapshot_order`` for why the
-        # filename itself is not the key.
-        for path in sorted(self._dir.glob("*.yaml"), key=_snapshot_order, reverse=True):
-            row = self._listing_row(
-                path, domain=domain, safe_filter=safe_filter, entity_id=entity_id
-            )
-            if row is None:
-                continue
-            out.append(row)
-            if limit and len(out) >= limit:
-                break
-        return out
-
-    def _listing_row(
-        self,
-        path: Path,
-        *,
-        domain: str | None,
-        safe_filter: set[str] | None,
-        entity_id: str | None,
-    ) -> dict[str, Any] | None:
-        """One ``list_snapshots`` entry for ``path``, or ``None`` if filtered out."""
-        meta = self._parse_filename(path.name)
-        if meta is None:
-            return None
-        if domain and meta["domain"] != domain:
-            return None
-        if (
-            safe_filter
-            and not _is_flow_helper_domain(meta["domain"])
-            and meta["entity_id"] not in safe_filter
-        ):
-            return None
-        # Every row reports the id its payload names, not its stem: a filter
-        # needs the stored id to settle the stem ambiguity anyway, and a stem
-        # shown to the caller — digest or pre-digest — is a value the filter
-        # would refuse or misroute, where the stored id is what the settings
-        # UI and ha_manage_backup can send straight back and get that entity's
-        # whole history. Flow-helper payloads also supply the stable config-entry
-        # ID; other domains need only the header. A file that cannot identify
-        # itself keeps its stem in an unfiltered
-        # listing and is left out of a filtered one.
-        payload_id = self._payload_entity_id(path)
-        if entity_id and not _id_matches(payload_id, entity_id):
-            return None
-        if payload_id is not None:
-            meta["entity_id"] = payload_id
-        try:
-            stat = path.stat()
-        except OSError:
-            return None
-        meta["size"] = stat.st_size
-        meta["mtime"] = stat.st_mtime
-        return meta
-
-    def _parse_filename(self, name: str) -> dict[str, Any] | None:
-        m = _FILENAME_RE.match(name)
-        if m is None:
-            return None
-        return {
-            "name": name,
-            "domain": m.group("domain"),
-            "entity_id": m.group("entity_id"),
-            "timestamp": m.group("ts"),
-        }
-
-    def read_snapshot(self, name: str) -> dict[str, Any]:
-        path = self._resolve_snapshot_path(name)
-        text = path.read_text()
-        try:
-            data = yaml.safe_load(text)
-        except yaml.YAMLError as err:
-            raise ValueError(f"Snapshot {name!r} is not valid YAML: {err}") from err
-        if not isinstance(data, dict):
-            raise ValueError(f"Snapshot {name!r} is not a YAML mapping")
-        sv = data.get("schema_version")
-        if sv != SCHEMA_VERSION:
-            raise ValueError(
-                f"Snapshot {name!r} has unsupported schema_version={sv!r} "
-                f"(expected {SCHEMA_VERSION})"
-            )
-        return data
-
-    def delete_snapshot(self, name: str) -> Path:
-        path = self._resolve_snapshot_path(name)
-        with self._snapshot_pin_lock:
-            if name in self._protected_snapshot_names:
-                raise SnapshotInUseError(
-                    "Snapshot is in use by a capture or active restore; retry after it finishes"
-                )
-            path.unlink()
-            self._forget_entry_identity(name)
-        return path
-
-    def delete_bulk(
-        self,
-        *,
-        domain: str | None = None,
-        entity_id: str | None = None,
-        older_than_days: int | None = None,
-    ) -> BulkDeleteResult:
-        """Delete snapshots matching ``domain`` / ``entity_id`` / age.
-
-        Returns a dict ``{"deleted": [...], "failed": [...]}`` so callers
-        can surface partial failures. ``failure_reasons`` optionally maps
-        in-use filenames to a safe retryable code. Other exception details
-        remain in the server WARNING log.
-        """
-        deleted: list[str] = []
-        failed: list[str] = []
-        failure_reasons: dict[str, Literal["snapshot_in_use"]] = {}
-        cutoff: float | None = None
-        if older_than_days is not None:
-            if older_than_days < 0:
-                raise ValueError("older_than_days must be >= 0")
-            cutoff = time.time() - (older_than_days * 86400)
-        for meta in self.list_snapshots(domain=domain, entity_id=entity_id):
-            if cutoff is not None and meta["mtime"] >= cutoff:
-                continue
-            try:
-                self.delete_snapshot(meta["name"])
-                deleted.append(meta["name"])
-            except (OSError, ValueError) as err:
-                failed.append(meta["name"])
-                if isinstance(err, SnapshotInUseError):
-                    failure_reasons[meta["name"]] = "snapshot_in_use"
-                logger.warning(
-                    "Auto-backup: bulk-delete failed for %s: %s", meta["name"], err
-                )
-        result: BulkDeleteResult = {"deleted": deleted, "failed": failed}
-        if failure_reasons:
-            result["failure_reasons"] = failure_reasons
-        return result
-
-    def _resolve_snapshot_path(self, name: str) -> Path:
-        """Validate a snapshot name and return its absolute Path.
-
-        Rejects any name that contains path separators or escapes the
-        backup directory.
-        """
-        if not name or os.sep in name or "/" in name or ".." in name:
-            raise ValueError(f"Invalid snapshot name: {name!r}")
-        path = (self._dir / name).resolve()
-        # Defence-in-depth: post-resolve, verify still under backup_dir.
-        try:
-            path.relative_to(self._dir.resolve())
-        except ValueError as err:
-            raise ValueError(f"Invalid snapshot name: {name!r}") from err
-        if not path.is_file():
-            raise FileNotFoundError(name)
-        return path
 
     # ----- restore -------------------------------------------------------
 
@@ -1498,101 +971,29 @@ class BackupManager:
         finally:
             self._unprotect_snapshot(name)
 
-    def _protect_snapshot(self, name: str) -> None:
-        with self._snapshot_pin_lock:
-            self._protected_snapshot_names[name] += 1
-
-    def _unprotect_snapshot(self, name: str) -> None:
-        with self._snapshot_pin_lock:
-            self._protected_snapshot_names[name] -= 1
-            if not self._protected_snapshot_names[name]:
-                del self._protected_snapshot_names[name]
-
     async def _restore_snapshot_data(
         self, name: str, data: dict[str, Any], *, take_safety_backup: bool
     ) -> dict[str, Any]:
-        domain = data["domain"]
-        entity_id = data["entity_id"]
-        config = _handler_config(data)
-        handler = self.handler_for(domain)
+        handler = self.handler_for(data["domain"])
         if handler is None:
             raise BackupRestoreError(
-                f"No restore handler registered for domain {domain!r}",
+                f"No restore handler registered for domain {data['domain']!r}",
                 reason="unsupported_domain",
                 restored_from=name,
-                domain=domain,
-                entity_id=entity_id,
+                domain=data["domain"],
+                entity_id=data["entity_id"],
                 safety_backup=None,
             )
-
-        safety_path: Path | None = None
-        outcome: dict[str, Any] = {
-            "restored_from": name,
-            "domain": domain,
-            "entity_id": entity_id,
-            "safety_backup": None,
-        }
-        apply_status: Literal["not_applied", "unknown", "applied"] = "not_applied"
-        step = "safety_preflight"
-        try:
-            needs_safety = await self._restore_needs_safety(handler, entity_id, config)
-            # Existing flow helpers and subentries always require a fresh
-            # recovery point: their flows can apply a restore partly.
-            is_flow = _is_flow_helper_domain(domain)
-            flow_driven = is_flow or domain == "helper_config_subentry"
-            if needs_safety and (flow_driven or take_safety_backup):
-                step = "safety_backup"
-                safety_path = await self._capture_restore_safety(
-                    domain, entity_id, outcome, config
-                )
-                if safety_path is not None:
-                    self._protect_snapshot(safety_path.name)
-                    await _await_backup_io(_require_restore_safety, safety_path)
-                    outcome["safety_backup"] = safety_path.name
-            apply_status = "unknown"
-            step = "apply"
-            # Commit to the absent-target branch: if an entry reappeared since
-            # preflight, recreation refuses instead of editing it without safety.
-            restore = (
-                functools.partial(_restore_config_subentry, recreate_only=True)
-                if domain == "helper_config_subentry" and safety_path is None
-                else handler.restore
-                if needs_safety
-                else functools.partial(
-                    _recreate_flow_helper, helper_type=_flow_type(domain)
-                )
-            )
-            result = await restore(self._client, entity_id, config)
-        except BackupRestoreError as err:
-            if _is_flow_helper_domain(domain) and step != "apply":
-                _log_flow_helper_failure(step, err)
-            err.outcome = {**outcome, **err.outcome}
-            raise
-        except _RESTORE_ERRORS as err:
-            if _is_flow_helper_domain(domain):
-                label = _flow_label(_flow_type(domain))
-                _log_flow_helper_failure(step, err)
-                message = _flow_safe_failure_detail(step, err) or (
-                    f"{label} helper restore was not attempted; inspect the target and backup storage"
-                    if apply_status == "not_applied"
-                    else f"{label} helper restore outcome is unknown; inspect current options before retrying"
-                )
-                raise BackupRestoreError(
-                    message,
-                    apply_status=apply_status,
-                    reason=_flow_failure_reason(step, err),
-                    **outcome,
-                ) from err
-            # The error keeps its own type and code; the safety backup to revert
-            # with and any warnings ride along for the caller.
-            _raise_with_restore_outcome(err, {**outcome, "apply_status": apply_status})
-        finally:
-            if safety_path is not None:
-                self._unprotect_snapshot(safety_path.name)
-        if _is_flow_helper_domain(domain):
-            outcome.update(apply_status="applied", verification_status="matched")
-            outcome.update(_flow_recreated_outcome(result, entity_id))
-        return {**outcome, "result": result}
+        return await restore_snapshot_data(
+            self,
+            name,
+            data,
+            _LegacyRestoreOperations(
+                self, data["domain"], data["entity_id"], _handler_config(data), handler
+            ),
+            take_safety_backup=take_safety_backup,
+            restore_errors=_RESTORE_ERRORS,
+        )
 
     async def _restore_needs_safety(
         self, handler: DomainHandler, entity_id: str, config: Any
@@ -1665,22 +1066,7 @@ class BackupManager:
             live = await _dashboard_resource_like(self._client, data["config"])
             if live is not None:
                 current = {**live, "id": data["config"].get("id")}
-        if (
-            isinstance(current, dict)
-            and isinstance(data["config"], dict)
-            and "registry_icon" not in data["config"]
-        ):
-            # A snapshot from before registry icons were recorded: its restore
-            # leaves the registry alone, so the icon is no difference.
-            current.pop("registry_icon", None)
-        if _is_flow_helper_domain(domain) and current is not None:
-            # Both MCP and Settings preview this comparison. Registry metadata
-            # is recreation-only; an existing-entry restore applies options.
-            data["config"] = {
-                key: data["config"][key] for key in ("entry_id", "options")
-            }
-            current = {key: current[key] for key in ("entry_id", "options")}
-        return data, current
+        return comparison_values(data, current)
 
     async def diff_snapshot(self, name: str) -> DiffResponse | DiffResponseText:
         """Compare a stored snapshot against the live config of the same entity.
@@ -1702,37 +1088,7 @@ class BackupManager:
         if name.startswith(LEGACY_PREFIX):
             return await self._diff_legacy(name[len(LEGACY_PREFIX) :])
         data, current = await self.snapshot_comparison(name)
-        domain = data["domain"]
-        entity_id = data["entity_id"]
-        stored = data["config"]
-        captured_at = data.get("captured")
-        if data.get("kind") == _TEXT_KIND:
-            return _build_text_diff_response(
-                name, domain, entity_id, captured_at, str(stored), current
-            )
-        if current is None:
-            return _build_diff_response(
-                name,
-                domain,
-                entity_id,
-                captured_at,
-                entity_missing=True,
-                patch=[],
-                counts=_summarize_patch_counts([]),
-                truncated=False,
-            )
-        patch: list[dict[str, Any]] = []
-        truncated = _compute_json_patch(stored, current, _MAX_PATCH_OPS, patch)
-        return _build_diff_response(
-            name,
-            domain,
-            entity_id,
-            captured_at,
-            entity_missing=False,
-            patch=patch,
-            counts=_summarize_patch_counts(patch),
-            truncated=truncated,
-        )
+        return diff_snapshot_values(name, data, current, max_patch_ops=_MAX_PATCH_OPS)
 
     # ----- legacy store (pre-#1579 .ha_mcp_tools_backups/) ---------------
 
@@ -2077,45 +1433,6 @@ async def _restore_scene(client: Any, entity_id: str, config: Any) -> Any:
     return await client.upsert_scene_config(config, entity_id)
 
 
-def _require_list(value: Any, endpoint: str) -> list[Any]:
-    """Return ``value`` if it's a list, else raise.
-
-    The WS registry-list fetchers below distinguish two cases that used
-    to both collapse to ``None`` (which the diff/capture callers read as
-    "entity missing"): a genuine miss (entity not in the list) stays
-    ``None``, but an unexpected non-list envelope — a degraded response
-    from an auth-scope change or API drift — raises instead. The raise
-    funnels through the diff tool's ``exception_to_structured_error`` and
-    the capture pipeline's ``_CAPTURE_TRANSIENT_ERRORS`` warning, so a
-    broken fetch is never reported as a confident ``entity_missing``.
-    """
-    if not isinstance(value, list):
-        raise HomeAssistantError(
-            f"Expected a list from {endpoint!r}, got {type(value).__name__}"
-        )
-    return value
-
-
-def _require_dict(value: Any, endpoint: str) -> dict[str, Any]:
-    """Return ``value`` if it's a dict, else raise.
-
-    Dict-shaped counterpart to :func:`_require_list` for the
-    ``execute_script``-backed fetchers (calendar / todo). Their service
-    response is a dict envelope; a non-dict body is a degraded/malformed
-    200 (auth-scope change, API drift), not a genuine miss. Raising
-    funnels it through the diff tool's ``exception_to_structured_error``
-    and the capture pipeline's ``_CAPTURE_TRANSIENT_ERRORS`` warning,
-    instead of collapsing to ``None`` — which callers read as
-    ``entity_missing``. The genuine-miss signal stays the nested ``uid``
-    lookup returning ``None``.
-    """
-    if not isinstance(value, dict):
-        raise HomeAssistantError(
-            f"Expected a dict from {endpoint!r}, got {type(value).__name__}"
-        )
-    return value
-
-
 # Dashboard resources — WS lovelace/resources commands. Rows store the
 # resource type as ``type``; the create/update field is ``res_type``. A restore
 # of a deleted resource re-creates it under a new id, so a snapshot falls back
@@ -2170,19 +1487,6 @@ async def _restore_dashboard_resource(client: Any, entity_id: str, config: Any) 
 # (they're part of the snapshot's informational payload), so the restore
 # strips them at the last moment. Same pattern applies to category /
 # zone / area / floor / integration / helper registries.
-_REGISTRY_READONLY_KEYS = frozenset({"created_at", "modified_at"})
-
-
-def _strip_readonly(config: dict[str, Any], *extra: str) -> dict[str, Any]:
-    """Return ``config`` with read-only registry fields removed.
-
-    Always strips ``created_at`` / ``modified_at`` (universal across HA's
-    registries). Caller passes additional per-registry id keys (e.g.
-    ``label_id`` / ``category_id``) that the update endpoint re-injects
-    separately and rejects when sent inside the payload body.
-    """
-    drop = _REGISTRY_READONLY_KEYS | set(extra)
-    return {k: v for k, v in config.items() if k not in drop}
 
 
 async def _fetch_label(client: Any, entity_id: str) -> Any:
@@ -2218,7 +1522,7 @@ async def _restore_label(client: Any, entity_id: str, config: Any) -> Any:
 
 
 async def _fetch_category(client: Any, entity_id: str) -> Any:
-    scope, _, cat_id = entity_id.partition(":")
+    scope, _, cat_id = entity_id.rpartition(":")
     if not cat_id:
         return None
     # Same component-first routing as ``_fetch_label``; categories are scoped,
@@ -2244,12 +1548,9 @@ async def _fetch_category(client: Any, entity_id: str) -> Any:
 
 
 async def _restore_category(client: Any, entity_id: str, config: Any) -> Any:
-    scope, _, cat_id = entity_id.partition(":")
-    payload = _strip_readonly(config, "category_id", "scope")
-    payload["type"] = "config/category_registry/update"
-    payload["scope"] = scope or config.get("scope")
-    payload["category_id"] = cat_id
-    return await _ws_send(client, payload)
+    from .backends.remote_snapshot_registry import restore_registry_snapshot
+
+    return await restore_registry_snapshot(client, "category", entity_id, config)
 
 
 # Groups — group.set service. Fetch via state API.
@@ -2335,21 +1636,6 @@ async def _find_calendar_event(
     return None
 
 
-def _recurrence_id_window(
-    recurrence_id: str | None,
-) -> tuple[datetime, datetime] | None:
-    """A day-wide window around an iCalendar recurrence id, if it parses."""
-    if not recurrence_id:
-        return None
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M%SZ", "%Y%m%d"):
-        try:
-            at = datetime.strptime(recurrence_id, fmt).replace(tzinfo=UTC)
-        except ValueError:
-            continue
-        return at - timedelta(days=1), at + timedelta(days=1)
-    return None
-
-
 async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
     # entity_id is "<calendar.entity>::<event_uid>[::<recurrence_id>]"
     cal, _, rest = entity_id.partition("::")
@@ -2416,24 +1702,6 @@ async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
         )
         return None
     return {"calendar_entity_id": cal, **found}
-
-
-def _calendar_bound(value: Any) -> tuple[str, bool] | None:
-    """Return ``(iso_value, is_date_only)`` for a snapshotted event boundary.
-
-    The REST view wraps each boundary as ``{"dateTime": ...}`` (timed) or
-    ``{"date": ...}`` (all-day); snapshots taken before that switch hold a
-    flat ISO string, which a 10-character length identifies as date-only.
-    """
-    if isinstance(value, dict):
-        if value.get("dateTime"):
-            return str(value["dateTime"]), False
-        if value.get("date"):
-            return str(value["date"]), True
-        return None
-    if isinstance(value, str) and value:
-        return value, len(value) == 10
-    return None
 
 
 # HA reports a missing event as a plain ``failed`` command error whose message
@@ -2589,18 +1857,9 @@ async def _fetch_area_or_floor(client: Any, entity_id: str) -> Any:
 
 
 async def _restore_area_or_floor(client: Any, entity_id: str, config: Any) -> Any:
-    kind, _, real_id = entity_id.partition(":")
-    payload = _strip_readonly(config, "kind", "area_id", "floor_id")
-    if kind == "area":
-        payload["type"] = "config/area_registry/update"
-        payload["area_id"] = real_id
-    elif kind == "floor":
-        payload["type"] = "config/floor_registry/update"
-        payload["floor_id"] = real_id
-    else:
-        raise ValueError(f"Unknown area/floor kind: {kind!r}")
-    async with registry_update_lock(kind, real_id):
-        return await _ws_send(client, payload)
+    from .backends.remote_snapshot_registry import restore_registry_snapshot
+
+    return await restore_registry_snapshot(client, "area_or_floor", entity_id, config)
 
 
 # Todo items — entity_id is "<todo.entity>::<item_uid>"
@@ -2647,16 +1906,16 @@ async def _fetch_todo_item(client: Any, entity_id: str) -> Any:
 
 
 async def _restore_todo_item(client: Any, entity_id: str, config: Any) -> Any:
-    cal = config.get("todo_entity_id") or entity_id.split("::", 1)[0]
-    data = {k: v for k, v in config.items() if k != "todo_entity_id"}
-    return await _rest_post(
-        client,
-        "services/todo/add_item",
-        {"entity_id": cal, **data},
-    )
+    from .backends.remote import RemoteBackend
+    from .runtime.snapshot_todo import current_todo, restore_todo
+    from .tool_api import CallContext
+
+    backend, actor = RemoteBackend(client), CallContext(None)
+    before = await current_todo(backend, actor, entity_id, config)
+    return await restore_todo(backend, actor, entity_id, config, before)
 
 
-# Generic entity (ha_set_entity) — fetch via state API, restore by re-setting.
+# Historical entity snapshots — state/attributes only, separate from registry edits.
 
 
 async def _fetch_entity_state(client: Any, entity_id: str) -> Any:
@@ -2664,7 +1923,7 @@ async def _fetch_entity_state(client: Any, entity_id: str) -> Any:
 
 
 async def _restore_entity_state(client: Any, entity_id: str, config: Any) -> Any:
-    # ha_set_entity just calls /api/states/<entity_id> POST with state+attributes.
+    # Keep the original state-only snapshot meaning; registry history has its own domain.
     if isinstance(config, dict):
         payload = {
             "state": config.get("state"),
@@ -3091,46 +2350,6 @@ def _make_blueprint_handler(domain: str) -> DomainHandler:
     return DomainHandler(domain=f"blueprint_{domain}", fetch=fetch, restore=restore)
 
 
-def _flow_type(domain: str) -> str:
-    return domain.removeprefix("helper_")
-
-
-def _flow_label(helper_type: str) -> str:
-    return helper_type.replace("_", " ").capitalize()
-
-
-def _flow_options(config: Any, helper_type: str) -> dict[str, Any]:
-    """Require persisted flow-helper options that can safely be restored."""
-    from .redaction import sentinel_option_keys
-
-    label = _flow_label(helper_type)
-    if not isinstance(config, dict):
-        raise _FlowHelperReadError(
-            f"{label} helper options must be an object", "invalid_options"
-        )
-    if not config:
-        raise _FlowHelperBackupSkip(  # e.g. otp: all of it is in entry.data
-            f"{label} helper has no stored options to back up or restore",
-            "invalid_options",
-        )
-    # The component's resolved-!secret scrub predates the server sentinels.
-    # Neither kind of placeholder is a usable recovery value.
-    if sentinel_option_keys(config) or _contains_redacted_leaf(config):
-        raise _FlowHelperReadError(
-            f"{label} helper options contain redacted values; capture is incomplete",
-            "redacted_options",
-        )
-    return config
-
-
-def _contains_redacted_leaf(value: Any) -> bool:
-    if isinstance(value, dict):
-        return any(_contains_redacted_leaf(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_contains_redacted_leaf(item) for item in value)
-    return isinstance(value, str) and value == "**redacted**"
-
-
 async def _fetch_flow_helper(client: Any, entity_id: str, helper_type: str) -> Any:
     """Read a flow helper's options through the component, without starting a flow.
 
@@ -3227,40 +2446,6 @@ async def _entity_registry_rows(client: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _flow_entry_id(entity_id: str, config: Any, helper_type: str) -> str:
-    """Resolve a captured alias to the stable identity used for diff and restore."""
-    label = _flow_label(helper_type)
-    if not isinstance(entity_id, str) or not entity_id:
-        raise HomeAssistantError(f"{label} helper snapshot has no target identity")
-    snapshot = _require_dict(config, f"{helper_type} helper snapshot")
-    entry_id = snapshot.get("entry_id")
-    if not isinstance(entry_id, str) or not entry_id:
-        raise HomeAssistantError(
-            f"{label} helper snapshot has no config-entry identity"
-        )
-    if entity_id != entry_id and "." not in entity_id:
-        raise HomeAssistantError(
-            f"{label} helper snapshot target does not match its entry"
-        )
-    return entry_id
-
-
-def _validate_flow_snapshot(
-    entity_id: str, config: Any, helper_type: str
-) -> dict[str, Any]:
-    """Reject corrupt stored data before accessing HA or making a change."""
-    try:
-        _flow_entry_id(entity_id, config, helper_type)
-        snapshot = _require_dict(config, f"{helper_type} helper snapshot")
-        _flow_options(snapshot.get("options"), helper_type)
-    except HomeAssistantError as err:
-        # These validators produce local messages without snapshot values.
-        raise InvalidBackupSnapshotError(
-            f"{_flow_label(helper_type)} helper snapshot is invalid: {err}"
-        ) from err
-    return snapshot
-
-
 def _flow_snapshot_for_restore(
     entity_id: str, config: Any, helper_type: str
 ) -> dict[str, Any]:
@@ -3271,125 +2456,26 @@ def _flow_snapshot_for_restore(
         raise BackupRestoreError(str(err), reason="invalid_snapshot") from err
 
 
-def _snapshot_configs_match(expected: Any, current: Any) -> bool:
-    """Reuse the preview's type-sensitive comparison (False is not 0)."""
-    patch: list[dict[str, Any]] = []
-    _compute_json_patch(expected, current, 1, patch)
-    return not patch
-
-
 async def _verify_readback(
     read: Callable[[], Awaitable[Any]], expected: Any, keys: tuple[str, ...]
 ) -> Literal["matched", "mismatched", "unavailable"]:
-    """Bound readback after a dispatched apply, including uncertain replies."""
-    try:
-        async with asyncio.timeout(5):
-            restored = await read()
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("readback", err)
-        return "unavailable"
-    actual = {key: restored[key] for key in keys} if restored is not None else None
-    if _snapshot_configs_match(expected, actual):
-        return "matched"
-    logger.warning("Flow helper restore step=readback reason=mismatch")
-    return "mismatched"
+    return await _shared_verify_readback(
+        read,
+        expected,
+        keys,
+        read_errors=_CAPTURE_TRANSIENT_ERRORS,
+        log_failure=_log_flow_helper_failure,
+    )
 
 
-async def _apply_and_verify(
-    label: str,
-    apply: Callable[[], Awaitable[Any]],
-    verify: Callable[[], Awaitable[Literal["matched", "mismatched", "unavailable"]]],
-) -> Any:
-    """Run a flow-driven restore, then confirm it by reading the result back."""
-    from .tools.config_entry_flow import OptionsFlowError
-
-    try:
-        result = await apply()
-    except OptionsFlowError as err:
-        logger.warning(
-            "Flow helper restore step=flow failed: %s apply_status=%s reason=%s "
-            "fields=%s cause=%s",
-            type(err).__name__,
-            err.apply_status,
-            err.reason,
-            list(err.fields),
-            type(err.__cause__).__name__ if err.__cause__ else None,
-        )
-        if err.apply_status == "not_applied":
-            raise BackupRestoreError(
-                str(err)
-                if err.reason
-                else f"{label} flow refused the restore; nothing was applied",
-                reason=err.reason,
-                fields=list(err.fields),
-            ) from err
-        raise BackupRestoreError(
-            f"{label} restore did not complete normally; inspect it before retrying",
-            apply_status=err.apply_status,
-            verification_status=await verify(),
-            reason=err.reason,
-            fields=list(err.fields),
-        ) from err
-    verification = await verify()
-    if verification != "matched":
-        outcome = (
-            "verification is unavailable"
-            if verification == "unavailable"
-            else "verification did not match the snapshot"
-        )
-        raise BackupRestoreError(
-            f"{label} restore was applied but {outcome}; inspect it before retrying",
-            apply_status="applied",
-            verification_status=verification,
-        )
-    return result
-
-
+@legacy_flow
 async def _restore_flow_helper(
     client: Any, entity_id: str, config: Any, helper_type: str
 ) -> Any:
-    """Restore a flow helper's options, or recreate an authoritatively absent one.
+    from .backends.remote_snapshot_flows import RemoteSnapshotFlowPorts
 
-    The snapshot goes through the helper's options flow. A snapshot option
-    none of its forms offers (fixed at creation, like a template's type) must
-    still match the stored one, or the restore is refused unapplied.
-    """
-    from .tools.config_entry_flow import update_config_entry_options
-
-    label = _flow_label(helper_type)
-    snapshot = _flow_snapshot_for_restore(entity_id, config, helper_type)
-    entry_id = _flow_entry_id(entity_id, snapshot, helper_type)
-    try:
-        current = await _fetch_flow_helper(client, entry_id, helper_type)
-        if current is None:
-            return await _recreate_flow_helper(client, entry_id, snapshot, helper_type)
-    except BackupRestoreError as err:
-        _log_flow_helper_failure("options_preflight", err)
-        raise
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("options_preflight", err)
-        raise BackupRestoreError(
-            f"{label} helper could not be checked; restore was not attempted"
-        ) from err
-    options = _flow_options(snapshot.get("options"), helper_type)
-    return await _apply_and_verify(
-        f"{label} helper",
-        partial(
-            update_config_entry_options,
-            client,
-            entry_id,
-            options,
-            expected_domain=helper_type,
-            noun="helper",
-            keep_current_values=False,
-            fixed_options=current["options"],
-        ),
-        partial(
-            _verify_readback,
-            partial(_fetch_flow_helper, client, entry_id, helper_type),
-            {"entry_id": entry_id, "options": options},
-            ("entry_id", "options"),
-        ),
+    return await _shared_flow_restore._restore_flow_helper(
+        RemoteSnapshotFlowPorts(client), entity_id, config, helper_type
     )
 
 
@@ -3403,64 +2489,15 @@ def _flow_recreated_outcome(result: Any, original_entry_id: str) -> dict[str, An
     }
 
 
-def _flow_saved_entities(snapshot: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """The entities a flow-helper snapshot recorded for its config entry.
-
-    Each must derive its unique_id from the entry (see _recreated_unique_id),
-    or the recreated entity it maps to cannot be found.
-    """
-    entities = snapshot.get("entities")
-    if entities is None or entities == []:
-        return None  # Older snapshots captured options without registry metadata.
-    if not isinstance(entities, list):
-        raise BackupRestoreError(
-            "Helper snapshot has an invalid entity mapping", reason="invalid_snapshot"
-        )
-    seen: set[str] = set()
-    for row in entities:
-        entity_id = row.get("entity_id") if isinstance(row, dict) else None
-        if (
-            not isinstance(entity_id, str)
-            or not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", entity_id)
-            or entity_id in seen
-            or not isinstance(row.get("unique_id"), str)
-            or snapshot["entry_id"] not in row["unique_id"]
-            or any(
-                row.get(key) is not None and not isinstance(row[key], str)
-                for key in ("name", "original_name")
-            )
-        ):
-            raise BackupRestoreError(
-                "Helper snapshot has an unsupported entity mapping",
-                reason="invalid_snapshot",
-            )
-        seen.add(entity_id)
-    return entities
-
-
+@legacy_flow
 async def _flow_recreation_preflight(
     client: Any, entry_id: str, snapshot: dict[str, Any], helper_type: str
 ) -> list[dict[str, Any]] | None:
-    """Confirm absence independently, then reject collisions before creating."""
-    _flow_options(snapshot.get("options"), helper_type)
-    saved = _flow_saved_entities(snapshot)
-    # list_config_entries() drops malformed rows. Absence must be established
-    # from the complete native response before a restore can create an entry.
-    entries = _require_list(
-        await client._request("GET", "/config/config_entries/entry"), "config entries"
+    from .backends.remote_snapshot_flows import RemoteSnapshotFlowPorts
+
+    return await _shared_flow_restore._flow_recreation_preflight(
+        RemoteSnapshotFlowPorts(client), entry_id, snapshot, helper_type
     )
-    for raw_entry in entries:
-        entry = _require_dict(raw_entry, "config entry")
-        if not isinstance(entry.get("entry_id"), str) or not entry["entry_id"]:
-            raise BackupRestoreError("Config-entry listing is incomplete")
-        if entry["entry_id"] == entry_id:
-            raise BackupRestoreError(
-                f"{_flow_label(helper_type)} config entry still exists; recreation was not attempted",
-                reason="entry_still_exists",
-            )
-    for row in saved or []:
-        await _check_entity_collision(client, row["entity_id"])
-    return saved
 
 
 async def _check_entity_collision(
@@ -3501,147 +2538,15 @@ async def _created_entity(client: Any, entry_id: str, unique_id: str) -> dict[st
             await asyncio.sleep(0.1)
 
 
+@legacy_flow
 async def _recreate_flow_helper(
     client: Any, entry_id: str, snapshot: dict[str, Any], helper_type: str
 ) -> dict[str, Any]:
-    """Create through the ordinary helper flow; never retry uncertain writes."""
-    from .tools.config_entry_flow import CreationFlowError, create_flow_helper
+    from .backends.remote_snapshot_flows import RemoteSnapshotFlowPorts
 
-    label = _flow_label(helper_type)
-    snapshot = _flow_snapshot_for_restore(entry_id, snapshot, helper_type)
-    try:
-        saved = await _flow_recreation_preflight(
-            client, entry_id, snapshot, helper_type
-        )
-    except BackupRestoreError as err:
-        _log_flow_helper_failure("recreation_preflight", err)
-        raise
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("recreation_preflight", err)
-        raise BackupRestoreError(
-            f"{label} helper absence and entity IDs could not be verified; recreation was not attempted",
-            reason="recreation_preflight_unavailable",
-        ) from err
-    try:
-        # A menu-rooted creation flow is answered from the snapshot's options
-        # (a template's template_type names its branch).
-        result = await create_flow_helper(
-            client, helper_type, dict(snapshot["options"]), complete_snapshot=True
-        )
-    except CreationFlowError as err:
-        _log_flow_helper_failure("create_entry", err)
-        identity: dict[str, Any] = (
-            {"entry_id": err.entry_id, "entity_id": err.entry_id}
-            if err.entry_id
-            else {}
-        )
-        raise BackupRestoreError(
-            str(err),
-            apply_status=err.apply_status,
-            reason=err.reason
-            or (
-                "creation_outcome_unknown"
-                if err.apply_status == "unknown"
-                else "creation_flow_failed"
-            ),
-            fields=list(err.fields),
-            restore_mode="recreated",
-            original_entry_id=entry_id,
-            **identity,
-        ) from err
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("create_entry", err)
-        raise BackupRestoreError(
-            f"{label} helper creation outcome is unknown; inspect helpers before retrying",
-            apply_status="unknown",
-            reason="creation_outcome_unknown",
-            restore_mode="recreated",
-            original_entry_id=entry_id,
-        ) from err
-    new_entry_id = result.get("entry_id")
-    if (
-        not isinstance(new_entry_id, str)
-        or not new_entry_id
-        or new_entry_id == entry_id
-    ):
-        logger.warning(
-            "Flow helper restore step=create_entry reason=missing_new_identity"
-        )
-        raise BackupRestoreError(
-            f"{label} helper creation returned no new identity; inspect helpers before retrying",
-            apply_status="unknown",
-            reason="creation_outcome_unknown",
-            original_entry_id=entry_id,
-        )
-    outcome = {
-        "entry_id": new_entry_id,
-        "entity_id": new_entry_id,
-        "original_entry_id": entry_id,
-        "restore_mode": "recreated",
-    }
-    expected = {"entry_id": new_entry_id, "options": snapshot["options"]}
-    mapping: list[dict[str, str]] = []
-    try:
-        verification = await _verify_readback(
-            partial(_fetch_flow_helper, client, new_entry_id, helper_type),
-            expected,
-            ("entry_id", "options"),
-        )
-        if verification != "matched":
-            raise BackupRestoreError(
-                f"{label} helper was recreated but its options could not be verified",
-                verification_status=verification,
-            )
-        if saved is not None:
-            mapping = await _restore_entity_ids(client, new_entry_id, entry_id, saved)
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("recreation_readback", err)
-        detail = (
-            err.outcome
-            if isinstance(err, BackupRestoreError)
-            else {"verification_status": "unavailable"}
-        )
-        raise BackupRestoreError(
-            f"{label} helper was recreated but recovery is incomplete; inspect the new entry before retrying",
-            **{**detail, **outcome, "apply_status": "applied"},
-        ) from err
-    response = {
-        **result,
-        **outcome,
-        "entity_ids_restored": saved is not None,
-        "entity_id_mapping": mapping,
-    }
-    if saved is None:
-        response["warnings"] = [
-            "This snapshot has no entity mapping; the recreated helper may have a new entity ID."
-        ]
-    return response
-
-
-def _subentry_target(entity_id: str) -> tuple[str, str]:
-    """``<entry_id>/<subentry_id>``, the id a config_subentry backup is keyed by."""
-    entry_id, _, subentry_id = entity_id.partition("/")
-    if not entry_id or not subentry_id:
-        raise _FlowHelperReadError(
-            "Config subentry backups are keyed by <entry_id>/<subentry_id>",
-            "invalid_target",
-        )
-    return entry_id, subentry_id
-
-
-def _subentry_data(data: Any) -> dict[str, Any]:
-    from .redaction import sentinel_option_keys
-
-    if not isinstance(data, dict):
-        raise _FlowHelperReadError(
-            "Config subentry data must be an object", "invalid_data"
-        )
-    if sentinel_option_keys(data) or _contains_redacted_leaf(data):
-        raise _FlowHelperReadError(
-            "Config subentry data contains redacted values; capture is incomplete",
-            "redacted_data",
-        )
-    return data
+    return await _shared_flow_restore._recreate_flow_helper(
+        RemoteSnapshotFlowPorts(client), entry_id, snapshot, helper_type
+    )
 
 
 async def _list_config_subentries(client: Any, entry_id: str) -> list[dict[str, Any]]:
@@ -3698,21 +2603,6 @@ async def _list_config_subentries(client: Any, entry_id: str) -> list[dict[str, 
     ]
 
 
-def _subentry_row(
-    subentries: list[dict[str, Any]], entry_id: str, subentry_id: str
-) -> dict[str, Any] | None:
-    match = next((s for s in subentries if s.get("subentry_id") == subentry_id), None)
-    if match is None:
-        return None
-    return {
-        "entry_id": entry_id,
-        "subentry_id": subentry_id,
-        "subentry_type": match.get("subentry_type"),
-        "title": match.get("title"),
-        "data": _subentry_data(match.get("data")),
-    }
-
-
 async def _fetch_config_subentry(client: Any, entity_id: str) -> Any:
     """Read a config subentry's data through the component."""
     entry_id, subentry_id = _subentry_target(entity_id)
@@ -3720,88 +2610,18 @@ async def _fetch_config_subentry(client: Any, entity_id: str) -> Any:
     return _subentry_row(subentries, entry_id, subentry_id)
 
 
+@legacy_flow
 async def _restore_config_subentry(
     client: Any, entity_id: str, config: Any, *, recreate_only: bool = False
 ) -> Any:
-    """Restore a subentry's data through its reconfigure flow.
+    from .backends.remote_snapshot_flows import RemoteSnapshotFlowPorts
 
-    A snapshot field none of the reconfigure forms offers must still match the
-    stored one. When Home Assistant marks the last form (``last_step``) that
-    is checked before anything is submitted; otherwise the forms are applied
-    and the readback reports the mismatch.
-    """
-    from .tools.config_subentry_restore import restore_config_subentry
-
-    try:
-        entry_id, subentry_id = _subentry_target(entity_id)
-        snapshot = _require_dict(config, "config subentry snapshot")
-        if (snapshot.get("entry_id"), snapshot.get("subentry_id")) != (
-            entry_id,
-            subentry_id,
-        ) or not isinstance(snapshot.get("subentry_type"), str):
-            raise _FlowHelperReadError(
-                "snapshot does not match its target", "target_mismatch"
-            )
-        data = _subentry_data(snapshot.get("data"))
-    except HomeAssistantError as err:
-        _log_flow_helper_failure("snapshot_validation", err)
-        raise BackupRestoreError(
-            f"Config subentry snapshot is invalid: {err}", reason="invalid_snapshot"
-        ) from err
-    try:
-        subentries = await _list_config_subentries(client, entry_id)
-        current = _subentry_row(subentries, entry_id, subentry_id)
-    except _CAPTURE_TRANSIENT_ERRORS as err:
-        _log_flow_helper_failure("subentry_preflight", err)
-        detail = _flow_safe_failure_detail("subentry_preflight", err)
-        raise BackupRestoreError(
-            "Config subentry could not be checked"
-            + (f" ({detail})" if detail else "")
-            + "; restore was not attempted",
-            reason=_flow_failure_reason("subentry_preflight", err),
-        ) from err
-    if current is None:
-        return await _recreate_config_subentry(
-            client, entity_id, snapshot, data, subentries
-        )
-    if recreate_only:  # absent at the safety capture: nothing may be edited
-        raise BackupRestoreError(
-            "Config subentry reappeared after its safety capture; not restored",
-            reason="entry_still_exists",
-        )
-    expected, keys = _subentry_expectation(snapshot, data)
-    return await _apply_and_verify(
-        "Config subentry",
-        partial(
-            restore_config_subentry,
-            client,
-            entry_id,
-            subentry_id,
-            snapshot["subentry_type"],
-            data,
-            current["data"],
-            snapshot.get("title"),
-        ),
-        partial(
-            _verify_readback,
-            partial(_fetch_config_subentry, client, entity_id),
-            expected,
-            keys,
-        ),
+    return await _shared_flow_restore._restore_config_subentry(
+        RemoteSnapshotFlowPorts(client), entity_id, config, recreate_only=recreate_only
     )
 
 
-def _subentry_expectation(
-    snapshot: dict[str, Any], data: dict[str, Any]
-) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """What a restored subentry must read back: its data, and its title when
-    the snapshot recorded one (a flow may keep the name there, not in data)."""
-    title = snapshot.get("title")
-    if isinstance(title, str):
-        return {"data": data, "title": title}, ("data", "title")
-    return {"data": data}, ("data",)
-
-
+@legacy_flow
 async def _recreate_config_subentry(
     client: Any,
     entity_id: str,
@@ -3809,65 +2629,11 @@ async def _recreate_config_subentry(
     data: dict[str, Any],
     siblings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Create a deleted subentry again from its snapshot; it gets a new id.
+    from .backends.remote_snapshot_flows import RemoteSnapshotFlowPorts
 
-    ``siblings`` are the entry's current subentries: one of the snapshot's type
-    that already holds its data and title is an earlier recreation, so
-    restoring the same snapshot twice does not add a second copy. The title
-    is part of the match because sibling agents can differ by name alone.
-    """
-    from .tools.config_entry_flow import OptionsFlowError
-    from .tools.config_subentry_restore import recreate_config_subentry
-
-    entry_id, subentry_id = _subentry_target(entity_id)
-    title = snapshot.get("title")
-    recreated = next(
-        (
-            sub.get("subentry_id")
-            for sub in siblings
-            if sub.get("subentry_type") == snapshot["subentry_type"]
-            and sub.get("data") == data
-            and (not isinstance(title, str) or sub.get("title") == title)
-        ),
-        None,
+    return await _shared_flow_restore._recreate_config_subentry(
+        RemoteSnapshotFlowPorts(client), entity_id, snapshot, data, siblings
     )
-    if recreated:
-        raise BackupRestoreError(
-            f"Config subentry {subentry_id} is gone, but {entry_id}/{recreated} "
-            "already holds this snapshot's data and title; a second copy was not "
-            "created",
-            reason="already_recreated",
-            entity_id=f"{entry_id}/{recreated}",
-        )
-    try:
-        result = await recreate_config_subentry(
-            client, entry_id, snapshot["subentry_type"], data, snapshot.get("title")
-        )
-    except OptionsFlowError as err:
-        _log_flow_helper_failure("subentry_recreation", err)
-        raise BackupRestoreError(
-            str(err)
-            if err.reason or err.apply_status == "not_applied"
-            else "Config subentry recreation did not complete normally; inspect "
-            "the entry's subentries before retrying",
-            apply_status=err.apply_status,
-            reason=err.reason,
-            fields=list(err.fields),
-        ) from err
-    target = f"{entry_id}/{result['subentry_id']}"
-    expected, keys = _subentry_expectation(snapshot, data)
-    verification = await _verify_readback(
-        partial(_fetch_config_subentry, client, target), expected, keys
-    )
-    if verification != "matched":
-        raise BackupRestoreError(
-            f"Config subentry was recreated as {target} but its data or title "
-            "could not be verified",
-            apply_status="applied",
-            verification_status=verification,
-            entity_id=target,
-        )
-    return {**result, "original_subentry_id": subentry_id, "entity_id": target}
 
 
 def _make_flow_helper_handler(helper_type: str) -> DomainHandler:
@@ -3899,6 +2665,11 @@ _KNOWN_HELPER_TYPES = sorted(_HELPER_LIST_TYPES)
 
 
 def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
+    from .backends.legacy_entity_snapshots import (
+        fetch_entity_registry,
+        restore_entity_registry,
+    )
+
     mgr.register(DomainHandler("automation", _fetch_automation, _restore_automation))
     mgr.register(DomainHandler("script", _fetch_script, _restore_script))
     mgr.register(DomainHandler("scene", _fetch_scene, _restore_scene))
@@ -3921,6 +2692,9 @@ def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
     )
     mgr.register(DomainHandler("todo_item", _fetch_todo_item, _restore_todo_item))
     mgr.register(DomainHandler("entity", _fetch_entity_state, _restore_entity_state))
+    mgr.register(
+        DomainHandler("entity_registry", fetch_entity_registry, restore_entity_registry)
+    )
     mgr.register(DomainHandler("device", _fetch_device, _restore_device))
     mgr.register(DomainHandler("integration", fetch_integration, restore_integration))
     mgr.register(DomainHandler("file", _fetch_file, _restore_file))
@@ -3940,3 +2714,120 @@ def register_default_handlers(mgr: BackupManager, _client: Any) -> None:
             "helper_config_subentry", _fetch_config_subentry, _restore_config_subentry
         )
     )
+
+
+@dataclass
+class _LegacyRestoreOperations:
+    manager: BackupManager
+    domain: str
+    entity_id: str
+    config: Any
+    handler: DomainHandler
+    registry_before: Any = None
+
+    async def needs_safety(self) -> bool:
+        if self.domain == "entity_registry":
+            self.registry_before = await self.handler.fetch(
+                self.manager._client, self.entity_id
+            )
+            if self.registry_before is None:
+                raise BackupRestoreError(
+                    "The saved entity registration no longer exists; restore cannot recreate it.",
+                    reason="entry_deleted",
+                )
+            return True
+        return await self.manager._restore_needs_safety(
+            self.handler, self.entity_id, self.config
+        )
+
+    async def capture_safety(self, outcome: dict[str, Any]) -> Path | None:
+        if self.domain == "entity_registry":
+            if not getattr(self.manager._settings, "enable_auto_backup", False):
+                return None
+            return await self.manager.maybe_snapshot_known(
+                self.domain,
+                self.entity_id,
+                self.registry_before,
+                tool_name="ha_manage_backup.restore.safety",
+                force=True,
+                mandatory=True,
+            )
+        return await self.manager._capture_restore_safety(
+            self.domain, self.entity_id, outcome, self.config
+        )
+
+    async def require_safety(self, path: Path) -> None:
+        await _await_backup_io(_require_restore_safety, path)
+
+    async def apply(self, needs_safety: bool, has_safety: bool) -> Any:
+        if self.domain == "entity_registry":
+            from .backends.legacy_entity_snapshots import restore_entity_registry
+
+            return await restore_entity_registry(
+                self.manager._client,
+                self.entity_id,
+                self.config,
+                expected=self.registry_before,
+            )
+        # Absence commits to recreation; a target reappearing cannot be edited
+        # without the recovery point that an existing target requires.
+        restore = (
+            functools.partial(_restore_config_subentry, recreate_only=True)
+            if self.domain == "helper_config_subentry" and not has_safety
+            else self.handler.restore
+            if needs_safety
+            else functools.partial(
+                _recreate_flow_helper, helper_type=_flow_type(self.domain)
+            )
+        )
+        return await restore(self.manager._client, self.entity_id, self.config)
+
+    def log_failure(self, step: str, error: BaseException) -> None:
+        if _is_flow_helper_domain(self.domain):
+            _log_flow_helper_failure(step, error)
+
+    def failed(
+        self,
+        error: BaseException,
+        step: str,
+        status: ApplyStatus,
+        outcome: dict[str, Any],
+    ) -> NoReturn:
+        if _is_flow_helper_domain(self.domain):
+            label = _flow_label(_flow_type(self.domain))
+            _log_flow_helper_failure(step, error)
+            message = _flow_safe_failure_detail(step, error) or (
+                f"{label} helper restore was not attempted; inspect the target and backup storage"
+                if status == "not_applied"
+                else f"{label} helper restore outcome is unknown; inspect current options before retrying"
+            )
+            raise BackupRestoreError(
+                message,
+                apply_status=status,
+                reason=_flow_failure_reason(step, error),
+                **outcome,
+            ) from error
+        _raise_with_restore_outcome(error, {**outcome, "apply_status": status})
+
+    def completed(self, result: Any) -> dict[str, Any]:
+        if not _is_flow_helper_domain(self.domain):
+            return {}
+        return {
+            "apply_status": "applied",
+            "verification_status": "matched",
+            **_flow_recreated_outcome(result, self.entity_id),
+        }
+
+
+__all__ = [
+    "BackupManager",
+    "DomainHandler",
+    "SCHEMA_VERSION",
+    "SnapshotInUseError",
+    "_TEXT_DOMAINS",
+    "_entity_id_aliases",
+    "_restore_entity_ids",
+    "_safe_entity_id",
+    "get_backup_manager",
+    "register_default_handlers",
+]

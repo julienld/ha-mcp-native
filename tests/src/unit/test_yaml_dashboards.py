@@ -48,7 +48,7 @@ def _stub_config_check(monkeypatch):
     handler would await a bare mock.
     """
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.async_check_ha_config_file",
+        "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
         AsyncMock(return_value=None),
         raising=False,
     )
@@ -396,14 +396,13 @@ class TestYamlKeyDenylistContract:
         call = SimpleNamespace(
             data={"extra_allowed_keys": ["alert2", "http", "", "homeassistant"]}
         )
-        assert _caller_extra_allowed_keys(call) == frozenset({"alert2"})
+        assert _caller_extra_allowed_keys(call.data) == frozenset({"alert2"})
 
     def test_caller_extra_keys_default_empty(self):
-        from types import SimpleNamespace
 
         from custom_components.ha_mcp_tools import _caller_extra_allowed_keys
 
-        assert _caller_extra_allowed_keys(SimpleNamespace(data={})) == frozenset()
+        assert _caller_extra_allowed_keys({}) == frozenset()
 
 
 class TestPostActionTableContract:

@@ -55,12 +55,15 @@ from urllib.parse import urlencode, urlparse
 import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.const import __version__ as HA_VERSION
 
 from .const import (
     DATA_WEBHOOK,
     DOMAIN,
     OAUTH_BASE,
 )
+from .native_oauth import NativeOAuthUnavailable, async_forward_core
+from .oauth_core import HA_OAUTH_UNAVAILABLE, supports_ha_oauth
 from .oauth_legacy import (
     _PKCE_CHALLENGE_RE,
     _TOKEN_RESPONSE_HEADERS,
@@ -346,6 +349,9 @@ class AutoApproveAuthorizeView(HomeAssistantView):
         from .oauth_dcr import CFG_DCR_SIGNING_KEY
         from .oauth_ha_auth import resolve_forward_client_id
 
+        if not supports_ha_oauth(HA_VERSION):
+            return _json_error("unsupported_response_type", 400, HA_OAUTH_UNAVAILABLE)
+
         # MultiDict copy: repeated OAuth params (e.g. RFC 8707 ``resource``)
         # must survive the forward — a plain dict() collapses them.
         params = MultiDict(request.query)
@@ -564,7 +570,11 @@ def _unavailable(description: str, *, revocation: bool) -> web.Response:
 
 
 async def _forward_to_core(
-    hass: HomeAssistant, cfg: dict[str, Any], path: str, form: MultiDict
+    hass: HomeAssistant,
+    cfg: dict[str, Any],
+    path: str,
+    form: MultiDict,
+    request: web.Request | None = None,
 ) -> tuple[int, bytes, str] | web.Response:
     """POST ``form`` to core's ``path`` server-side; its raw answer or a 503.
 
@@ -580,6 +590,13 @@ async def _forward_to_core(
     from .oauth_ha_auth import core_token_base_url
 
     revocation = path == "/auth/revoke" or form.get("action") == "revoke"
+    if cfg.get("native_manager") is not None:
+        if request is None:
+            return _unavailable("native request is unavailable", revocation=revocation)
+        try:
+            return await async_forward_core(hass, cfg, path, form, request)
+        except NativeOAuthUnavailable:
+            return _unavailable("core auth is unavailable", revocation=revocation)
     session = cfg.get("session")
     if session is None:
         _LOGGER.warning(
@@ -697,6 +714,12 @@ class AutoApproveTokenView(HomeAssistantView):
         form: MultiDict = MultiDict(
             (key, str(value)) for key, value in raw_form.items()
         )
+        if (
+            form.get("action") != "revoke"
+            and form.get("grant_type") == "authorization_code"
+            and not supports_ha_oauth(HA_VERSION)
+        ):
+            return _json_error("unsupported_grant_type", 400, HA_OAUTH_UNAVAILABLE)
         dcr_key = cfg.get(CFG_DCR_SIGNING_KEY)
         client_id = str(form.get("client_id", ""))
         resolved = await self._ha_auth_forward_identity(cfg, form, client_id, dcr_key)
@@ -736,7 +759,7 @@ class AutoApproveTokenView(HomeAssistantView):
         form.popall("client_id", None)
         form["client_id"] = forward_id
         return await self._proxy_token_to_core(
-            cfg, form, forward_id, client_id, dcr_key
+            cfg, form, forward_id, client_id, dcr_key, request
         )
 
     async def _ha_auth_forward_identity(
@@ -799,6 +822,7 @@ class AutoApproveTokenView(HomeAssistantView):
         forward_id: str,
         client_id: str,
         dcr_key: bytes | None,
+        request: web.Request | None = None,
     ) -> web.Response:
         """POST the rewritten token form to core and relay its response.
 
@@ -809,7 +833,9 @@ class AutoApproveTokenView(HomeAssistantView):
         """
         from .oauth_ha_auth import rewrite_token_response_body
 
-        forwarded = await _forward_to_core(self._hass, cfg, "/auth/token", form)
+        forwarded = await _forward_to_core(
+            self._hass, cfg, "/auth/token", form, request
+        )
         if isinstance(forwarded, web.Response):
             return forwarded
         status, body, content_type = forwarded
@@ -889,7 +915,9 @@ class AutoApproveRevokeView(HomeAssistantView):
                     "Cache-Control": "no-store",
                 },
             )
-        forwarded = await _forward_to_core(self._hass, cfg, "/auth/revoke", form)
+        forwarded = await _forward_to_core(
+            self._hass, cfg, "/auth/revoke", form, request
+        )
         if isinstance(forwarded, web.Response):
             # The helper's only Response is the 503, and it already carries
             # the RFC 7009 §2.2.1 Retry-After for every revocation, whichever

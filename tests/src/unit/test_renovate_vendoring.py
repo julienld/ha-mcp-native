@@ -2,23 +2,27 @@
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_ROOT / "scripts"))
+
+import vendor_fastmcp  # noqa: E402
+
 _PIN_FILE = "src/ha_mcp/_vendor/requirements.txt"
 _WEBSOCKETS_COMMAND = "python3 -I scripts/vendor_websockets.py"
 _FASTMCP_COMMAND = "python3 -I scripts/vendor_fastmcp.py"
 _HOOKS = {
     _WEBSOCKETS_COMMAND: (["websockets"], ["src/ha_mcp/_vendor/websockets/**"]),
     _FASTMCP_COMMAND: (
-        ["fastmcp-slim", "mcp", "mcp-types"],
+        [package.distribution for package in vendor_fastmcp.PACKAGES],
         [
-            "src/ha_mcp/_vendor/fastmcp/**",
-            "src/ha_mcp/_vendor/mcp/**",
-            "src/ha_mcp/_vendor/mcp_types/**",
+            f"src/ha_mcp/_vendor/{package.package}/**"
+            for package in vendor_fastmcp.PACKAGES
         ],
     ),
 }

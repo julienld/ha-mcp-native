@@ -23,7 +23,7 @@ name: CodeQL Code Quality
 #
 # The matrix also gave each language its OWN runner and its own 20-minute
 # budget. Serially they share one job, so the create+analyze steps carry
-# per-language step caps summing to that same 20 minutes each. Without them a
+# per-language step caps (28 minutes for Python, 20 for JavaScript). Without them a
 # hung python analysis would consume javascript's time and the job cap would
 # then cancel the run, which skips the javascript steps entirely.
 #
@@ -107,7 +107,7 @@ jobs:
     # That only holds if EVERY step is capped and this number exceeds their
     # sum - otherwise the uncapped steps eat the margin and the job cap
     # becomes the binding constraint after all. Every step below therefore
-    # carries a budget; they total 57. The 3 minutes of slack cover what
+    # carries a budget; they total 65. The 3 minutes of slack cover what
     # cannot carry a budget of its own: job setup, per-step overhead, and the
     # implicit post-job steps. test_codeql_workflow_shape.py asserts all three
     # halves - no uncapped step, and a slack of at least those 3 minutes.
@@ -117,7 +117,7 @@ jobs:
     # slow: a cold Python setup or a stalled artifact upload now fails the
     # gate rather than dragging it out. That is the trade for a hung analysis
     # no longer being able to hide the other language's result.
-    timeout-minutes: 60
+    timeout-minutes: 68
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -151,7 +151,10 @@ jobs:
             --overwrite
 
       - name: Analyze with python quality + security suites
-        timeout-minutes: 12
+        # Run 39899033220 reached 144/146 queries at the old 12-minute cap;
+        # ConflictingAttributesInBaseClasses alone took 5m21s. Keep every query
+        # and allow the larger native tree to finish before writing its SARIF.
+        timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

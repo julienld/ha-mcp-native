@@ -14,9 +14,20 @@ from typing import Any, NoReturn
 
 import httpx
 
+from ha_mcp.runtime import log_window as _log_window
+
 from .._vendor.websockets.exceptions import WebSocketException
 from .._version import get_supervisor_base_url, is_running_in_addon
 from ..config import get_global_settings
+from ..errors import NON_ADMIN_TOKEN_WARNING as NON_ADMIN_TOKEN_WARNING
+from ..errors import HomeAssistantAdminRequiredError as HomeAssistantAdminRequiredError
+from ..errors import HomeAssistantAPIError as HomeAssistantAPIError
+from ..errors import HomeAssistantAuthError as HomeAssistantAuthError
+from ..errors import HomeAssistantCommandError as HomeAssistantCommandError
+from ..errors import HomeAssistantCommandTimeout as HomeAssistantCommandTimeout
+from ..errors import HomeAssistantConnectionError as HomeAssistantConnectionError
+from ..errors import HomeAssistantError as HomeAssistantError
+from ..runtime.automation_identity import automation_write_body
 from .admin_routes import is_admin_only_route
 from .models import ErrorLogPage
 from .supervisor_client import make_supervisor_httpx_client
@@ -55,40 +66,11 @@ logger = logging.getLogger(__name__)
 _RETRYABLE_GATEWAY_STATUS = frozenset({502, 503, 504})
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _MAX_REQUEST_ATTEMPTS = 3
-# Smallest log window this client requests. Supervisor's Range syntax addresses
-# a newest-anchored window by its first entry, so a one-entry one is
-# inexpressible (``entries=:0:1`` reads from the OLDEST entry instead);
-# Supervisor coerces its own ``?lines=1`` to 2 (supervisor/api/host.py) and this
-# client mirrors that on every route, so all install types serve the same slice.
-# Shared with the tool layer, which sizes its fetch window against it.
-MIN_LOG_WINDOW_LINES = 2
-# Entries the has_more probe reads from just behind a full window. A one-entry
-# probe compared one rendered line, which a boundary duplicate (the same
-# timestamp-less traceback line logged twice) could false-match into "end of
-# history". Comparing a block this deep requires that many CONSECUTIVE
-# identical lines to straddle the boundary — and then the history a false stop
-# skips is more of the same duplicates. Timestamps cannot close the gap
-# instead: the colliding lines are exactly the ones without them, and
-# journald's cursor/timestamp metadata exists only in the journal export
-# format, which the hassio-proxy route cannot request.
-_PROBE_ENTRIES = 8
-NON_ADMIN_TOKEN_WARNING = (
-    "ha-mcp does not officially support non-admin Home Assistant tokens. They "
-    "still work, but admin-only operations fail. Use a long-lived access token "
-    "from an administrator's profile for full access."
-)
+MIN_LOG_WINDOW_LINES = _log_window.MIN_LOG_WINDOW_LINES
 _ADMIN_ONLY_401_MESSAGE = (
     "Home Assistant returned 401 for an admin-only endpoint: "
     "the token is invalid or its user is not an administrator"
 )
-
-
-class HomeAssistantError(Exception):
-    """Base exception for Home Assistant API errors."""
-
-
-class HomeAssistantConnectionError(HomeAssistantError):
-    """Connection error to Home Assistant."""
 
 
 class HomeAssistantCommandNotSent(HomeAssistantConnectionError):
@@ -107,45 +89,6 @@ class HomeAssistantCommandNotSent(HomeAssistantConnectionError):
     ``HomeAssistantConnectionError`` (the close handler sets it on the pending future),
     so type alone distinguishes never-sent from sent-then-dropped/ambiguous.
     """
-
-
-class HomeAssistantAuthError(HomeAssistantError):
-    """Authentication error with Home Assistant.
-
-    Sibling of ``HomeAssistantAPIError`` (not a subclass). The codebase has
-    18 ``except HomeAssistantAPIError`` sites (ws_waiters polling,
-    tools_integrations registry lookups, etc.) that deliberately rely on
-    auth errors NOT matching so they can propagate to a paired
-    ``except (HomeAssistantConnectionError, HomeAssistantAuthError): raise``
-    block. Subclassing AuthError under APIError silently swallowed those
-    auth errors as part of the local "this entity is not registered yet"
-    polling logic. Sites that specifically need to catch both must list
-    them explicitly (see ``_get_supervisor_log`` and
-    ``_get_system_service_log`` in ``log_sources_supervisor.py``).
-    """
-
-
-class HomeAssistantAdminRequiredError(HomeAssistantAuthError):
-    """An admin-only request refused because the token's user is not an admin.
-
-    A REST request is refused locally, never sent: Home Assistant would answer
-    401 and count it toward its IP ban (#2546). A service call is refused by
-    Home Assistant over WebSocket, where a refusal is not counted.
-    """
-
-
-class HomeAssistantAPIError(HomeAssistantError):
-    """API error from Home Assistant."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        response_data: dict[str, Any] | None = None,
-    ):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response_data = response_data
 
 
 @dataclass(frozen=True)
@@ -194,43 +137,6 @@ class SceneStorageConfigNotFoundError(HomeAssistantAPIError):
         if storage_key and storage_key != scene_id:
             msg += f" (resolved storage key: {storage_key})"
         super().__init__(msg, status_code=404)
-
-
-class HomeAssistantCommandError(HomeAssistantError):
-    """WebSocket command returned success=False.
-
-    Raised by ``WebSocketClient.send_command`` when Home Assistant responds
-    with ``{type: "result", success: False}``. Used as a type marker in
-    ``_classify_exception``'s match dispatch; classification then falls
-    through to ``_classify_by_message`` for pattern matching on the
-    error message.
-
-    ``code`` carries HA's structured WebSocket error code (the ``code`` field
-    of the response ``error`` object — e.g. ``"unknown_command"``,
-    ``"invalid_format"``) when available, so routing decisions can key off the
-    stable code rather than pattern-matching the human-readable message. It
-    defaults to ``None`` for exceptions raised without a code (older raise
-    sites, string error payloads, or direct construction in tests), which
-    keeps the single-positional-argument constructor backward-compatible.
-    """
-
-    def __init__(self, message: str, code: str | None = None):
-        super().__init__(message)
-        self.code = code
-
-
-class HomeAssistantCommandTimeout(HomeAssistantError):
-    """WebSocket ``send_command`` timed out waiting for HA's response.
-
-    Sibling of ``HomeAssistantCommandError`` (not a subclass) so existing
-    ``except HomeAssistantCommandError`` sites — including the match
-    dispatch in ``helpers._classify_exception`` — keep their original
-    semantics. Callers that specifically want to handle our 30s WS
-    round-trip timeout (e.g. short-lived waiter cleanup that should
-    swallow a timeout instead of masking the real wait result) catch
-    this type directly. Replaces a bare ``Exception("Command timeout")``
-    string-match pattern (#1382 Patch76 review).
-    """
 
 
 # Exception classes that are evidence no answer came back from Home Assistant,
@@ -898,44 +804,9 @@ class HomeAssistantClient:
         logger.debug("Checking configuration")
         return await self._request("POST", "/config/core/check_config")
 
-    @staticmethod
-    def _journald_range_header(lines: int, offset: int = 0) -> str:
-        """Build Supervisor's journald ``Range`` header for a bounded window.
+    _journald_range_header = staticmethod(_log_window._journald_range_header)
 
-        Supervisor's log endpoints accept
-        ``Range: entries=<cursor>:<num_skip>:<num_entries>`` and build
-        ``entries=:-{N-1}:{N}`` themselves for a ``?lines=N`` request
-        (supervisor/api/host.py). ``offset`` moves the window that many entries
-        further back, so the returned slice ends ``offset`` entries before the
-        newest one.
-
-        A ``lines=1`` window is only expressible with a non-zero ``offset``: at
-        ``offset=0`` the header degenerates to ``entries=:0:1``, whose
-        non-negative skip reads from the OLDEST entry instead of the newest.
-        Callers anchoring at the newest entry pass ``lines`` already floored at
-        ``MIN_LOG_WINDOW_LINES``; the one-entry probe always carries an offset.
-        """
-        # Negate the computed skip rather than prefixing "-" so the degenerate
-        # skip of 0 renders as ":0:" (non-negative, reads from the oldest
-        # entry) instead of the ill-formed ":-0:".
-        return f"entries=:{-(offset + lines - 1)}:{lines}"
-
-    @staticmethod
-    def _container_error_log_page(text: str, lines: int, offset: int) -> ErrorLogPage:
-        """Window the whole-file ``/api/error_log`` body client-side.
-
-        Same tail semantics as the journald Range the Supervisor-backed
-        branches request, so ``get_error_log`` answers with the same slice of
-        history on every install type. Paging is exact here — the whole file is
-        in hand, so ``has_more`` is simply whether anything precedes the window.
-        An ``offset`` past the start of the file yields an empty final page.
-        """
-        all_lines = text.splitlines()
-        end = len(all_lines) - offset
-        if end <= 0:
-            return ErrorLogPage(text="", has_more=False)
-        start = max(end - lines, 0)
-        return ErrorLogPage(text="\n".join(all_lines[start:end]), has_more=start > 0)
+    _container_error_log_page = staticmethod(_log_window._container_error_log_page)
 
     async def _supervisor_core_logs(self, lines: int, offset: int) -> str:
         """Fetch a journald window of HA Core's log straight from Supervisor."""
@@ -955,67 +826,9 @@ class HomeAssistantClient:
         return response.text
 
     async def _journald_error_log_page(
-        self,
-        lines: int,
-        offset: int,
-        fetch: Callable[[int, int], Awaitable[str]],
+        self, lines: int, offset: int, fetch: Callable[[int, int], Awaitable[str]]
     ) -> ErrorLogPage:
-        """Read one journald window and settle ``has_more`` with a 1-entry probe.
-
-        systemd's journal-gatewayd does not guard the negative-skip branch the
-        way it guards the positive one (``sd_journal_previous_skip(-n_skip + 1)``
-        returns no END_OF_STREAM): an offset past the start of the journal
-        CLAMPS to the oldest entry and still answers with a full window. So a
-        saturated window proves nothing about what lies behind it, and a
-        count-based ``has_more`` would stay true forever — an agent following
-        the pagination hint would loop on identical pages.
-
-        Hence: a short or empty window means the journal really is exhausted
-        (nothing clamps a window smaller), and a saturated one is settled by
-        asking for the ``_PROBE_ENTRIES`` entries that should sit just behind
-        it. If the journal has nothing there, the clamp starts the probe at
-        the same oldest entry the window starts with, so the probe block
-        equals the window's opening lines — identity means end of history. A
-        differing block proves deeper history (an under-full span behind the
-        window also clamps and misaligns, which correctly reads as "more").
-        The identity check also terminates the degraded case where an
-        intermediary strips the ``Range`` header (RFC 7233 permits it): both
-        requests then return Supervisor's default window and compare equal.
-
-        The saturation test counts lines only to decide whether to probe, never
-        to answer: one journald entry can be a multi-line traceback, so the line
-        count over-estimates entries and can only over-trigger the probe, which
-        then gives the real answer. In practice the two rarely diverge here:
-        docker's journald log driver — how HAOS captures Core's output —
-        ingests stdout line by line, one journal entry per rendered line, so
-        multi-line entries reach this endpoint only from native journal-API
-        writers.
-
-        Known imprecision, accepted: the identity check can still stop one
-        page early when the compared block — ``_PROBE_ENTRIES`` lines, or the
-        window's own length when that is smaller — is byte-identical across
-        the boundary (see the constant's comment for why timestamps cannot
-        disambiguate instead). The failure
-        direction is a missed page of exactly those duplicates — bounded,
-        unlike the infinite loop a count-based ``has_more`` produces on the
-        clamp.
-        """
-        text = await fetch(lines, offset)
-        if not text or len(text.splitlines()) < lines:
-            return ErrorLogPage(text=text, has_more=False)
-        probe = await fetch(_PROBE_ENTRIES, offset + lines)
-        probe_lines = probe.splitlines()
-        window_lines = text.splitlines()
-        # Compare the shared-length prefix: with a window smaller than the
-        # probe (lines < _PROBE_ENTRIES), an end-of-history clamp returns a
-        # probe LONGER than the window, and a full-length compare would read
-        # that as "more history" forever — the small-limit loop this method
-        # exists to prevent.
-        shared = min(len(probe_lines), len(window_lines))
-        return ErrorLogPage(
-            text=text,
-            has_more=shared > 0 and probe_lines[:shared] != window_lines[:shared],
-        )
+        return await _log_window._journald_error_log_page(lines, offset, fetch)
 
     async def get_error_log(self, lines: int, offset: int = 0) -> ErrorLogPage:
         """Get a bounded window of the Home Assistant error log.
@@ -1537,6 +1350,7 @@ class HomeAssistantClient:
         identifier: str | None = None,
         *,
         _resolved: bool = False,
+        _new_unique_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Create new automation or update existing one.
@@ -1559,7 +1373,11 @@ class HomeAssistantClient:
         """
         # Generate unique_id for new automation if not provided
         if identifier is None:
-            unique_id = str(int(time.time() * 1000))
+            unique_id = (
+                _new_unique_id
+                if _new_unique_id is not None
+                else str(int(time.time() * 1000))
+            )
             operation = "created"
             logger.debug(f"Creating new automation with unique_id: {unique_id}")
         else:
@@ -1571,33 +1389,7 @@ class HomeAssistantClient:
             operation = "updated"
             logger.debug(f"Updating automation with unique_id: {unique_id}")
 
-        # Reject mismatch between resolved storage key and inner ``config["id"]``.
-        # HA stores by the inner id field even though the URL carries one too —
-        # a divergence silently overwrites the automation whose unique_id matches
-        # the inner id, while reporting success for the URL target (#1404).
-        config_id = config.get("id")
-        if config_id is not None and str(config_id) != str(unique_id):
-            if identifier is None:
-                raise HomeAssistantAPIError(
-                    "Cannot create automation with explicit config['id']="
-                    f"{config_id!r}: Home Assistant stores by the inner id, "
-                    "which would silently overwrite an existing automation. "
-                    "Omit 'id' from config to auto-generate, or pass identifier "
-                    "to update an existing automation.",
-                    status_code=400,
-                )
-            raise HomeAssistantAPIError(
-                f"Mismatched automation id: identifier={identifier!r} resolves "
-                f"to unique_id={unique_id!r}, but config['id']={config_id!r}. "
-                "Refusing to write to prevent overwriting the wrong automation. "
-                f"Remove 'id' from config or set it to the resolved unique_id "
-                f"({unique_id!r}).",
-                status_code=400,
-            )
-
-        # Add unique_id to config for updates
-        if unique_id and "id" not in config:
-            config = {**config, "id": unique_id}
+        config = automation_write_body(config, identifier, unique_id)
 
         try:
             response = await self._request(
@@ -1674,7 +1466,9 @@ class HomeAssistantClient:
             )
         return entity_id
 
-    async def delete_automation_config(self, identifier: str) -> dict[str, Any]:
+    async def delete_automation_config(
+        self, identifier: str, *, resolved_id: str | None = None
+    ) -> dict[str, Any]:
         """
         Delete automation configuration by entity_id or unique_id.
 
@@ -1687,7 +1481,11 @@ class HomeAssistantClient:
         Raises:
             HomeAssistantAPIError: If automation not found or API error
         """
-        unique_id = await self._resolve_automation_id(identifier)
+        unique_id = (
+            resolved_id
+            if resolved_id is not None
+            else await self._resolve_automation_id(identifier)
+        )
         logger.debug(f"Deleting automation config for unique_id: {unique_id}")
 
         try:
@@ -2356,9 +2154,15 @@ class HomeAssistantClient:
             logger.error(f"Failed to upsert script config for {script_id}: {e}")
             raise
 
-    async def delete_script_config(self, script_id: str) -> dict[str, Any]:
+    async def delete_script_config(
+        self, script_id: str, *, resolved_id: str | None = None
+    ) -> dict[str, Any]:
         """Delete Home Assistant script configuration."""
-        resolved_id = await self._resolve_script_id(script_id)
+        resolved_id = (
+            resolved_id
+            if resolved_id is not None
+            else await self._resolve_script_id(script_id)
+        )
         try:
             endpoint = f"config/script/config/{resolved_id}"
             response = await self._request("DELETE", endpoint)
