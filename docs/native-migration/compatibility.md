@@ -15,6 +15,10 @@ backported into older installations:
   not remove ordinary or composite-device operations.
 - `use_device_name=True` requires Core 2026.10 on both runtimes. Older versions
   refuse it before any registry mutation; explicit names remain supported.
+- New automatic Home Assistant account OAuth login requires Core 2026.10.0 on
+  both component runtimes. Core 2026.8/9 retain Bearer/LLAT access, refresh/revocation
+  and the other authentication modes; see the
+  [account-login contract](../agents/custom-component.md#automatic-home-assistant-account-login).
 - August's schema descriptions retain the live fields and defaults but are
   labelled incomplete. Validation always calls the original Core validator.
 
@@ -24,12 +28,14 @@ serializers cause an explicit refusal before operations that require a read or
 snapshot, without a remote retry. These private names remain compatibility
 dependencies covered by the matrix.
 
-Deprecation checks apply to the Core version executing the integration. A small
-fallback may reference an older API that remains supported on that version;
-newer Core releases use their replacement. Do not suppress runtime warnings
-globally or raise the minimum merely to remove an inactive legacy symbol. If
-a supported release truly lacks a usable replacement, document any temporary
-exception with its exact API, version range and removal condition.
+Required APIs must exist at the supported minimum; optional capabilities can
+have a later feature floor. Follow the canonical
+[Core API and deprecation guidance](../agents/custom-component.md#core-version-window-and-api-changes):
+monitor announcements immediately, normally review replacements after three
+months, and retain only supported, tested compatibility branches or precisely
+documented temporary exceptions. This timing does not impose an age requirement
+on every new API. Unknown warnings require triage; no global suppression or
+general exception engine is authorized.
 
 ## Keep installation identity and stored intent
 
@@ -120,9 +126,12 @@ origin handling. Do not expose the secret ID through a fixed discovery endpoint.
 Keep the component-scoped OAuth endpoints and metadata routes. Existing issued
 grants depend on their signing keys and client identity translation, not just
 the visible MCP URL. In HA-account mode Core remains the authority, including
-refresh and revocation of `hamcp-rt-` envelopes. DCR/CIMD translation, redirect
-checks and issuer response handling are existing client compatibility, not
-optional new features. Legacy root `/authorize` and `/token` aliases retain
+refresh and revocation of `hamcp-rt-` envelopes. The new-login floor above leaves
+these routes and existing credentials intact. On older Core, account metadata
+advertises refresh only; its retained authorize URL returns the explicit upgrade
+message before forwarding. There is no broker or automatic auth-mode switch.
+DCR/CIMD translation, redirect checks and issuer response handling remain part
+of the supported new-login flow. Legacy root `/authorize` and `/token` aliases retain
 their route-ownership conflict behavior with the Webhook Proxy app (add-on).
 
 Secret-URL mode stays a secret-URL credential. Cosmetic OAuth tokens in that mode

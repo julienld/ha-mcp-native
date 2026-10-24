@@ -55,6 +55,7 @@ from urllib.parse import urlencode, urlparse
 import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.const import __version__ as HA_VERSION
 
 from .const import (
     DATA_WEBHOOK,
@@ -62,6 +63,7 @@ from .const import (
     OAUTH_BASE,
 )
 from .native_oauth import NativeOAuthUnavailable, async_forward_core
+from .oauth_core import HA_OAUTH_UNAVAILABLE, supports_ha_oauth
 from .oauth_legacy import (
     _PKCE_CHALLENGE_RE,
     _TOKEN_RESPONSE_HEADERS,
@@ -346,6 +348,9 @@ class AutoApproveAuthorizeView(HomeAssistantView):
 
         from .oauth_dcr import CFG_DCR_SIGNING_KEY
         from .oauth_ha_auth import resolve_forward_client_id
+
+        if not supports_ha_oauth(HA_VERSION):
+            return _json_error("unsupported_response_type", 400, HA_OAUTH_UNAVAILABLE)
 
         # MultiDict copy: repeated OAuth params (e.g. RFC 8707 ``resource``)
         # must survive the forward — a plain dict() collapses them.
@@ -709,6 +714,12 @@ class AutoApproveTokenView(HomeAssistantView):
         form: MultiDict = MultiDict(
             (key, str(value)) for key, value in raw_form.items()
         )
+        if (
+            form.get("action") != "revoke"
+            and form.get("grant_type") == "authorization_code"
+            and not supports_ha_oauth(HA_VERSION)
+        ):
+            return _json_error("unsupported_grant_type", 400, HA_OAUTH_UNAVAILABLE)
         dcr_key = cfg.get(CFG_DCR_SIGNING_KEY)
         client_id = str(form.get("client_id", ""))
         resolved = await self._ha_auth_forward_identity(cfg, form, client_id, dcr_key)

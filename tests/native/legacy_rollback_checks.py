@@ -2,7 +2,8 @@
 
 Run after native interop, then run the real Core process-restart check before
 the final native import/listener probe. A runtime switch does not erase cached
-legacy imports. This scenario qualifies Core 2026.10.2, not legacy Core 2026.8.
+legacy imports. Existing grants on older Core are fixture-restored; modern
+Core exercises the real PKCE authorization-code flow before the switch.
 """
 
 import asyncio
@@ -10,7 +11,7 @@ import time
 from typing import Any
 
 from camera_checks import _camera
-from oauth_checks import _code, _exchange, _refresh, _register
+from oauth_checks import _refresh, _register, prepare_grant
 
 _OAUTH = "http://127.0.0.1:8123/api/ha_mcp_tools/oauth"
 
@@ -95,10 +96,8 @@ async def exercise_legacy_rollback(checks: Any) -> None:
     )
     state = before["data"]["state"]
     client_id = await _register(checks)
-    code, verifier = await _code(checks, client_id)
-    response = await _exchange(checks, client_id, code, verifier)
-    assert response.status_code == 200, "Rollback grant preparation failed"
-    envelope = response.json()["refresh_token"]
+    grant = await prepare_grant(checks, client_id)
+    envelope = grant["refresh_token"]
     started = False
     returned = False
     primary: BaseException | None = None
@@ -128,7 +127,7 @@ async def exercise_legacy_rollback(checks: Any) -> None:
             "Native grant did not survive rollback to legacy"
         )
         checks.passed(
-            "native_candidate_runs_real_legacy_tool_and_preserves_OAuth_grant_on_Core_2026_10_2"
+            "native_candidate_runs_real_legacy_tool_and_preserves_existing_OAuth_grant"
         )
 
         await checks.control("legacy_rollback", {"action": "return"})

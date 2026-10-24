@@ -266,6 +266,8 @@ class FixtureView(HomeAssistantView):
             "seed_updates",
             "file_external_edit",
             "oauth_code",
+            "oauth_existing_grant",
+            "oauth_existing_client",
             "legacy_rollback",
             "seed_backups",
             "backup_probe",
@@ -347,10 +349,10 @@ class FixtureView(HomeAssistantView):
             from .legacy_rollback import legacy_rollback
 
             return await legacy_rollback(self.hass, user, body)
-        if operation == "oauth_code":
-            from .oauth_support import issue_oauth_code
+        if operation in {"oauth_code", "oauth_existing_grant", "oauth_existing_client"}:
+            from .oauth_support import seed_oauth
 
-            return issue_oauth_code(self.hass, user, body)
+            return await seed_oauth(self.hass, user, operation, body)
         if operation == "file_external_edit":
             from .file_support import external_yaml_edit
 
@@ -371,6 +373,8 @@ class FixtureView(HomeAssistantView):
     ) -> dict[str, Any]:
         if operation in {
             "oauth_code",
+            "oauth_existing_grant",
+            "oauth_existing_client",
             "file_external_edit",
             "seed_updates",
             "pipeline_seed",

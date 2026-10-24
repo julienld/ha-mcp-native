@@ -46,7 +46,11 @@ def manager() -> native_server.NativeServerManager:
     return runtime
 
 
-async def test_bearer_revalidated_at_execution_and_client_identity_bound() -> None:
+@pytest.mark.parametrize("core_version", ["2026.8.0", "2026.9.4", "2026.10.3"])
+async def test_bearer_revalidated_at_execution_and_client_identity_bound(
+    monkeypatch: pytest.MonkeyPatch, core_version: str
+) -> None:
+    monkeypatch.setattr(native_server, "HA_VERSION", core_version)
     runtime = manager()
     token = SimpleNamespace(
         user=SimpleNamespace(id="alice"), client_id="client-A", id="refresh"

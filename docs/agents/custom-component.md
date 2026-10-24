@@ -157,6 +157,8 @@ processes every manifest requirement. A minimal Core lane distinguishes base
 providers from packages preloaded only in the Container image. These checks do
 not cover every optional integration's dependency combination.
 
+## Core version window and API changes
+
 The native development line preserves the upstream Core **2026.8.0** minimum.
 Its qualification matrix covers three consecutive monthly Core trains on
 amd64 and aarch64, using each image's own Python rather than an independent
@@ -170,15 +172,65 @@ The generated native distribution snapshot derives its HACS minimum from the
 runtime floor. Historical public dev3 and the earlier qualification remain tied
 to **2026.10.2**; they do not establish this new minimum's runtime support.
 Record the matrix's results before claiming the development candidate qualified.
-Fail qualification on Core deprecations and blocking calls attributed to our
-component on the version actually running; an old API supported by an older
-Core may remain in its tested compatibility branch. Retain other integrations'
-diagnostics without treating them as ours. Do not globally ignore warnings.
 Keep the matrix pinned and update it deliberately with the compatibility floor;
 do not silently drop the advertised minimum as the current month advances.
 Native runtime support and the component installation floor are distinct claims. Candidate
 qualification records belong in
 [native migration evidence](../native-migration/README.md).
+
+An API required for baseline operation must exist on the supported minimum.
+An optional capability may require a newer Core version and refuse that feature
+explicitly on older installations. Use small, tested compatibility branches
+where appropriate; an old API still supported by the Core actually executing
+that branch need not be removed merely because a newer replacement exists.
+
+### Automatic Home Assistant account login
+
+Julien's 24 October 2026 decision limits **new automatic Home Assistant account
+OAuth login (`ha_auth`) to Core 2026.10.0 or newer**. This applies to both native
+and legacy component runtimes without raising their installation/runtime floors.
+Older or unrecognized Core versions refuse new client registrations and
+authorization-code requests on the component's `/register`, `/authorize` and
+`/token` routes before minting, translation or dispatch.
+Core's own `/auth/*` routes are not changed, and no callback broker is added.
+
+Existing Core Bearer/LLAT access, signed refresh envelopes and revocation remain
+supported. Secret-URL mode and legacy OAuth retain their own PKCE behavior.
+Keep all component endpoint URLs, config entries, signing keys and auth choices;
+never select another authentication mode automatically.
+
+Old-Core account metadata advertises only refresh grants, without S256,
+authorization-code response types or new-client registration. The existing
+`authorization_endpoint` URL remains as a guarded diagnostic route: clients
+that require this field can still parse metadata to locate the refresh endpoint,
+but new login receives the explicit minimum-version refusal. Core 2026.10+ and the
+other auth modes retain their normal metadata. Test both the refusal before
+dispatch and an actual client refresh using the preserved envelope and URL.
+
+### Deprecation review timing
+
+Julien's 24 October 2026 policy starts monitoring at the **deprecation
+announcement**, then reviews the replacement and schedules migration three
+months after that announcement. Extend to four months only when the documented
+removal schedule leaves enough time to validate and deploy the replacement.
+Security issues, regressions and imminent removal require earlier action.
+This is a deprecation-review schedule, not a waiting period for every new API.
+
+Triage unfamiliar Core deprecation warnings attributed to this component before
+accepting qualification. A known API that remains supported may stay in use
+during its planned review period through a bounded exception documenting the
+exact API, affected Core range, announcement date, review date, removal deadline
+or condition, and supporting source evidence. An unknown removal date must be
+recorded as unknown, not assumed safe for an extension. Evaluate the warning on
+the Core version actually running; retain other integrations' diagnostics
+without attributing them to HA-MCP. Never suppress warnings globally.
+
+The currently reviewed development-window evidence has no attributed Core
+deprecation warning and needs no exception. There is no implemented exception
+engine: add only the precise qualification allowance needed when a concrete,
+documented case arises. Until then, existing checks remain unchanged. Blocking
+calls attributed to this component remain qualification failures; this review
+schedule does not excuse runtime regressions or unsupported API use.
 
 ## Two entries, one command surface
 
@@ -238,7 +290,9 @@ descriptions, schemas and results separate from FastMCP and Core; the
 schema conversion and full/search presentation. Exported API IDs and exposure
 settings remain stable, and anonymous Assist calls receive no owner fallback.
 
-Core remains the `ha_auth` OAuth authority. Authorization redirects into Core;
+Core remains the `ha_auth` OAuth authority. The
+[account-login floor](#automatic-home-assistant-account-login) applies to both
+runtimes. When supported, new authorization requests redirect into Core;
 translated code/refresh forms call its registered TokenView's grant methods with
 the real incoming request. Revocation uses Core's token registry. The native
 path preserves the existing DCR/CIMD translation and signed refresh envelope

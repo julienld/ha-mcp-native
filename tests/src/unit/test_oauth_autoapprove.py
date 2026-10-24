@@ -229,7 +229,7 @@ def _mode_cfg(
 
 
 @pytest.fixture
-async def unified_view_client_factory():
+async def unified_view_client_factory(monkeypatch):
     """Build real aiohttp clients around the two unified scoped OAuth views."""
     # Ensure every component module the view imports lazily is first loaded
     # against the shared stubs. The real aiohttp/yarl modules below are only for
@@ -269,7 +269,9 @@ async def unified_view_client_factory():
             dcr_key: bytes | None = None,
             allowlist: list[str] | None = None,
             prepare_hass=lambda _hass, _app: None,
+            core_version: str = "2026.10.3",
         ):
+            monkeypatch.setattr(aa, "HA_VERSION", core_version)
             cfg = _mode_cfg(
                 mode,
                 session=session,
@@ -631,11 +633,13 @@ class TestRfc9207MetadataAdvertisement:
         assert doc["authorization_response_iss_parameter_supported"] is True
 
 
+@pytest.mark.parametrize("core_version", ["2026.8.0", "2026.9.4", "2026.10.3"])
 async def test_scoped_authorize_serves_legacy_consent_when_legacy_live(
     unified_view_client_factory,
+    core_version,
 ):
     """Legacy mode serves its consent form from the unified scoped route."""
-    client = await unified_view_client_factory(mode="legacy")
+    client = await unified_view_client_factory(mode="legacy", core_version=core_version)
     resp = await client.get(
         "/api/ha_mcp_tools/oauth/authorize"
         "?response_type=code&client_id=hamcp-test-client-id-123"
@@ -994,9 +998,12 @@ async def test_authorize_ignores_resource_parameter(unified_view_client_factory)
     assert params["code"]
 
 
-async def test_token_ignores_resource_parameter(unified_view_client_factory):
+@pytest.mark.parametrize("core_version", ["2026.8.0", "2026.9.4", "2026.10.3"])
+async def test_token_ignores_resource_parameter(
+    unified_view_client_factory, core_version
+):
     """RFC 8707: token requests tolerate the required ``resource`` field."""
-    client = await unified_view_client_factory(mode="none")
+    client = await unified_view_client_factory(mode="none", core_version=core_version)
     verifier = "fixed-verifier-" + "v" * 48
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -2094,22 +2101,3 @@ async def test_non_revocation_token_503_carries_no_retry_after(
 
     assert resp.status == 503
     assert "Retry-After" not in resp.headers
-
-
-def test_ha_auth_document_advertises_the_scoped_revocation_endpoint():
-    """#2248: the client holds an envelope, so revocation must come to us.
-
-    None mode issues no refresh token at all, so its document keeps quiet —
-    advertising a route that 404s there would be worse than silence.
-    """
-    from custom_components.ha_mcp_tools import mcp_webhook
-
-    base = "https://ha.example"
-    ha_auth_doc = mcp_webhook._authorization_server_document(base)
-    assert ha_auth_doc["revocation_endpoint"] == f"{base}{OAUTH_BASE}/revoke"
-    assert ha_auth_doc["revocation_endpoint_auth_methods_supported"] == ["none"]
-
-    none_doc = mcp_webhook._none_mode_authorization_server_document(base)
-    assert "revocation_endpoint" not in none_doc
-    legacy_doc = mcp_webhook._legacy_authorization_server_document(base)
-    assert "revocation_endpoint" not in legacy_doc

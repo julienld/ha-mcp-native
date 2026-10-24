@@ -38,6 +38,7 @@ import aiohttp
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.webhook import async_register, async_unregister
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.util.aiohttp import MockRequest
 
@@ -57,6 +58,7 @@ from .oauth_autoapprove import (
     AutoApproveProvider,
     bind_autoapprove_views,
 )
+from .oauth_core import authorization_server_document as _authorization_server_document
 from .oauth_dcr import CFG_DCR_SIGNING_KEY, bind_dcr_view
 from .oauth_legacy import (
     OAUTH_ROUTE_OWNER_KEY,
@@ -160,40 +162,6 @@ def _build_base_url(request: web.Request) -> str:
         "X-Forwarded-Proto", getattr(request, "scheme", "https")
     )
     return f"{scheme}://{host}"
-
-
-def _authorization_server_document(base: str) -> dict[str, Any]:
-    """RFC 8414 metadata for ha_auth mode — component-owned endpoints only.
-
-    HA core is still the authorization server (the scoped /authorize 302s into
-    core's /auth/authorize and /token forwards server-side — see
-    oauth_autoapprove's ha_auth branches), but every URL a client can CACHE is
-    ours: a later auth-mode switch re-dispatches per request instead of
-    stranding the client on core paths we can never retract (#2188's
-    stickiness). ``registration_endpoint`` serves DCR-fallback brokers;
-    both CIMD-selection flags stay pinned (see
-    test_as_documents_pin_the_claude_cimd_selection_contract).
-
-    ``revocation_endpoint`` is ours for a second reason (#2248): the refresh
-    token the client holds is a signed envelope, and core's own
-    ``/auth/revoke`` answers 200 without revoking anything for a value it
-    cannot recognise. Only ha_auth mints those, so only this document
-    advertises it. The endpoint takes no client authentication, matching
-    ``token_endpoint_auth_methods_supported``.
-    """
-    return {
-        "issuer": f"{base}{OAUTH_BASE}",
-        "authorization_endpoint": f"{base}{OAUTH_BASE}/authorize",
-        "token_endpoint": f"{base}{OAUTH_BASE}/token",
-        "registration_endpoint": f"{base}{OAUTH_BASE}/register",
-        "revocation_endpoint": f"{base}{OAUTH_BASE}/revoke",
-        "revocation_endpoint_auth_methods_supported": ["none"],
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-        "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
-        "client_id_metadata_document_supported": True,
-    }
 
 
 class ResourceServer:
@@ -429,7 +397,7 @@ class _AuthorizationServerMetadataView(HomeAssistantView):
             return web.json_response(_legacy_authorization_server_document(base))
         if mode == WEBHOOK_AUTH_NONE:
             return web.json_response(_none_mode_authorization_server_document(base))
-        return web.json_response(_authorization_server_document(base))
+        return web.json_response(_authorization_server_document(base, HA_VERSION))
 
 
 class _WellKnownProtectedResourceView(HomeAssistantView):

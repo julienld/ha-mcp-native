@@ -284,6 +284,20 @@ the upstream installation minimum. Its three-month amd64/aarch64 qualification
 must pass before that candidate is described as qualified. Native Core admission
 enforces the minimum even if an archive is copied manually.
 
+New automatic **Home Assistant account OAuth login** requires **Core 2026.10.0**
+in both component runtimes. Core 2026.8/9 still accept existing Core Bearer/LLAT access,
+refresh and revocation; secret-URL mode and legacy OAuth remain available.
+The component keeps the same URLs and settings and refuses unsupported new
+login explicitly, without a broker or automatic authentication-mode change.
+See the [account-login contract](../agents/custom-component.md#automatic-home-assistant-account-login)
+for discovery behavior and the preserved refresh envelope.
+
+Core API changes and deprecation diagnostics follow the
+[component review policy](../agents/custom-component.md#deprecation-review-timing).
+Known, still-supported deprecations need a documented bounded exception before
+qualification can allow them; no such exception is currently implemented.
+This does not relax dependency, blocking-call or runtime checks.
+
 The previously published **9.0.0.dev3** still requires **2026.10.2** and retains
 only its recorded qualification. Use the selected release's own metadata; do not
 lower an old archive's version guard to install it on an older Core.
