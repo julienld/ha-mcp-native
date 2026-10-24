@@ -271,7 +271,7 @@ async def _remove_device_config_entries(
         return [
             {
                 "config_entry_id": config_entry_id,
-                "success": current.get("success", False),
+                "success": bool(current.get("success")),
                 "error": current.get("error") if not current.get("success") else None,
             }
             for config_entry_id in config_entries

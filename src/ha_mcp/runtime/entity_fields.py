@@ -2,9 +2,43 @@
 
 from typing import Any
 
+from packaging.version import InvalidVersion, Version
+
 from ha_mcp.errors import ErrorCode, create_error_response
 from ha_mcp.runtime.errors import raise_failure
 from ha_mcp.runtime.validation import clearable_value
+
+# Home Assistant release that reads an empty entity-name override as "use the
+# device name" (home-assistant/core#181576). Older Cores store "" but render
+# the default name, so the switch would silently do the opposite there.
+USE_DEVICE_NAME_MIN_CORE = (2026, 10)
+
+
+def ensure_use_device_name_supported(raw: str) -> None:
+    """Refuse a device-name switch that this Core cannot render correctly."""
+    try:
+        release = Version(raw).release[:2]
+    except InvalidVersion:
+        release = None
+    if release is not None and tuple(release) >= USE_DEVICE_NAME_MIN_CORE:
+        return
+    detail = (
+        f"this Core reports {raw} and would show the default name instead"
+        if release is not None
+        else f"this Core's version {raw!r} could not be parsed, so support "
+        "cannot be confirmed"
+    )
+    raise_failure(
+        create_error_response(
+            ErrorCode.VALIDATION_INVALID_PARAMETER,
+            f"use_device_name needs Home Assistant 2026.10 or newer; {detail}",
+            context={"ha_version": raw},
+            suggestions=[
+                "Upgrade Home Assistant to 2026.10 or newer",
+                "Pass name='<device name>' to set the device's name as a fixed custom name",
+            ],
+        )
+    )
 
 
 def reject_name_with_use_device_name(

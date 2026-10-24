@@ -11,6 +11,7 @@ from ha_mcp.runtime.mutation_guard import check_mutation_admission, current_admi
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 from ha_mcp.utils.config_hash import json_values_equal
 
+from .label_validation import existing_label_ids
 from .registry_failures import registry_outcome_unknown, registry_target_missing
 from .registry_mutations import _validated_payload
 
@@ -50,10 +51,8 @@ def _owner_payload(
             stripped for value in data["aliases"] if (stripped := value.strip())
         }
     if domain == "area" and "labels" in data:
-        from homeassistant.helpers import label_registry as lr
-
         labels = set(data["labels"])
-        data["labels"] = labels - lr.async_get_missing_label_ids(hass, labels)
+        data["labels"] = existing_label_ids(hass, labels)
     return data
 
 

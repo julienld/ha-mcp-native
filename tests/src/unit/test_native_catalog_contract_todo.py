@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import datetime as dt
 import sys
+from enum import StrEnum
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -20,20 +21,26 @@ from .test_native_engine_backend import EventBus, authorize
 from .test_native_engine_backend import native as native
 
 
+class _Status(StrEnum):
+    NEEDS_ACTION = "needs_action"
+    COMPLETED = "completed"
+
+
 @dataclasses.dataclass
 class _Item:
     summary: str
     uid: str
-    status: str = "needs_action"
+    status: _Status = _Status.NEEDS_ACTION
     due: dt.date | None = None
     description: str | None = None
+    future_core_field: str | None = None
 
 
 class _TodoEntity:
     def __init__(self) -> None:
         self.todo_items = [
             _Item("Milk", "first", due=dt.date(2026, 10, 23)),
-            _Item("Bread", "second", status="completed"),
+            _Item("Bread", "second", status=_Status.COMPLETED),
         ]
 
 
@@ -45,7 +52,13 @@ def _api_items_factory(values: list[tuple]) -> dict:
     }
 
 
-def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, backup: Any = None) -> tuple:
+def _setup(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    backup: Any = None,
+    *,
+    factory_name: str = "api_items_factory",
+) -> tuple:
     entity = _TodoEntity()
     monkeypatch.setitem(
         sys.modules,
@@ -53,7 +66,7 @@ def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, backup: Any = None) -> 
         SimpleNamespace(
             DATA_COMPONENT="todo.component",
             TodoListEntity=_TodoEntity,
-            api_items_factory=_api_items_factory,
+            **{factory_name: _api_items_factory},
         ),
     )
     bus = EventBus()
@@ -87,10 +100,14 @@ def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, backup: Any = None) -> 
     return engine, hass, services, user
 
 
+@pytest.mark.parametrize("factory_name", ["api_items_factory", "_api_items_factory"])
 async def test_native_todo_reads_core_entity_items_and_filter_without_transport(
-    native: Any, monkeypatch: pytest.MonkeyPatch
+    native: Any, monkeypatch: pytest.MonkeyPatch, factory_name: str
 ) -> None:
-    engine, _, services, _ = _setup(native, monkeypatch)
+    engine, hass, services, _ = _setup(native, monkeypatch, factory_name=factory_name)
+    hass.data["todo.component"].get_entity("todo.shopping").todo_items[
+        0
+    ].future_core_field = "retained"
     actor = CallContext("actor")
     lists = await engine.call("ha_get_todo", {}, actor)
     assert not lists.is_error and lists.data["todo_lists"] == [
@@ -111,6 +128,7 @@ async def test_native_todo_reads_core_entity_items_and_filter_without_transport(
             "uid": "first",
             "status": "needs_action",
             "due": "2026-10-23",
+            "future_core_field": "retained",
         }
     ]
     assert services.calls == []
@@ -154,9 +172,25 @@ async def test_native_todo_add_uses_actual_actor_and_changed_state_body(
     backup.assert_not_awaited()
 
 
+async def test_todo_missing_core_serializer_refuses_before_mutation(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, _, services, _ = _setup(native, monkeypatch)
+    del sys.modules["homeassistant.components.todo"].api_items_factory
+    result = await engine.call(
+        "ha_set_todo_item",
+        {"entity_id": "todo.shopping", "item": "first", "status": "completed"},
+        CallContext("actor"),
+    )
+    assert result.is_error and result.status == "not_started"
+    assert result.data["error"]["code"] == "UNSUPPORTED_OPERATION"
+    assert services.calls == []
+
+
 @pytest.mark.parametrize("remove", [False, True])
+@pytest.mark.parametrize("factory_name", ["api_items_factory", "_api_items_factory"])
 async def test_native_todo_updates_and_deletes_capture_once_before_dispatch(
-    native: Any, monkeypatch: pytest.MonkeyPatch, remove: bool
+    native: Any, monkeypatch: pytest.MonkeyPatch, remove: bool, factory_name: str
 ) -> None:
     captures = []
 
@@ -165,7 +199,9 @@ async def test_native_todo_updates_and_deletes_capture_once_before_dispatch(
         captures.append(copy.deepcopy(payload))
         return {"warnings": ["Snapshot could not be persisted"]}
 
-    engine, _, services, _ = _setup(native, monkeypatch, capture)
+    engine, _, services, _ = _setup(
+        native, monkeypatch, capture, factory_name=factory_name
+    )
     tool = "ha_remove_todo_item" if remove else "ha_set_todo_item"
     result = await engine.call(
         tool,

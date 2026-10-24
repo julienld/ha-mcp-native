@@ -4,6 +4,25 @@ Baseline: upstream `2dc504fd97d8416f87b6ea7f2fd8ce0332615956` (22 October 2026).
 The [machine contract](compatibility.json) lists the persisted identifiers. This
 is a preservation target, not a statement that every target is implemented.
 
+## Supported Core capabilities
+
+The development qualification targets Core 2026.8.0, 2026.9.4 and 2026.10.3
+on amd64/aarch64. Results must establish support before a distribution advertises
+that window. A capability introduced by Core later in this window is not
+backported into older installations:
+
+- Child-device relationships require Core 2026.9. Their absence in August does
+  not remove ordinary or composite-device operations.
+- `use_device_name=True` requires Core 2026.10 on both runtimes. Older versions
+  refuse it before any registry mutation; explicit names remain supported.
+- August's schema descriptions retain the live fields and defaults but are
+  labelled incomplete. Validation always calls the original Core validator.
+
+Calendar and to-do results use Core's own serializers: the public names when
+available and their existing private names on August/September. Missing owners
+or serializers cause an explicit refusal before a write, without a remote retry.
+These private names remain compatibility dependencies covered by the matrix.
+
 ## Keep installation identity and stored intent
 
 Keep the integration domain `ha_mcp_tools`, existing config-entry IDs and the two

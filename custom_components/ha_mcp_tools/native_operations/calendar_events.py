@@ -3,6 +3,7 @@
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
+from importlib import import_module
 from typing import Any, Literal
 
 from homeassistant.helpers.json import json_bytes
@@ -98,7 +99,17 @@ class NativeCalendars:
     async def events(
         self, target: CalendarTarget, start: datetime, end: datetime
     ) -> list[dict[str, Any]]:
-        from homeassistant.components.calendar import api_event_dict_factory
+        calendar = import_module("homeassistant.components.calendar")
+        # Core 2026.10 made its existing REST serializer public.
+        factory = getattr(calendar, "api_event_dict_factory", None) or getattr(
+            calendar, "_api_event_dict_factory", None
+        )
+        if factory is None:
+            raise ToolFailure(
+                "UNSUPPORTED_OPERATION",
+                "Core's calendar event API serializer is unavailable. Update Home Assistant before changing calendar events.",
+                status="not_started",
+            )
 
         events = await await_owned_io(
             target.entity.async_get_events(self.hass, start, end)
@@ -106,9 +117,7 @@ class NativeCalendars:
         await authorize_actor(self.actor, self.authorize)
         self.check_target(target)
         rows: list[dict[str, Any]] = json.loads(
-            json_bytes(
-                [asdict(event, dict_factory=api_event_dict_factory) for event in events]
-            )
+            json_bytes([asdict(event, dict_factory=factory) for event in events])
         )
         return rows
 

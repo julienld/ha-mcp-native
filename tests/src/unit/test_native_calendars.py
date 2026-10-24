@@ -89,13 +89,26 @@ def _setup(native: Any, monkeypatch: pytest.MonkeyPatch, **options: Any) -> tupl
     return service, entity, entities, validator, authorize
 
 
+@pytest.mark.parametrize(
+    "factory_name", ["api_event_dict_factory", "_api_event_dict_factory"]
+)
 async def test_calendar_read_uses_live_entity_and_keeps_core_event_fields(
-    native: Any, monkeypatch: pytest.MonkeyPatch
+    native: Any, monkeypatch: pytest.MonkeyPatch, factory_name: str
 ) -> None:
     service, entity, _, _, _ = _setup(native, monkeypatch)
+    calendar = sys.modules["homeassistant.components.calendar"]
+    del calendar.api_event_dict_factory
+    row = {
+        "uid": "original",
+        "start": {"date": "2026-06-15"},
+        "end": {"date": "2026-06-16"},
+        "future_core_field": {"value": "retained"},
+    }
+    factory = Mock(return_value=row)
+    setattr(calendar, factory_name, factory)
     result = await service.get("calendar.family")
-    assert result["events"][0]["future_core_field"] == "retained"
-    assert result["events"][0]["uid"] == "original"
+    assert result["events"] == [row]
+    factory.assert_called_once()
     assert result["count"] == result["total_available"] == 1
     assert entity.async_get_events.await_args.args[0] is service.hass
     assert entity.async_get_events.await_args.args[1].tzinfo is not None
@@ -111,6 +124,18 @@ async def test_calendar_creation_forwards_actual_core_validator_result(
     assert entity.async_create_event.await_args.kwargs["from_core_validator"] is True
     assert entity.async_create_event.await_args.kwargs["dtstart"] == "2026-06-15"
     entity.async_get_events.assert_not_awaited()
+
+
+async def test_calendar_missing_core_serializer_refuses_before_mutation(
+    native: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, entity, _, _, _ = _setup(native, monkeypatch)
+    del sys.modules["homeassistant.components.calendar"].api_event_dict_factory
+    with pytest.raises(ToolFailure) as error:
+        await service.remove("calendar.family", "original")
+    assert error.value.code == "UNSUPPORTED_OPERATION"
+    assert error.value.status == "not_started"
+    entity.async_delete_event.assert_not_awaited()
 
 
 async def test_calendar_update_captures_original_occurrence_and_clears_text(

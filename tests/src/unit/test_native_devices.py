@@ -176,6 +176,10 @@ async def test_august_device_writes_keep_owners_and_refuse_composites(
         native, monkeypatch, backup=backup
     )
     august_registry(devices, monkeypatch)
+    monkeypatch.delattr(
+        sys.modules["homeassistant.helpers.label_registry"],
+        "async_get_missing_label_ids",
+    )
     commands = manager.hass.data["websocket_api"]
     commands["config/device_registry/remove_config_entry"] = commands.pop(
         "config/device_registry/remove"
@@ -185,7 +189,11 @@ async def test_august_device_writes_keep_owners_and_refuse_composites(
             tool,
             {
                 "device_id": identifier,
-                **({"name": "Updated"} if tool == "ha_set_device" else {}),
+                **(
+                    {"name": "Updated", "labels": ["existing"]}
+                    if tool == "ha_set_device"
+                    else {}
+                ),
             },
             CallContext("actor"),
         )
@@ -204,6 +212,7 @@ async def test_august_device_writes_keep_owners_and_refuse_composites(
         assert schemas[-1]["config_entry_id"] == "entry"
     else:
         assert devices.rows["main"].name_by_user == "Updated"
+        assert devices.rows["main"].labels == {"existing"}
 
 
 @pytest.mark.parametrize("device_id", ["main", "child"])

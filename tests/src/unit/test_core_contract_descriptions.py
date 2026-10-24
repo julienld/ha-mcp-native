@@ -5,7 +5,88 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from .test_component_ws_search import _REAL_VOL as vol
 from .test_component_ws_search import FakeHass
+
+
+def test_legacy_description_preserves_live_union_fields_without_claiming_complete_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.ha_mcp_tools import core_contract as module
+
+    branch = vol.Schema(
+        {vol.Required("type"): "future", vol.Required("future_required"): str}
+    )
+
+    def union() -> Any:
+        value_schemas = {"future": branch}
+        default_schema = None
+
+        def validator(value: Any) -> Any:
+            selected = value_schemas.get(value["type"], default_schema)
+            if selected is None:
+                raise vol.Invalid("Unknown source type")
+            return selected(value)
+
+        validator.__module__ = "homeassistant.helpers.config_validation"
+        validator.__qualname__ = "key_value_schemas.<locals>.key_value_validator"
+        return validator
+
+    def opaque_rule(value: Any) -> Any:
+        if any(row["future_required"] == "refused" for row in value):
+            raise vol.Invalid("The original Core rule rejects this combination")
+        return value
+
+    schema = vol.Schema(
+        {
+            vol.Required("id"): int,
+            vol.Required("type"): "energy/save_prefs",
+            vol.Required("sources"): vol.All([union()], opaque_rule),
+        }
+    )
+    handler = Mock(side_effect=AssertionError("Description must not dispatch"))
+    hass = FakeHass()
+    hass.data["websocket_api"] = {"energy/save_prefs": (handler, schema)}
+    monkeypatch.setattr(module, "_TO_JSON_SCHEMA", None)
+    result = module.describe_contract(hass, "energy/save_prefs")
+    assert "future_required" in str(result.get("schema")), result
+    branch_schema = result["schema"]["properties"]["sources"]["items"]["anyOf"][0]
+    assert "future_required" in branch_schema["required"]
+    assert result["description_complete"] is False and result["warnings"]
+    for payload, valid in (
+        ({"sources": [{"type": "future"}]}, False),
+        ({"sources": [{"type": "future", "future_required": "refused"}]}, False),
+        ({"sources": [{"type": "future", "future_required": "allowed"}]}, True),
+    ):
+        assert (
+            module.validate_request(hass, "energy/save_prefs", payload)["valid"]
+            is valid
+        )
+    handler.assert_not_called()
+
+
+def test_legacy_history_description_keeps_fields_and_defaults_with_honest_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.ha_mcp_tools import core_contract as module
+
+    schema = vol.Schema(
+        {
+            vol.Required("id"): int,
+            vol.Required("type"): "history/history_during_period",
+            vol.Required("start_time"): str,
+            vol.Required("entity_ids"): [str],
+            vol.Optional("include_start_time_state", default=True): bool,
+        }
+    )
+    hass = FakeHass()
+    hass.data["websocket_api"] = {"history/history_during_period": (Mock(), schema)}
+    monkeypatch.setattr(module, "_TO_JSON_SCHEMA", None)
+    result = module.describe_contract(hass, "history/history_during_period")
+    properties = result.get("schema", {}).get("properties", {})
+    assert "entity_ids" in properties and "start_time" in properties, result
+    assert properties["include_start_time_state"]["default"] is True
+    assert result["description_complete"] is False and result["warnings"]
 
 
 def test_successful_strict_description_has_no_loss_warning(

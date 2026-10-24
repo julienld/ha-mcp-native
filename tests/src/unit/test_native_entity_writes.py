@@ -65,6 +65,10 @@ async def test_compound_entity_write_captures_both_real_owners_before_any_core_c
     )
     if core_august:
         august_registry(devices, monkeypatch)
+        monkeypatch.delattr(
+            sys.modules["homeassistant.helpers.label_registry"],
+            "async_get_missing_label_ids",
+        )
     registry.rows["sensor.first"].device_id = "main"
     registry.rows["sensor.first"].categories = {"automation": "old"}
     before = registry.rows["sensor.first"].extended_dict
@@ -363,13 +367,19 @@ async def test_blank_device_name_warns_only_when_other_fields_are_committed(
     assert len(registry.calls) == backup.await_count == 1 and devices.calls == []
 
 
-@pytest.mark.parametrize("use_device_name", [True, False])
+@pytest.mark.parametrize(
+    "use_device_name,version", [(True, "2026.10.3"), (False, "2026.8.0")]
+)
 async def test_entity_use_device_name_keeps_empty_name_distinct_from_default_name(
     native: Any,
     monkeypatch: pytest.MonkeyPatch,
     use_device_name: bool,
+    version: str,
 ) -> None:
     engine, _, registry, _, _, _, _ = _setup(native, monkeypatch)
+    monkeypatch.setattr(
+        sys.modules["homeassistant.const"], "__version__", version, raising=False
+    )
     registry.rows["sensor.first"].device_id = "main"
     result = await engine.call(
         "ha_set_entity",
@@ -378,6 +388,36 @@ async def test_entity_use_device_name_keeps_empty_name_distinct_from_default_nam
     )
     assert not result.is_error, result.data
     assert registry.rows["sensor.first"].name == ("" if use_device_name else None)
+
+
+@pytest.mark.parametrize("version", ["2026.8.0", "2026.9.4", "custom-build"])
+async def test_device_name_switch_on_unsupported_core_refuses_before_capture_or_write(
+    native: Any, monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    backup = AsyncMock(return_value={})
+    engine, _, registry, devices, _, _, _ = _setup(native, monkeypatch, backup=backup)
+    monkeypatch.setattr(
+        sys.modules["homeassistant.const"], "__version__", version, raising=False
+    )
+    registry.rows["sensor.first"].device_id = "main"
+    before = registry.rows["sensor.first"].extended_dict
+    result = await engine.call(
+        "ha_set_entity",
+        {
+            "entity_id": "sensor.first",
+            "use_device_name": True,
+            "new_device_name": "Must not change",
+        },
+        CallContext("actor"),
+    )
+    assert (
+        result.is_error
+        and result.data["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+    ), result
+    assert "2026.10" in result.data["error"]["message"]
+    assert registry.rows["sensor.first"].extended_dict == before
+    assert registry.calls == devices.calls == []
+    backup.assert_not_awaited()
 
 
 async def test_bulk_refusal_after_confirmed_exposure_cannot_claim_no_write_started(

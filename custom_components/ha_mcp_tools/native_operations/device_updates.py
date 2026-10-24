@@ -4,6 +4,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from .label_validation import existing_label_ids
 from .registry_access import registry_json
 
 
@@ -11,14 +12,13 @@ def prepare_device_update(
     hass: HomeAssistant, payload: dict[str, Any]
 ) -> dict[str, Any]:
     from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import label_registry as lr
 
     values = dict(payload)
     if values.get("disabled_by") is not None:
         values["disabled_by"] = dr.DeviceEntryDisabler(values["disabled_by"])
     if "labels" in values:
         labels = set(values["labels"])
-        values["labels"] = labels - lr.async_get_missing_label_ids(hass, labels)
+        values["labels"] = existing_label_ids(hass, labels)
     return values
 
 

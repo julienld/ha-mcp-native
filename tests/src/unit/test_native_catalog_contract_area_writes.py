@@ -113,7 +113,12 @@ def _setup(
         SimpleNamespace(_entry_dict=_serialize),
     )
     labels = SimpleNamespace(
-        async_get_missing_label_ids=lambda hass, labels: labels - {"valid"}
+        async_get=lambda hass: SimpleNamespace(
+            async_get_label=lambda identifier: (
+                object() if identifier == "valid" else None
+            )
+        ),
+        async_get_missing_label_ids=lambda hass, labels: labels - {"valid"},
     )
     monkeypatch.setattr(
         sys.modules["homeassistant.helpers"], "label_registry", labels, raising=False
@@ -193,10 +198,16 @@ async def test_native_area_floor_create_update_remove_preserve_legacy_snapshots_
     assert len(schemas) == 3
 
 
+@pytest.mark.parametrize("core_august", [False, True])
 async def test_native_area_labels_and_floor_are_validated_before_the_write(
-    native: Any, monkeypatch: pytest.MonkeyPatch
+    native: Any, monkeypatch: pytest.MonkeyPatch, core_august: bool
 ) -> None:
     engine, _, areas, _, _ = _setup(native, monkeypatch)
+    if core_august:
+        monkeypatch.delattr(
+            sys.modules["homeassistant.helpers"].label_registry,
+            "async_get_missing_label_ids",
+        )
     bad = await engine.call(
         "ha_set_area_or_floor",
         {"kind": "area", "id": "existing", "labels": ["missing"]},

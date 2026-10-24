@@ -28,6 +28,7 @@ from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from ..helper_collections import SIMPLE_HELPER_TYPES, collection_owner
 from .command_validation import _validated_payload
+from .label_validation import existing_label_ids
 from .registry_access import (
     Authorize,
     Capture,
@@ -250,7 +251,6 @@ class NativeEntityRegistry:
 
     def _write(self, registry: Any, entry: Any, payload: dict[str, Any]) -> Any:
         from homeassistant.helpers import entity_registry as er
-        from homeassistant.helpers import label_registry as lr
 
         changes = {
             key: value
@@ -265,9 +265,7 @@ class NativeEntityRegistry:
             ]
         if "labels" in changes:
             labels = set(changes["labels"])
-            changes["labels"] = labels - lr.async_get_missing_label_ids(
-                self.hass, labels
-            )
+            changes["labels"] = existing_label_ids(self.hass, labels)
         if "categories" in changes:
             categories = entry.categories.copy()
             for scope, category_id in changes["categories"].items():

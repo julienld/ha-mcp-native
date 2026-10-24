@@ -148,7 +148,7 @@ class NativeGroups:
             if owner is None:
                 # Core creates its actual Group, allocates its ID/order, and
                 # installs all membership listeners through EntityComponent.
-                owner = await Group.async_create_group(
+                owner = Group.async_create_group_entity(
                     self.hass,
                     fields.get("name", fields["object_id"]),
                     created_by_service=True,
@@ -159,8 +159,12 @@ class NativeGroups:
                     mode=fields.get("all"),
                     object_id=fields["object_id"],
                     order=None,
-                    context=context,
                 )
+                # The entity factory exists across supported Core releases;
+                # August's async_create_group cannot accept a context. Set it
+                # before EntityComponent publishes the first state.
+                owner.async_set_context(context)
+                await component.async_add_entities([owner])
                 if owner.entity_id != entity_id:
                     raise RuntimeError("Core created a different group identity")
                 self._same_owner(component, entity_id, owner)

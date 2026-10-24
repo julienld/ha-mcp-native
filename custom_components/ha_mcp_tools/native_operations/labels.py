@@ -30,6 +30,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .command_validation import _validated_payload
+from .label_validation import existing_label_ids
 from .registry_access import (
     Authorize,
     Capture,
@@ -418,12 +419,8 @@ class NativeLabels:
                     status="not_started",
                 )
             self._check_label_identity(label_id, created_at, label_registry)
-            from homeassistant.helpers import label_registry as lr
-
             labels = set(payload["labels"])
-            payload["labels"] = labels - lr.async_get_missing_label_ids(
-                self.hass, labels
-            )
+            payload["labels"] = existing_label_ids(self.hass, labels)
             check_mutation_admission(self.actor)
             try:
                 registry.async_update(**payload)

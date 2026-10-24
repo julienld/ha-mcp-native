@@ -4,6 +4,7 @@ import asyncio
 import sys
 from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,27 +30,51 @@ class _CoreGroup:
         self.context = None
 
     @staticmethod
-    async def async_create_group(hass, name, **options):
+    def async_create_group_entity(
+        hass: Any,
+        name: str,
+        *,
+        created_by_service: bool,
+        entity_ids: Any,
+        icon: str | None,
+        mode: bool | None,
+        object_id: str,
+        order: int | None,
+    ) -> Any:
         world = hass.data["group_fixture_world"]
-        world.calls.append("create")
-        world.create_started.set()
-        if world.block_create:
-            await world.create_release.wait()
-        owner = _CoreGroup(
+        return _CoreGroup(
             world,
-            options["object_id"],
+            object_id,
             name=name,
-            members=options["entity_ids"] or (),
-            icon=options["icon"],
-            mode=options["mode"],
+            members=entity_ids or (),
+            icon=icon,
+            mode=mode,
         )
-        world.rows[owner.entity_id] = owner
-        owner.async_set_context(options["context"])
-        owner.async_write_ha_state()
-        if world.fail_create:
-            if isinstance(world.fail_create, BaseException):
-                raise world.fail_create
-            raise RuntimeError("Core raised after group creation")
+
+    @staticmethod
+    async def async_create_group(
+        hass: Any,
+        name: str,
+        *,
+        created_by_service: bool,
+        entity_ids: Any,
+        icon: str | None,
+        mode: bool | None,
+        object_id: str,
+        order: int | None,
+    ) -> Any:
+        """Core August's factory has no context keyword."""
+        owner = _CoreGroup.async_create_group_entity(
+            hass,
+            name,
+            created_by_service=created_by_service,
+            entity_ids=entity_ids,
+            icon=icon,
+            mode=mode,
+            object_id=object_id,
+            order=order,
+        )
+        await hass.data["native-group-component"].async_add_entities([owner])
         return owner
 
     def async_set_context(self, context):
@@ -95,6 +120,21 @@ class _CoreComponent:
     def get_entity(self, entity_id):
         return self.world.rows.get(entity_id)
 
+    async def async_add_entities(self, entities: list[Any]) -> None:
+        world = self.world
+        world.calls.append("create")
+        world.create_started.set()
+        if world.block_create:
+            await world.create_release.wait()
+        for owner in entities:
+            world.rows[owner.entity_id] = owner
+            world.initial_contexts.append(owner.context)
+            owner.async_write_ha_state()
+        if world.fail_create:
+            if isinstance(world.fail_create, BaseException):
+                raise world.fail_create
+            raise RuntimeError("Core raised after group creation")
+
     async def async_remove_entity(self, entity_id):
         self.world.calls.append("remove")
         self.world.rows.pop(entity_id, None)
@@ -115,6 +155,7 @@ def groups(native, monkeypatch):
         rows={},
         states={},
         calls=[],
+        initial_contexts=[],
         callback=None,
         fail_create=False,
         fail_remove=False,
@@ -186,6 +227,7 @@ async def test_native_create_and_list_use_real_owner_values_without_mutating_sta
         CallContext("actor"),
     )
     assert not result.is_error and world.rows["group.native"].context.user_id == "actor"
+    assert world.initial_contexts[0].user_id == "actor"
     result = await engine.call("ha_config_list_groups", {}, CallContext("actor"))
     assert result.data["groups"][0]["all"] is True
     assert "all" not in world.states["group.native"]["attributes"]

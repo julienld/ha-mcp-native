@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from importlib import import_module
 from typing import Any
 
 from ha_mcp.runtime.todo_targets import check_todo_target, todo_target
@@ -53,15 +54,21 @@ class NativeTodoOperations:
         raise UnsupportedOperation(operation)
 
     def _items(self, entity_id: str) -> dict[str, Any]:
-        from homeassistant.components.todo import (
-            DATA_COMPONENT,
-            TodoListEntity,
-            api_items_factory,
+        todo = import_module("homeassistant.components.todo")
+        # Core 2026.10 made its existing WebSocket/service serializer public.
+        factory = getattr(todo, "api_items_factory", None) or getattr(
+            todo, "_api_items_factory", None
         )
+        if factory is None:
+            raise ToolFailure(
+                "UNSUPPORTED_OPERATION",
+                "Core's to-do item API serializer is unavailable. Update Home Assistant before changing to-do items.",
+                status="not_started",
+            )
 
-        component = self.backend.hass.data.get(DATA_COMPONENT)
+        component = self.backend.hass.data.get(todo.DATA_COMPONENT)
         entity = component.get_entity(entity_id) if component is not None else None
-        if not isinstance(entity, TodoListEntity):
+        if not isinstance(entity, todo.TodoListEntity):
             return {
                 "success": False,
                 "error": "Entity not found",
@@ -71,7 +78,7 @@ class NativeTodoOperations:
             "success": True,
             "result": {
                 "items": [
-                    dataclasses.asdict(item, dict_factory=api_items_factory)
+                    dataclasses.asdict(item, dict_factory=factory)
                     for item in entity.todo_items or []
                 ]
             },

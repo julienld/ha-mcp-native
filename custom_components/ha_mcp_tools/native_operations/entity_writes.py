@@ -9,6 +9,7 @@ from ha_mcp.errors import ErrorCode, create_error_response
 from ha_mcp.runtime.entity_fields import (
     build_name_visibility_fields,
     build_state_tag_fields,
+    ensure_use_device_name_supported,
     reject_name_with_use_device_name,
     reject_use_device_name_without_device,
 )
@@ -223,6 +224,9 @@ class NativeEntityWrites(NativeEntityRegistry):
             fields.get("name"), fields.get("use_device_name")
         )
         if fields.get("use_device_name"):
+            from homeassistant.const import __version__ as HA_VERSION
+
+            ensure_use_device_name_supported(HA_VERSION)
             reject_use_device_name_without_device(before["entity_id"], before)
         message: dict[str, Any] = {"entity_id": before["entity_id"]}
         updates: list[str] = []

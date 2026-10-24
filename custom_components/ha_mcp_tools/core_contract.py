@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .helper_collections import _INVALID_ERRORS, _convert, _optional_attr
 
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _UNSUPPORTED = _optional_attr("probatio", "UNSUPPORTED")
 _TO_JSON_SCHEMA = _optional_attr("probatio", "to_json_schema")
+_OPENAPI_CONVERT = _optional_attr("voluptuous_openapi", "convert")
+_OPENAPI_UNSUPPORTED = _optional_attr("voluptuous_openapi", "UNSUPPORTED")
 COMMAND = "ha_mcp_tools/core_contract"
 CAPABILITY = "core_contract"
 # This is a bridge permission boundary, not a copy of the commands' fields.
@@ -59,7 +61,7 @@ def validate_request(
     return {"status": "validated", "valid": True, "errors": []}
 
 
-def _core_serializer(node: Any, *, strict: bool = False) -> Any:
+def _core_alternatives(node: Any) -> list[Any] | None:
     """Describe Core's opaque discriminated unions from their live schema objects.
 
     cv.key_value_schemas closes over its alternatives instead of publishing a
@@ -70,12 +72,19 @@ def _core_serializer(node: Any, *, strict: bool = False) -> Any:
         not inspect.isfunction(node)
         or node.__module__ != "homeassistant.helpers.config_validation"
     ):
-        return _UNSUPPORTED
+        return None
     if node.__qualname__ != "key_value_schemas.<locals>.key_value_validator":
-        return _UNSUPPORTED
+        return None
     closure = inspect.getclosurevars(node).nonlocals
     alternatives = closure.get("value_schemas")
     if not isinstance(alternatives, dict) or closure.get("default_schema") is not None:
+        return None
+    return list(alternatives.values())
+
+
+def _core_serializer(node: Any, *, strict: bool = False) -> Any:
+    alternatives = _core_alternatives(node)
+    if alternatives is None:
         return _UNSUPPORTED
     return {
         "anyOf": [
@@ -84,9 +93,38 @@ def _core_serializer(node: Any, *, strict: bool = False) -> Any:
                 strict=strict,
                 custom_serializer=partial(_core_serializer, strict=strict),
             )
-            for schema in alternatives.values()
+            for schema in alternatives
         ]
     }
+
+
+def _legacy_schema(schema: Any) -> dict[str, Any]:
+    """Describe live Voluptuous schemas with the already-required OpenAPI codec.
+
+    Unlike Probatio's strict mode, this codec cannot prove that every callable's
+    constraints survived conversion. Its output is always marked incomplete.
+    """
+    if _OPENAPI_CONVERT is None:
+        raise ValueError("No Voluptuous OpenAPI converter available")
+
+    def custom_serializer(node: Any) -> Any:
+        if (alternatives := _core_alternatives(node)) is not None:
+            return {"anyOf": [convert(alternative) for alternative in alternatives]}
+        # Arbitrary Python predicates are opaque. Do not infer their validation
+        # from annotations (which may describe a TypedDict with extra fields).
+        if inspect.isroutine(node):
+            return {}
+        return _OPENAPI_UNSUPPORTED
+
+    def convert(node: Any) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _OPENAPI_CONVERT(
+                node, custom_serializer=custom_serializer, openapi_version="3.1.0"
+            ),
+        )
+
+    return convert(schema)
 
 
 def describe_contract(hass: HomeAssistant, command: str) -> dict[str, Any]:
@@ -111,7 +149,13 @@ def describe_contract(hass: HomeAssistant, command: str) -> dict[str, Any]:
                 )
                 result["description_complete"] = False
         else:
-            result["fields"] = _convert(schema)
+            try:
+                result["schema"] = _legacy_schema(schema)
+            except Exception:
+                _LOGGER.debug(
+                    "Legacy contract needs field serialization", exc_info=True
+                )
+                result["fields"] = _convert(schema)
             result["description_complete"] = False
     except Exception:
         _LOGGER.debug("Core contract cannot be serialized", exc_info=True)

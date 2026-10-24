@@ -3,18 +3,13 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from packaging.version import InvalidVersion, Version
-
 from ha_mcp.backends.legacy import legacy_errors_sync
 from ha_mcp.runtime import entity_fields as _fields
 
 from ..errors import ErrorCode, create_error_response
 from .helpers import raise_tool_error
 
-# Home Assistant release that reads an empty entity-name override as "use the
-# device name" (home-assistant/core#181576). Older Cores store "" but render
-# the default name, so the switch would silently do the opposite there.
-USE_DEVICE_NAME_MIN_CORE = (2026, 10)
+USE_DEVICE_NAME_MIN_CORE = _fields.USE_DEVICE_NAME_MIN_CORE
 
 
 async def ensure_use_device_name_allowed(
@@ -45,30 +40,12 @@ async def ensure_use_device_name_supported(client: Any) -> None:
     """Refuse use_device_name=True on a Core older than 2026.10."""
     config = await client.get_config()
     raw = str(config.get("version", ""))
-    try:
-        release = Version(raw).release[:2]
-    except InvalidVersion:
-        release = None
-    if release is not None and tuple(release) >= USE_DEVICE_NAME_MIN_CORE:
-        return
-    detail = (
-        f"this Core reports {raw} and would show the default name instead"
-        if release is not None
-        else f"this Core's version {raw!r} could not be parsed, so support "
-        "cannot be confirmed"
-    )
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.VALIDATION_INVALID_PARAMETER,
-            f"use_device_name needs Home Assistant 2026.10 or newer; {detail}",
-            context={"ha_version": raw},
-            suggestions=[
-                "Upgrade Home Assistant to 2026.10 or newer",
-                "Pass name='<device name>' to set the device's name as a fixed custom name",
-            ],
-        )
-    )
+    _ensure_use_device_name_supported(raw)
 
+
+_ensure_use_device_name_supported = legacy_errors_sync(
+    _fields.ensure_use_device_name_supported
+)
 
 build_name_visibility_fields = legacy_errors_sync(_fields.build_name_visibility_fields)
 build_state_tag_fields = legacy_errors_sync(_fields.build_state_tag_fields)

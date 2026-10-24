@@ -191,8 +191,9 @@ async def test_native_label_get_set_remove_use_core_schema_and_preserve_canonica
     manager.backend.execute.assert_not_awaited()
 
 
+@pytest.mark.parametrize("core_august", [False, True])
 async def test_native_label_adds_to_latest_area_sets_and_captures_only_changed_targets(
-    native: Any, monkeypatch: pytest.MonkeyPatch
+    native: Any, monkeypatch: pytest.MonkeyPatch, core_august: bool
 ) -> None:
     captured = []
 
@@ -202,6 +203,11 @@ async def test_native_label_adds_to_latest_area_sets_and_captures_only_changed_t
         return {"warnings": ["Captured " + payload["backup_id"]]}
 
     engine, _, labels, areas, _, _, _ = _setup(native, monkeypatch, backup=backup)
+    if core_august:
+        monkeypatch.delattr(
+            sys.modules["homeassistant.helpers.label_registry"],
+            "async_get_missing_label_ids",
+        )
     result = await engine.call(
         "ha_config_set_label",
         {
