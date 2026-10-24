@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +78,56 @@ def configure_native_entry(config: Path, entry_id: str) -> None:
     path.write_text(json.dumps(storage, indent=2) + "\n", encoding="utf-8")
 
 
+def _save_native_attestation(observed: dict[str, Any]) -> None:
+    selected = os.environ.get("E2E_ATTESTATION_DIRECTORY")
+    if not selected:
+        return
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    if re.fullmatch(r"gw[0-9]+|master", worker) is None:
+        raise ValueError("Native attestation worker identity is invalid")
+    fields = (
+        "core_version",
+        "python_version",
+        "architecture",
+        "runtime",
+        "revision",
+        "library_version",
+    )
+    for key in fields:
+        if not isinstance(observed.get(key), str) or not observed[key]:
+            raise AssertionError(f"Native attestation has no actual {key}")
+    receipt = {key: observed[key] for key in fields}
+    receipt.update(worker=worker, on_core_loop=observed["on_core_loop"])
+    github = {
+        key: os.environ[name]
+        for key, name in (
+            ("sha", "GITHUB_SHA"),
+            ("run_id", "GITHUB_RUN_ID"),
+            ("run_attempt", "GITHUB_RUN_ATTEMPT"),
+            ("job", "GITHUB_JOB"),
+        )
+        if os.environ.get(name)
+    }
+    if github:
+        receipt["github"] = github
+    directory = Path(selected).expanduser().resolve()
+    destination = directory / f"native-runtime-{worker}.json"
+    if destination.resolve().parent != directory:
+        raise ValueError("Native attestation path escaped its output directory")
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=directory, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(receipt, indent=2) + "\n")
+        temporary.replace(destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def attest_native_runtime(base_url: str, headers: dict[str, str]) -> dict[str, Any]:
     """A responsive webhook alone must never qualify the wrong runtime."""
     response = requests.get(
@@ -115,6 +167,7 @@ def attest_native_runtime(base_url: str, headers: dict[str, str]) -> dict[str, A
         raise AssertionError(
             f"Core architecture mismatch: expected {expected_arch}, observed {architecture}"
         )
+    _save_native_attestation(observed)
     return observed
 
 

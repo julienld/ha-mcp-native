@@ -182,7 +182,10 @@ async def test_history_schema_does_not_warn_when_core_describes_it_completely(
             # description codec. Fields remain useful; completeness must not
             # be invented merely because conversion returned a dictionary.
             assert contract["description_complete"] is False
-            assert contract["warnings"]
+            assert any(
+                "Some Core validators cannot be described." in warning
+                for warning in result.get("warnings", [])
+            )
             assert "entity_ids" in contract["schema"]["properties"]
             assert "start_time" in contract["schema"]["properties"]
         else:

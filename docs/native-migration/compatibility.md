@@ -19,9 +19,10 @@ backported into older installations:
   labelled incomplete. Validation always calls the original Core validator.
 
 Calendar and to-do results use Core's own serializers: the public names when
-available and their existing private names on August/September. Missing owners
-or serializers cause an explicit refusal before a write, without a remote retry.
-These private names remain compatibility dependencies covered by the matrix.
+available and their existing private names on August/September. Missing
+serializers cause an explicit refusal before operations that require a read or
+snapshot, without a remote retry. These private names remain compatibility
+dependencies covered by the matrix.
 
 ## Keep installation identity and stored intent
 

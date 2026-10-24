@@ -1,5 +1,9 @@
 """Schema completeness must reflect strict serialization, including nested unions."""
 
+import importlib.metadata
+import importlib.util
+import sys
+from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -9,10 +13,37 @@ from .test_component_ws_search import _REAL_VOL as vol
 from .test_component_ws_search import FakeHass
 
 
-def test_legacy_description_preserves_live_union_fields_without_claiming_complete_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.fixture
+def legacy_contract(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Use the installed codec with the same real Voluptuous as our schemas.
+
+    Embedded tests install a facade without convert/UNSUPPORTED, and other
+    modules replace Voluptuous during collection. Load this one-file codec
+    under a private test name without replacing the facade its peers expect.
+    """
     from custom_components.ha_mcp_tools import core_contract as module
+
+    path = importlib.metadata.distribution("voluptuous-openapi").locate_file(
+        "voluptuous_openapi/__init__.py"
+    )
+    spec = importlib.util.spec_from_file_location("_core_contract_legacy_codec", path)
+    assert spec is not None and spec.loader is not None
+    codec = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, codec)
+    with monkeypatch.context() as imports:
+        imports.setitem(sys.modules, "voluptuous", vol)
+        spec.loader.exec_module(codec)
+    monkeypatch.setattr(module, "_TO_JSON_SCHEMA", None)
+    monkeypatch.setattr(module, "_OPENAPI_CONVERT", codec.convert)
+    monkeypatch.setattr(module, "_OPENAPI_UNSUPPORTED", codec.UNSUPPORTED)
+    monkeypatch.setattr(module, "_INVALID_ERRORS", (ValueError, vol.Invalid))
+    return module
+
+
+def test_legacy_description_preserves_live_union_fields_without_claiming_complete_validation(
+    legacy_contract: ModuleType,
+) -> None:
+    module = legacy_contract
 
     branch = vol.Schema(
         {vol.Required("type"): "future", vol.Required("future_required"): str}
@@ -47,7 +78,6 @@ def test_legacy_description_preserves_live_union_fields_without_claiming_complet
     handler = Mock(side_effect=AssertionError("Description must not dispatch"))
     hass = FakeHass()
     hass.data["websocket_api"] = {"energy/save_prefs": (handler, schema)}
-    monkeypatch.setattr(module, "_TO_JSON_SCHEMA", None)
     result = module.describe_contract(hass, "energy/save_prefs")
     assert "future_required" in str(result.get("schema")), result
     branch_schema = result["schema"]["properties"]["sources"]["items"]["anyOf"][0]
@@ -66,9 +96,9 @@ def test_legacy_description_preserves_live_union_fields_without_claiming_complet
 
 
 def test_legacy_history_description_keeps_fields_and_defaults_with_honest_warning(
-    monkeypatch: pytest.MonkeyPatch,
+    legacy_contract: ModuleType,
 ) -> None:
-    from custom_components.ha_mcp_tools import core_contract as module
+    module = legacy_contract
 
     schema = vol.Schema(
         {
@@ -81,7 +111,6 @@ def test_legacy_history_description_keeps_fields_and_defaults_with_honest_warnin
     )
     hass = FakeHass()
     hass.data["websocket_api"] = {"history/history_during_period": (Mock(), schema)}
-    monkeypatch.setattr(module, "_TO_JSON_SCHEMA", None)
     result = module.describe_contract(hass, "history/history_during_period")
     properties = result.get("schema", {}).get("properties", {})
     assert "entity_ids" in properties and "start_time" in properties, result
