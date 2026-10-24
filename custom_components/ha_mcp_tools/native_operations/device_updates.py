@@ -29,7 +29,7 @@ def commit_device_update(
 
     callback = (
         registry.async_update_child_device
-        if isinstance(device, dr.ChildDeviceEntry)
+        if isinstance(device, getattr(dr, "ChildDeviceEntry", ()))
         else registry.async_update_device
     )
     written = callback(**payload)

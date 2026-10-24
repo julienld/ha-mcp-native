@@ -208,9 +208,16 @@ async def test_native_options_and_subentry_forms_close_owned_flows(
         await engine.backend.stop()
 
 
-@pytest.mark.parametrize("device_id", [None, "device", "other"])
+@pytest.mark.parametrize(
+    "device_id,core_august",
+    [(None, False), ("device", False), ("other", False), ("device", True)],
+)
 async def test_native_diagnostics_and_knx_use_owners_and_shared_projection(
-    native: Any, flows: Any, monkeypatch: pytest.MonkeyPatch, device_id: str | None
+    native: Any,
+    flows: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    device_id: str | None,
+    core_august: bool,
 ) -> None:
     engine, hass, _, entry, _ = inspection(native, monkeypatch)
     entry.domain = "knx"
@@ -235,6 +242,16 @@ async def test_native_diagnostics_and_knx_use_owners_and_shared_projection(
     components = sys.modules["homeassistant.components"]
     helpers = sys.modules["homeassistant.helpers"]
     monkeypatch.setattr(components, "diagnostics", owner, raising=False)
+    devices = (
+        SimpleNamespace(
+            async_get=lambda _identifier: device,
+            async_is_composite_device_id=lambda _identifier: False,
+        )
+        if core_august
+        else SimpleNamespace(
+            async_get=lambda *_args, **_kwargs: device, child_devices=()
+        )
+    )
     monkeypatch.setattr(
         helpers,
         "issue_registry",
@@ -244,11 +261,7 @@ async def test_native_diagnostics_and_knx_use_owners_and_shared_projection(
     monkeypatch.setattr(
         helpers,
         "device_registry",
-        SimpleNamespace(
-            async_get=lambda _hass: SimpleNamespace(
-                async_get=lambda *_args, **_kwargs: device
-            )
-        ),
+        SimpleNamespace(async_get=lambda _hass: devices),
         raising=False,
     )
     hass.data["diagnostics"] = SimpleNamespace(

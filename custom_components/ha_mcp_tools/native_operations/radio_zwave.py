@@ -18,13 +18,10 @@ def _controller(session: RadioSession, args: dict[str, Any]) -> tuple[Any, Any, 
     entry_id = None
     if args.get("device_id"):
         row = session.device(args["device_id"])
+        owners = session.device_config_entries(args["device_id"], row)
         entries = session.hass.config_entries.async_loaded_entries("zwave_js")
         entry_id = next(
-            (
-                entry.entry_id
-                for entry in entries
-                if entry.entry_id in row.config_entries
-            ),
+            (entry.entry_id for entry in entries if entry.entry_id in owners),
             None,
         )
         if entry_id is None:

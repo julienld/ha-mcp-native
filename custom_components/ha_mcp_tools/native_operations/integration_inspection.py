@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from ha_mcp.errors import HomeAssistantAPIError, HomeAssistantConnectionError
 
 from ..optional_integrations import loaded_integration_module
+from .device_registry_compat import registered_device
 
 
 def logger_levels(hass: HomeAssistant) -> list[dict[str, Any]] | None:
@@ -85,9 +86,7 @@ async def _diagnostics_value(hass: HomeAssistant, arguments: dict[str, Any]) -> 
     ]
     filename = f"{entry.domain}-{entry.entry_id}"
     if device_id is not None:
-        device = dr.async_get(hass).async_get(
-            device_id, include_composite_devices=False
-        )
+        device = registered_device(dr.async_get(hass), device_id)
         if (
             device is None
             or device.config_entry_id != entry.entry_id

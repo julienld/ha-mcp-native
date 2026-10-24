@@ -3,6 +3,7 @@
 import copy
 import sys
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -48,7 +49,9 @@ def zwave(radios, monkeypatch):
         "zwave_js", SimpleNamespace(client=SimpleNamespace(driver=driver))
     )
     row = SimpleNamespace(
-        identifiers={("zwave_js", "home-1")}, config_entries={entry.entry_id}
+        identifiers={("zwave_js", "home-1")},
+        config_entry_id=entry.entry_id,
+        is_composite_device=False,
     )
     registry = SimpleNamespace(async_get=lambda _identifier: row)
     radios.hass.data["device_registry"] = registry
@@ -127,6 +130,52 @@ async def test_zwave_node_and_network_maintenance_reach_distinct_core_owners(zwa
     assert not node.is_error and not network.is_error
     zwave.node.async_refresh_info.assert_awaited_once()
     zwave.controller.async_begin_rebuilding_routes.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "version", [8, 9, 10], ids=["core-august", "core-september", "core-current"]
+)
+@pytest.mark.parametrize("composite", [False, True], ids=["ordinary", "composite"])
+async def test_zwave_resolves_device_owners_without_deprecated_ordinary_properties(
+    zwave: Any, version: int, composite: bool
+) -> None:
+    class Device:
+        identifiers = frozenset({("zwave_js", "home-1")})
+        config_entry_id = "other-entry" if composite else zwave.entry.entry_id
+
+        @property
+        def config_entries(self) -> set[str]:
+            if not composite:
+                raise AssertionError(
+                    "Ordinary DeviceEntry.config_entries is deprecated"
+                )
+            return {"other-entry", zwave.entry.entry_id}
+
+    row = Device()
+    if version >= 10:
+        row.is_composite_device = composite
+
+    def get_device(_identifier: str, **kwargs: Any) -> Device | None:
+        if version == 8:
+            assert not kwargs
+        if kwargs.get("include_composite_devices") is False and composite:
+            return None
+        if kwargs.get("include_main_devices") is False and not composite:
+            return None
+        return row
+
+    zwave.registry.async_get = get_device
+    if version >= 9:
+        zwave.registry.child_devices = ()
+
+    def is_composite_device_id(_identifier: str) -> bool:
+        assert version == 8, "Modern Core must not use deprecated composite detection"
+        return composite
+
+    zwave.registry.async_is_composite_device_id = is_composite_device_id
+    result = await call(zwave.radios, "zwave", "reinterview", device_id="fixture")
+    assert not result.is_error, result
+    zwave.node.async_refresh_info.assert_awaited_once()
 
 
 async def test_smartstart_never_overwrites_a_placeholder_created_during_metadata_lookup(
@@ -296,7 +345,9 @@ async def test_matter_core_serialization_preserves_future_diagnostics_and_protec
     )
     node = SimpleNamespace(node_id=7)
     row = SimpleNamespace(
-        identifiers={("matter", "fixture")}, config_entries={entry.entry_id}
+        identifiers={("matter", "fixture")},
+        config_entry_id=entry.entry_id,
+        is_composite_device=False,
     )
     radios.hass.data["device_registry"] = SimpleNamespace(async_get=lambda _: row)
     monkeypatch.setitem(

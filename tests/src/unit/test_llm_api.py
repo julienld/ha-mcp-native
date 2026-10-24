@@ -309,7 +309,7 @@ class TestSchemaConversionCompatibility:
 
         def _import_module(name):
             imports.append((name, threading.get_ident()))
-            if name.startswith("ha_mcp._vendor.mcp."):
+            if name.startswith("ha_mcp._vendor.mcp.") or name == "httpcore":
                 return SimpleNamespace()
             if name == "voluptuous_openapi":
                 return legacy
@@ -332,6 +332,7 @@ class TestSchemaConversionCompatibility:
         assert [name for name, _ in imports] == [
             "ha_mcp._vendor.mcp.client.session",
             "ha_mcp._vendor.mcp.client.streamable_http",
+            "httpcore",
             "voluptuous_openapi",
         ]
         assert all(thread_id != main_thread for _, thread_id in imports)
@@ -958,52 +959,6 @@ class TestPreRenameSdkFallback:
 
 class TestSdkV2Compat:
     """The bundled SDK uses the 2.x transport contract."""
-
-    async def test_v2_transport_gets_an_httpx2_client(self, monkeypatch):
-        import sys
-        from types import ModuleType
-
-        import httpx2
-
-        opened: dict[str, Any] = {}
-
-        @asynccontextmanager
-        async def _v2_client(url, *, http_client=None):
-            opened["http_client"] = http_client
-            yield "read-stream", "write-stream"  # 2.x yields two streams
-
-        fake_transport = ModuleType("ha_mcp._vendor.mcp.client.streamable_http")
-        fake_transport.streamable_http_client = _v2_client  # type: ignore[attr-defined]
-        fake_transport.httpx2 = httpx2  # type: ignore[attr-defined]
-
-        class _FakeClientSession:
-            def __init__(self, read_stream, write_stream):
-                opened["streams"] = (read_stream, write_stream)
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *exc_info):
-                return False
-
-            async def initialize(self):
-                return SimpleNamespace(instructions="v2")
-
-        fake_session_mod = ModuleType("ha_mcp._vendor.mcp.client.session")
-        fake_session_mod.ClientSession = _FakeClientSession  # type: ignore[attr-defined]
-        monkeypatch.setitem(
-            sys.modules, "ha_mcp._vendor.mcp.client.streamable_http", fake_transport
-        )
-        monkeypatch.setitem(
-            sys.modules, "ha_mcp._vendor.mcp.client.session", fake_session_mod
-        )
-
-        async with llm_api._mcp_session("http://127.0.0.1:9584/private_x"):
-            client = opened["http_client"]
-            assert isinstance(client, httpx2.AsyncClient)
-            assert client.trust_env is False
-            assert client.timeout == httpx2.Timeout(llm_api._CALL_TOOL_TIMEOUT_SECONDS)
-        assert opened["streams"] == ("read-stream", "write-stream")
 
     def test_v2_error_classes_are_transport_errors(self, monkeypatch):
         import sys

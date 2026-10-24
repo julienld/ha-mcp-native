@@ -13,6 +13,7 @@ from ha_mcp.tool_api import CallContext, ToolFailure
 from ha_mcp.utils.config_hash import json_values_equal
 
 from .command_validation import _validated_payload
+from .device_registry_compat import is_composite_device
 from .registry_access import (
     Authorize,
     admit_registry_write,
@@ -142,10 +143,18 @@ class RadioSession:
         self.freeze(
             lambda: {
                 "identifiers": sorted(row.identifiers),
-                "config_entries": sorted(row.config_entries),
+                "config_entries": sorted(self.device_config_entries(identifier, row)),
             }
         )
         return row
+
+    def device_config_entries(self, identifier: str, row: Any) -> set[str]:
+        composite = getattr(row, "is_composite_device", None)
+        if composite is None:
+            composite = is_composite_device(self.registry("device"), identifier)
+        # Composite IDs deliberately span entries; this property remains
+        # supported for those synthesized rows, including on current Core.
+        return set(row.config_entries) if composite else {row.config_entry_id}
 
     async def service(
         self, domain: str, service: str, data: dict[str, Any], *, writes: bool = True

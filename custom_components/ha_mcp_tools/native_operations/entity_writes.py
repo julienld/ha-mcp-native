@@ -28,6 +28,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .command_validation import _validated_payload
+from .device_registry_compat import registered_device
 from .device_updates import commit_device_update, prepare_device_update
 from .devices import NativeDevices
 from .entity_registry import NativeEntityRegistry
@@ -391,7 +392,7 @@ class NativeEntityWrites(NativeEntityRegistry):
             )
         if plan.device is not None:
             registry, _, before, _ = plan.device
-            device = registry.async_get(before["id"], include_composite_devices=False)
+            device = registered_device(registry, before["id"])
             if (
                 dr.async_get(self.hass) is not registry
                 or device is None
@@ -532,7 +533,7 @@ class NativeEntityWrites(NativeEntityRegistry):
             )
             failure.data.update(self._phase_context(plan))
             raise failure
-        current = registry.async_get(before["id"], include_composite_devices=False)
+        current = registered_device(registry, before["id"])
         if (
             dr.async_get(self.hass) is not registry
             or current is None
@@ -547,7 +548,7 @@ class NativeEntityWrites(NativeEntityRegistry):
             raise failure
         try:
             commit_device_update(registry, current, payload)
-            written = registry.async_get(before["id"], include_composite_devices=False)
+            written = registered_device(registry, before["id"])
             before_anchor = NativeDevices._removal_anchor(device)
             after_anchor = (
                 NativeDevices._removal_anchor(written) if written is not None else None

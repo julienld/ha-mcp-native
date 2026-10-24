@@ -263,7 +263,21 @@ async def _remove_device_config_entries(
     device_id: str,
     config_entries: list[str],
 ) -> list[dict[str, Any]]:
-    """Remove device from each config entry concurrently; returns per-entry results."""
+    """Remove once with Core's current API, retaining the pre-2026.9 fallback."""
+    current = await client.send_websocket_message(
+        {"type": "config/device_registry/remove", "device_id": device_id}
+    )
+    if current.get("success") or current.get("error_code") != "unknown_command":
+        return [
+            {
+                "config_entry_id": config_entry_id,
+                "success": current.get("success", False),
+                "error": current.get("error") if not current.get("success") else None,
+            }
+            for config_entry_id in config_entries
+        ]
+    # Only Core's explicit unknown-command response proves no removal ran.
+    # A timeout, connection loss or other refusal must never replay the write.
     raw = await asyncio.gather(
         *(
             client.send_websocket_message(

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import platform
+import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.const import __version__ as CORE_VERSION
 from homeassistant.core import HomeAssistant
 
 
@@ -34,6 +37,9 @@ class RuntimeProbe(HomeAssistantView):
             )
         )
         observed = {
+            "core_version": CORE_VERSION,
+            "python_version": sys.version,
+            "architecture": platform.machine(),
             "entry_id": entry.entry_id if entry else None,
             "manager": type(manager).__name__,
             "runtime": entry.options.get("runtime_mode") if entry else None,

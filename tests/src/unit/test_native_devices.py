@@ -47,6 +47,7 @@ class _Devices:
             "composite": self.new("composite", _Composite),
         }
         self.calls = []
+        self.child_devices = ()
 
     @staticmethod
     def new(identifier: str, kind: Any = _Device) -> _Device:
@@ -152,6 +153,57 @@ def _setup(
     )
     engine = Engine(manager.backend, bindings.build_device_tools(manager))
     return engine, manager, devices, component, entry, user, schemas, labels, areas
+
+
+def august_registry(devices: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supply Core 2026.8's lookup signature and lack of child-device types."""
+    del devices.child_devices
+    devices.async_get = devices.rows.get
+    devices.async_is_composite_device_id = lambda identifier: isinstance(
+        devices.rows.get(identifier), _Composite
+    )
+    monkeypatch.delattr(
+        sys.modules["homeassistant.helpers.device_registry"], "ChildDeviceEntry"
+    )
+
+
+@pytest.mark.parametrize("tool", ["ha_set_device", "ha_remove_device"])
+async def test_august_device_writes_keep_owners_and_refuse_composites(
+    native: Any, monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    backup = AsyncMock(return_value={})
+    engine, manager, devices, component, _, _, schemas, *_ = _setup(
+        native, monkeypatch, backup=backup
+    )
+    august_registry(devices, monkeypatch)
+    commands = manager.hass.data["websocket_api"]
+    commands["config/device_registry/remove_config_entry"] = commands.pop(
+        "config/device_registry/remove"
+    )
+    for identifier in ("composite", "main"):
+        result = await engine.call(
+            tool,
+            {
+                "device_id": identifier,
+                **({"name": "Updated"} if tool == "ha_set_device" else {}),
+            },
+            CallContext("actor"),
+        )
+        if identifier == "composite":
+            assert (
+                result.is_error
+                and "composite device" in result.data["error"]["message"]
+            ), result
+            assert not devices.calls and not backup.await_count
+        else:
+            assert not result.is_error, result
+    assert len(devices.calls) == 1 and backup.await_count == 1
+    if tool == "ha_remove_device":
+        assert "main" not in devices.rows
+        component.async_remove_config_entry_device.assert_awaited_once()
+        assert schemas[-1]["config_entry_id"] == "entry"
+    else:
+        assert devices.rows["main"].name_by_user == "Updated"
 
 
 @pytest.mark.parametrize("device_id", ["main", "child"])

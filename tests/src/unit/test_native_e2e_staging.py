@@ -92,3 +92,51 @@ def test_a_responding_legacy_server_cannot_qualify_as_native(monkeypatch):
     )
     with pytest.raises(AssertionError, match="did not attest"):
         attest_native_runtime("http://fixture.test", {"Authorization": "fixture"})
+
+
+@pytest.fixture
+def native_observation():
+    return {
+        "manager": "NativeServerManager",
+        "runtime": "native",
+        "running": True,
+        "on_core_loop": True,
+        "legacy_listener": False,
+        "legacy_thread": False,
+        "admin_token_present": False,
+        "revision": "candidate",
+        "library_version": "candidate-version",
+        "core_version": "2026.8.0",
+        "architecture": "aarch64",
+    }
+
+
+@pytest.mark.parametrize("observed_core", [None, "2026.10.3"])
+def test_a_native_server_on_the_wrong_core_cannot_qualify_the_minimum(
+    monkeypatch, observed_core, native_observation
+):
+    observed = {**native_observation, "core_version": observed_core}
+    monkeypatch.setenv("E2E_EXPECTED_CORE_VERSION", "2026.8.0")
+    monkeypatch.setattr(
+        "tests.src.e2e._conftest_native_runtime.requests.get",
+        lambda *args, **kwargs: SimpleNamespace(
+            raise_for_status=Mock(), json=lambda: observed
+        ),
+    )
+    with pytest.raises(AssertionError, match="Core version"):
+        attest_native_runtime("http://fixture.test", {})
+
+
+def test_an_x64_container_cannot_qualify_the_arm64_lane(
+    monkeypatch, native_observation
+):
+    monkeypatch.setenv("E2E_EXPECTED_ARCH", "ARM64")
+    observed = {**native_observation, "architecture": "x86_64"}
+    monkeypatch.setattr(
+        "tests.src.e2e._conftest_native_runtime.requests.get",
+        lambda *args, **kwargs: SimpleNamespace(
+            raise_for_status=Mock(), json=lambda: observed
+        ),
+    )
+    with pytest.raises(AssertionError, match="architecture"):
+        attest_native_runtime("http://fixture.test", {})

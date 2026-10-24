@@ -193,7 +193,13 @@ def _import_mcp_sdk() -> None:
     surfaces as a conversation error.
     """
     importlib.import_module("ha_mcp._vendor.mcp.client.session")
-    importlib.import_module("ha_mcp._vendor.mcp.client.streamable_http")
+    transport = importlib.import_module("ha_mcp._vendor.mcp.client.streamable_http")
+    # HTTPX defers this import to AsyncClient construction; httpcore2 reads
+    # distribution metadata then. Warm it here before any Assist session can
+    # construct its client on HA's loop, without creating a client to clean up.
+    importlib.import_module(
+        "httpcore2" if getattr(transport, "httpx2", None) is not None else "httpcore"
+    )
     _schema_converter()
 
 

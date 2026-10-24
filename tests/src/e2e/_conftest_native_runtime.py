@@ -100,6 +100,21 @@ def attest_native_runtime(base_url: str, headers: dict[str, str]) -> dict[str, A
         raise AssertionError(
             "Native runtime did not provide its paired artifact identity"
         )
+    expected_core = os.environ.get("E2E_EXPECTED_CORE_VERSION")
+    if expected_core and observed.get("core_version") != expected_core:
+        raise AssertionError(
+            f"Core version mismatch: expected {expected_core}, "
+            f"observed {observed.get('core_version')}"
+        )
+    expected_arch = os.environ.get("E2E_EXPECTED_ARCH", "").lower()
+    architecture = str(observed.get("architecture", "")).lower()
+    aliases = {"x64": "x86_64", "amd64": "x86_64", "arm64": "aarch64"}
+    if expected_arch and aliases.get(expected_arch, expected_arch) != aliases.get(
+        architecture, architecture
+    ):
+        raise AssertionError(
+            f"Core architecture mismatch: expected {expected_arch}, observed {architecture}"
+        )
     return observed
 
 

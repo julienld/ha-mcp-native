@@ -12,6 +12,7 @@ import pytest
 from ha_mcp.runtime import Engine
 from ha_mcp.tool_api import CallContext
 
+from .test_native_devices import august_registry
 from .test_native_engine_backend import native as native
 from .test_native_legacy_exposure import _setup as exposure_setup
 
@@ -46,9 +47,11 @@ def _setup(
     return engine, manager, registry, devices, exposure_owner, user, module
 
 
+@pytest.mark.parametrize("core_august", [False, True])
 async def test_compound_entity_write_captures_both_real_owners_before_any_core_callback(
     native: Any,
     monkeypatch: pytest.MonkeyPatch,
+    core_august: bool,
 ) -> None:
     captures = []
 
@@ -60,6 +63,8 @@ async def test_compound_entity_write_captures_both_real_owners_before_any_core_c
     engine, manager, registry, devices, _, _, _ = _setup(
         native, monkeypatch, backup=backup
     )
+    if core_august:
+        august_registry(devices, monkeypatch)
     registry.rows["sensor.first"].device_id = "main"
     registry.rows["sensor.first"].categories = {"automation": "old"}
     before = registry.rows["sensor.first"].extended_dict

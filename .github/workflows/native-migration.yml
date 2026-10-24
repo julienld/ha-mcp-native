@@ -62,11 +62,18 @@ jobs:
           retention-days: 14
 
   package:
+    name: Native installation (HA ${{ matrix.core }}, ${{ matrix.os }})
     if: ${{ !inputs.published_tag }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ['2026.8.0', '2026.9.4', '2026.10.3']
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
       UV_EXCLUDE_NEWER: '7 days'
+      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ matrix.core }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,28 +92,31 @@ jobs:
       - name: Qualify dependencies and imports on minimal Core
         run: |
           mkdir -p tests/native/out
-          docker run --rm -v "$PWD:/work" -w /work --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.2 -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint python "$HA_IMAGE_GHCR" -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
       - name: Validate library against Home Assistant constraints
-        run: docker build -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+        run: docker build --build-arg "HA_IMAGE=$HA_IMAGE_GHCR" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
       - name: Exercise candidate on the real HA HTTP server
         run: uv run -s tests/native/run_container.py
+      - name: Reject Core deprecations and blocking calls attributed to HA-MCP
+        run: uv run -s scripts/native_core_warnings.py tests/native/out/ha.log --output tests/native/out/core-warnings.json
       - name: Preserve sanitized native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-container-evidence
+          name: native-container-evidence-HA${{ matrix.core }}-${{ runner.arch }}
           path: |
             tests/native/out/evidence.json
             tests/native/out/candidate-install.json
             tests/native/out/minimal-install.json
             tests/native/out/minimal-install.log
             tests/native/out/ha.log
+            tests/native/out/core-warnings.json
           if-no-files-found: ignore
           retention-days: 14
       - name: Preserve HACS candidate
         uses: actions/upload-artifact@v4
         with:
-          name: native-hacs-candidate
+          name: native-hacs-candidate-HA${{ matrix.core }}-${{ runner.arch }}
           path: dist/native/
           retention-days: 14
       - name: Stop disposable HA

@@ -75,6 +75,11 @@ class NativeBulkControl(DeviceActionValues, BulkOperationValues):
         from homeassistant.helpers import floor_registry as fr
 
         devices = dr.async_get(hass)
+        device_entries = (
+            chain(devices.devices, devices.child_devices)
+            if hasattr(devices, "child_devices")
+            else devices.devices.values()  # Core 2026.8's mapping container.
+        )
         detached = json.loads(
             json_bytes(
                 {
@@ -85,7 +90,7 @@ class NativeBulkControl(DeviceActionValues, BulkOperationValues):
                     ],
                     "devices": [
                         json.loads(entry.json_repr)
-                        for entry in chain(devices.devices, devices.child_devices)
+                        for entry in device_entries
                         if entry.json_repr is not None
                     ],
                     "areas": [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import json
+import platform
 import secrets
 import socket
 import sys
@@ -13,7 +14,6 @@ from importlib.abc import MetaPathFinder
 from pathlib import Path
 from typing import Any
 
-import probatio
 import psutil
 from aiohttp import web
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
@@ -23,6 +23,8 @@ from homeassistant.core import Context
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
 
+from .compat import result_payload, tool_result, validation
+
 DOMAIN = "native_fixture"
 
 
@@ -30,22 +32,16 @@ class EchoTool(llm.Tool):
     integration = DOMAIN
     name = "NativeEcho"
     description = "Echo validated text and the original caller."
-    parameters = probatio.from_openapi(
-        {
-            "type": "object",
-            "properties": {"text": {"type": "string"}},
-            "required": ["text"],
-            "additionalProperties": False,
-        }
-    )
-    annotations = llm.ToolAnnotations(
-        read_only=True, destructive=False, idempotent=True
-    )
+    parameters = validation.Schema({validation.Required("text"): str})
+    if hasattr(llm, "ToolAnnotations"):
+        annotations = llm.ToolAnnotations(
+            read_only=True, destructive=False, idempotent=True
+        )
 
     async def async_call(self, hass, tool_input, llm_context):
         arguments = self.parameters(tool_input.tool_args)
-        return llm.ToolResult(
-            data={
+        return tool_result(
+            {
                 "text": arguments["text"].upper(),
                 "user_id": llm_context.context.user_id,
             }
@@ -66,12 +62,11 @@ class TurnOnTool(llm.Tool):
     integration = DOMAIN
     name = "NativeTurnOn"
     description = "Turn on the disposable fixture light through Core's service owner."
-    parameters = probatio.from_openapi(
-        {"type": "object", "properties": {}, "additionalProperties": False}
-    )
-    annotations = llm.ToolAnnotations(
-        read_only=False, destructive=False, idempotent=True
-    )
+    parameters = validation.Schema({})
+    if hasattr(llm, "ToolAnnotations"):
+        annotations = llm.ToolAnnotations(
+            read_only=False, destructive=False, idempotent=True
+        )
 
     async def async_call(self, hass, tool_input, llm_context):
         self.parameters(tool_input.tool_args)
@@ -82,7 +77,7 @@ class TurnOnTool(llm.Tool):
             blocking=True,
             context=llm_context.context,
         )
-        return llm.ToolResult(data={"turned_on": True})
+        return tool_result({"turned_on": True})
 
 
 class FixtureView(HomeAssistantView):
@@ -122,6 +117,12 @@ class FixtureView(HomeAssistantView):
                 "entry_data_keys": sorted(manager.entry.data) if manager else [],
                 "path": getattr(manager, "path", None),
                 "versions": versions,
+                "interpreter": {
+                    "executable": sys.executable,
+                    "version": sys.version,
+                    "implementation": sys.implementation.name,
+                    "architecture": platform.machine(),
+                },
                 "dependencies": dependencies,
                 "listeners": sorted(
                     {c.laddr.port for c in connections if c.status == "LISTEN"}
@@ -318,7 +319,7 @@ class FixtureView(HomeAssistantView):
             )
         except PermissionError:
             return web.json_response({"error": "admin_identity_required"}, status=403)
-        return web.json_response({"data": result.data, "error": result.error})
+        return web.json_response(result_payload(result))
 
     async def _seed_configuration(
         self, operation: str, user: Any, body: dict[str, Any]

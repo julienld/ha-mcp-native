@@ -28,6 +28,7 @@ BLOCKED_WS_WRITE_COMMANDS: frozenset[str] = frozenset(
         "config/device_registry/delete",
         "config/device_registry/disable",
         "config/device_registry/update",
+        "config/device_registry/remove",
         "config/device_registry/remove_config_entry",
         "config/entity_registry/delete",
         "config/entity_registry/disable",

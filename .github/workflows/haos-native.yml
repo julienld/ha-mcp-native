@@ -5,6 +5,11 @@ on:
     branches: [qualify/haos-native]
   workflow_dispatch:
     inputs:
+      core_version:
+        description: 'Pinned Core version to bake and verify inside HAOS'
+        type: choice
+        options: ['2026.8.0', '2026.9.4', '2026.10.3']
+        default: '2026.10.3'
       pytest_args:
         description: 'Additional pytest arguments'
         type: string
@@ -27,6 +32,8 @@ concurrency:
 
 env:
   PYTHON_VERSION: '3.13'
+  HAOS_BUILD_CORE_VERSION: ${{ inputs.core_version || '2026.10.3' }}
+  E2E_EXPECTED_CORE_VERSION: ${{ inputs.core_version || '2026.10.3' }}
   UV_CACHE_DIR: /tmp/.uv-cache
   LIBGUESTFS_BACKEND: direct
   E2E_NATIVE_ARTIFACTS: ${{ github.workspace }}/dist/haos-qualification
@@ -34,7 +41,7 @@ env:
 
 jobs:
   haos-native:
-    name: HAOS native runtime
+    name: HAOS native runtime (HA ${{ inputs.core_version || '2026.10.3' }})
     if: ${{ github.repository == 'julienld/ha-mcp-native' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
@@ -62,7 +69,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/haos-test-image.qcow2
-          key: ${{ steps.key.outputs.cache-key }}
+          key: native-core-${{ env.HAOS_BUILD_CORE_VERSION }}-${{ steps.key.outputs.cache-key }}
 
       - name: Report image-acquisition path
         run: |
@@ -116,7 +123,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/haos-test-image.qcow2
-          key: ${{ steps.key.outputs.cache-key }}
+          key: native-core-${{ env.HAOS_BUILD_CORE_VERSION }}-${{ steps.key.outputs.cache-key }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0

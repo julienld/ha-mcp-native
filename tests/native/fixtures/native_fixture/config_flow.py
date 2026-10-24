@@ -2,8 +2,9 @@
 
 from typing import Any
 
-import probatio
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+
+from .compat import validation
 
 
 class NativeFixtureFlow(ConfigFlow, domain="native_fixture"):
@@ -15,6 +16,6 @@ class NativeFixtureFlow(ConfigFlow, domain="native_fixture"):
         if user_input is None:
             return self.async_show_form(
                 step_id="user",
-                data_schema=probatio.Schema({probatio.Required("name"): str}),
+                data_schema=validation.Schema({validation.Required("name"): str}),
             )
         return self.async_create_entry(title=user_input["name"], data=user_input)

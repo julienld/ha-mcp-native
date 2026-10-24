@@ -14,8 +14,11 @@ from ha_mcp.tool_api import CallContext
 from .test_native_engine_backend import native as native
 
 
-def test_bulk_topology_uses_core_child_devices_and_detaches_owner_values(
-    native: Any, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "with_children", [False, True], ids=["core-august", "core-current"]
+)
+def test_bulk_topology_resolves_registry_shapes_and_detaches_owner_values(
+    native: Any, monkeypatch: pytest.MonkeyPatch, with_children: bool
 ) -> None:
     module = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.bulk_control"
@@ -31,6 +34,13 @@ def test_bulk_topology_uses_core_child_devices_and_detaches_owner_values(
         ],
         child_devices=[SimpleNamespace(json_repr=json.dumps(device_rows[1]).encode())],
     )
+    if not with_children:
+        device_rows = [{"id": "child", "area_id": "room"}]
+        devices = SimpleNamespace(
+            devices={
+                "child": SimpleNamespace(json_repr=json.dumps(device_rows[0]).encode())
+            }
+        )
     attrs = {"friendly_name": "Child light"}
     hass = SimpleNamespace(
         states=SimpleNamespace(

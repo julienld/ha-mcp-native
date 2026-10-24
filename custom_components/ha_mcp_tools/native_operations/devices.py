@@ -19,6 +19,7 @@ from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .command_validation import _validated_payload
+from .device_registry_compat import is_composite_device, registered_device
 from .device_updates import commit_device_update, prepare_device_update
 from .registry_access import (
     Authorize,
@@ -48,18 +49,13 @@ class NativeDevices:
 
     @staticmethod
     def _target(registry: Any, device_id: str) -> Any:
-        if (
-            registry.async_get(
-                device_id, include_main_devices=False, include_child_devices=False
-            )
-            is not None
-        ):
+        if is_composite_device(registry, device_id):
             raise ToolFailure(
                 "SERVICE_CALL_FAILED",
                 "Cannot change a composite device; select an underlying device.",
                 status="not_started",
             )
-        device = registry.async_get(device_id, include_composite_devices=False)
+        device = registered_device(registry, device_id)
         if device is None:
             registry_target_missing("device", device_id)
         return device
@@ -177,11 +173,14 @@ class NativeDevices:
     async def _remove(self, device_id: str) -> dict[str, Any]:
         from homeassistant import loader
 
-        _validated_payload(
-            self.hass, "config/device_registry/remove", {"device_id": device_id}
-        )
         registry = self._owner()
         device = self._target(registry, device_id)
+        command = "config/device_registry/remove"
+        payload = {"device_id": device_id}
+        if command not in self.hass.data.get("websocket_api", {}):
+            command = "config/device_registry/remove_config_entry"
+            payload["config_entry_id"] = device.config_entry_id
+        _validated_payload(self.hass, command, payload)
         before = registry_json(device.dict_repr)
         entry = self.hass.config_entries.async_get_entry(device.config_entry_id)
         if entry is None:
@@ -290,9 +289,7 @@ class NativeDevices:
             # after revocation. Admission failures here cannot undo the callback.
             await admit_registry_write(self.actor, self.authorize)
             current_owner = self._owner()
-            current = current_owner.async_get(
-                device_id, include_composite_devices=False
-            )
+            current = registered_device(current_owner, device_id)
             if (
                 current_owner is not registry
                 or self.hass.config_entries.async_get_entry(entry.entry_id) is not entry

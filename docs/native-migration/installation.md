@@ -249,9 +249,14 @@ running any publishing workflow.
 
 ## Install a published candidate
 
-The candidate requires **Home Assistant 2026.10.2 or newer**. The regular source
-channel's older HACS minimum remains unchanged for legacy compatibility. Native
-Core admission enforces its own minimum even if an archive is copied manually.
+The development candidate targets **Home Assistant 2026.8.0 or newer**, preserving
+the upstream installation minimum. Its three-month amd64/aarch64 qualification
+must pass before that candidate is described as qualified. Native Core admission
+enforces the minimum even if an archive is copied manually.
+
+The previously published **9.0.0.dev3** still requires **2026.10.2** and retains
+only its recorded qualification. Use the selected release's own metadata; do not
+lower an old archive's version guard to install it on an older Core.
 
 1. Take a recoverable Home Assistant backup and record the currently installed
    integration/library version and configuration. Keep credential-bearing

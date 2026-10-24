@@ -2,12 +2,13 @@
 
 from typing import Any
 
-import probatio
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+
+from .compat import validation
 
 
 async def seed_bulk(hass: HomeAssistant) -> dict[str, Any]:
@@ -56,7 +57,7 @@ async def seed_bulk(hass: HomeAssistant) -> dict[str, Any]:
                     "Fixture provider failed after applying the action"
                 )
 
-    schema = probatio.Schema({probatio.Required("entity_id"): cv.entity_ids})
+    schema = validation.Schema({validation.Required("entity_id"): cv.entity_ids})
     for service in ("turn_on", "turn_off", "toggle"):
         hass.services.async_register(domain, service, change, schema=schema)
     await hass.async_block_till_done()

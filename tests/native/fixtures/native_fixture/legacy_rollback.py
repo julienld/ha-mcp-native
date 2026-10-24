@@ -37,6 +37,8 @@ from custom_components.ha_mcp_tools.const import (
     RUNTIME_NATIVE,
 )
 
+from .compat import result_payload
+
 _FIXTURE = "native_fixture"
 _KEY = "legacy_rollback"
 _PORT = 9584
@@ -251,7 +253,7 @@ async def _assist(hass: Any, user: Any, saved: _Rollback) -> dict[str, Any]:
     result = await api.async_call_tool(
         llm.ToolInput(tool_name="ha_get_state", tool_args={"entity_id": _ENTITY})
     )
-    return {"error": result.error, "data": result.data}
+    return result_payload(result)
 
 
 async def legacy_rollback(hass: Any, user: Any, body: dict[str, Any]) -> dict[str, Any]:

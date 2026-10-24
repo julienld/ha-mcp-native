@@ -152,16 +152,24 @@ processes every manifest requirement. A minimal Core lane distinguishes base
 providers from packages preloaded only in the Container image. These checks do
 not cover every optional integration's dependency combination.
 
-As of 22 October 2026, the native qualification target and admission floor are
-Core **2026.10.2**. Creation, selection in options and startup check the native
+The native development line preserves the upstream Core **2026.8.0** minimum.
+Its qualification matrix covers three consecutive monthly Core trains on
+amd64 and aarch64, using each image's own Python rather than an independent
+Python matrix. The exact minimum is exercised, not replaced by its latest patch.
+Creation, selection in options and startup check the native
 floor before loading modern owners, including for an imported entry or a Core
 downgrade. They refuse an unsupported native selection without changing its
 runtime or webhook automatically. The source/legacy channel's HACS installation
 floor remains **2026.8.0**, retained for legacy and shared-component compatibility.
-The generated native distribution snapshot instead advertises **2026.10.2** in
-its HACS metadata, matching its runtime floor. Direct dependency alignment passes against
-both versions; that does not qualify native execution on 2026.8. Native runtime
-support and the component installation floor are distinct claims. Candidate
+The generated native distribution snapshot derives its HACS minimum from the
+runtime floor. Historical public dev3 and the earlier qualification remain tied
+to **2026.10.2**; they do not establish this new minimum's runtime support.
+Record the matrix's results before claiming the development candidate qualified.
+Fail qualification on Core deprecations and blocking calls attributed to our
+component; retain other integrations' diagnostics without treating them as ours.
+Keep the matrix pinned and update it deliberately with the compatibility floor;
+do not silently drop the advertised minimum as the current month advances.
+Native runtime support and the component installation floor are distinct claims. Candidate
 qualification records belong in
 [native migration evidence](../native-migration/README.md).
 

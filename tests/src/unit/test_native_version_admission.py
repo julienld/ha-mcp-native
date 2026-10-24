@@ -18,7 +18,7 @@ def isolate_native_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime_generation, "_NATIVE_VERSION", None)
 
 
-@pytest.mark.parametrize("version", ["2026.8.0", "2026.10.1", "unknown"])
+@pytest.mark.parametrize("version", ["2026.7.4", "2026.8.0b0", "unknown"])
 async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -29,7 +29,10 @@ async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
     assert result["type"] == "abort"
     assert result["reason"] == "unsupported_home_assistant"
     assert result["description_placeholders"]["installed"] == version
-    assert result["description_placeholders"]["required"] == "2026.10.2"
+    assert (
+        result["description_placeholders"]["required"]
+        == const.MIN_NATIVE_HOME_ASSISTANT_VERSION
+    )
     flow.async_set_unique_id.assert_not_awaited()
     flow.async_create_entry.assert_not_called()
 
@@ -37,7 +40,7 @@ async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
 async def test_options_cannot_switch_an_older_core_to_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cf, "HA_VERSION", "2026.8.0")
+    monkeypatch.setattr(cf, "HA_VERSION", "2026.7.4")
     flow = _make_options_flow(options={const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY})
     result = await flow.async_step_init({const.OPT_RUNTIME_MODE: const.RUNTIME_NATIVE})
     assert result["type"] == "form"
@@ -57,7 +60,7 @@ async def test_older_core_still_accepts_legacy_options(
     assert result["data"][const.OPT_RUNTIME_MODE] == const.RUNTIME_LEGACY
 
 
-@pytest.mark.parametrize("version", ["2026.8.0", "2026.10.1", "unknown"])
+@pytest.mark.parametrize("version", ["2026.7.4", "2026.8.0b0", "unknown"])
 def test_imported_native_entry_is_refused_before_loading_native_host(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -72,7 +75,7 @@ def test_imported_native_entry_is_refused_before_loading_native_host(
         return original(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_native_import)
-    with pytest.raises(ValueError, match=r"2026\.10\.2"):
+    with pytest.raises(ValueError, match="Native HA-MCP requires Home Assistant"):
         embedded_setup._server_manager(
             object(),
             SimpleNamespace(options={const.OPT_RUNTIME_MODE: const.RUNTIME_NATIVE}),
@@ -84,12 +87,12 @@ async def test_direct_native_start_after_downgrade_refuses_before_prewarm(
 ) -> None:
     from custom_components.ha_mcp_tools import native_server
 
-    monkeypatch.setattr(native_server, "HA_VERSION", "2026.10.1", raising=False)
+    monkeypatch.setattr(native_server, "HA_VERSION", "2026.7.4", raising=False)
     runtime = native_manager()
     runtime.hass.async_add_executor_job = AsyncMock(
         side_effect=AssertionError("Unsupported Core reached modern owner prewarm")
     )
-    with pytest.raises(ValueError, match=r"2026\.10\.2"):
+    with pytest.raises(ValueError, match="Native HA-MCP requires Home Assistant"):
         await runtime.async_start()
     runtime.hass.async_add_executor_job.assert_not_awaited()
 
@@ -109,15 +112,16 @@ def test_older_core_keeps_existing_legacy_runtime(
     ) == (legacy, False)
 
 
-async def test_qualified_native_core_reaches_prewarm(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("version", ["2026.8.0", "2026.9.4", "2026.10.3"])
+async def test_supported_core_reaches_native_owner_prewarm(
+    monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
     from custom_components.ha_mcp_tools import native_server
 
     class PrewarmReached(Exception):
         pass
 
-    monkeypatch.setattr(native_server, "HA_VERSION", "2026.10.2", raising=False)
+    monkeypatch.setattr(native_server, "HA_VERSION", version, raising=False)
     runtime = native_manager()
     runtime.hass.async_add_executor_job = AsyncMock(side_effect=PrewarmReached)
     with pytest.raises(PrewarmReached):

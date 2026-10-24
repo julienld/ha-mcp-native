@@ -1,7 +1,9 @@
 """The minimal lane must expose changes hidden by a preinstalled Core image."""
 
 import copy
+import importlib.metadata
 import json
+import platform
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +14,108 @@ import pytest
 
 from tests.native import minimal_install, minimal_probes, minimal_qualification
 from tests.native.minimal_support import changes, sanitize
+
+
+@pytest.fixture
+def core_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    package = tmp_path / "image/homeassistant"
+    package.mkdir(parents=True)
+    origin = package / "__init__.py"
+    origin.write_text("")
+    constraints = package / "package_constraints.txt"
+    constraints.write_text("# Bootstrap constraints shipped by this image\n")
+    world = SimpleNamespace(core="2026.8.0", uv="0.11.31", constraints=constraints)
+    world.distribution = SimpleNamespace(
+        version=world.core,
+        files=[Path("homeassistant/package_constraints.txt")],
+        locate_file=lambda filename: package.parent / filename,
+        read_text=lambda _filename: None,
+    )
+    monkeypatch.setattr(
+        minimal_qualification,
+        "sys",
+        SimpleNamespace(
+            platform="linux",
+            version_info=(3, 14, 2),
+            executable=sys.executable,
+            version=sys.version,
+            implementation=sys.implementation,
+        ),
+    )
+    monkeypatch.setattr(
+        minimal_qualification.importlib.util,
+        "find_spec",
+        lambda _name: SimpleNamespace(origin=str(origin)),
+    )
+    monkeypatch.setattr(
+        importlib.metadata,
+        "distribution",
+        lambda name: (
+            world.distribution
+            if name == "homeassistant"
+            else SimpleNamespace(version=world.uv)
+        ),
+    )
+    monkeypatch.setattr(minimal_qualification.venv, "EnvBuilder", Mock())
+    world.run = Mock()
+    monkeypatch.setattr(minimal_qualification, "run_logged", world.run)
+    world.output = tmp_path / "proof.json"
+    world.qualify = lambda: minimal_qualification.qualify(
+        tmp_path / "assets", tmp_path / "work", world.output
+    )
+    return world
+
+
+@pytest.mark.parametrize(
+    ("core_version", "uv_version"),
+    [("2026.8.0", "0.11.31"), ("2026.10.3", "0.13.0")],
+)
+def test_minimal_lane_installs_the_image_core_and_its_own_uv(
+    core_image: Any, core_version: str, uv_version: str
+) -> None:
+    core_image.distribution.version = core_version
+    core_image.uv = uv_version
+    core_image.qualify()
+    command = core_image.run.call_args_list[0].args[0]
+    assert f"homeassistant=={core_version}" in command
+    assert f"uv=={uv_version}" in command
+    assert command[command.index("--constraint") + 1] == str(core_image.constraints)
+    proof = json.loads(core_image.output.read_text())
+    assert proof["core_version"] == core_version
+    assert proof["uv_version"] == uv_version
+
+
+def test_minimal_lane_rejects_bootstrap_constraints_from_another_core(
+    core_image: Any, tmp_path: Path
+) -> None:
+    core_image.distribution.locate_file = lambda _filename: tmp_path / "other-core"
+    with pytest.raises(RuntimeError, match=r"constraints.*installed Core"):
+        core_image.qualify()
+    core_image.run.assert_not_called()
+
+
+def test_minimal_lane_accepts_constraints_owned_by_the_editable_core_image(
+    core_image: Any, tmp_path: Path
+) -> None:
+    core_image.distribution.locate_file = lambda _filename: tmp_path / "site-packages"
+    core_image.distribution.read_text = lambda _filename: json.dumps(
+        {
+            "url": core_image.constraints.parent.parent.as_uri(),
+            "dir_info": {"editable": True},
+        }
+    )
+    core_image.qualify()
+    assert core_image.run.call_count == 3
+
+
+def test_minimal_lane_records_the_interpreter_supplied_by_the_image(
+    core_image: Any,
+) -> None:
+    core_image.qualify()
+    proof = json.loads(core_image.output.read_text())
+    assert proof["interpreter"]["executable"] == sys.executable
+    assert proof["interpreter"]["version"] == sys.version
+    assert proof["interpreter"]["architecture"] == platform.machine()
 
 
 def test_core_worker_does_not_discover_checkout_uv_policy(tmp_path, monkeypatch):
