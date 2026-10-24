@@ -78,6 +78,7 @@ def search(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     hass.async_add_executor_job = asyncio.to_thread
     owners = {domain: ConfigOwner({}) for domain in ("automation", "script", "scene")}
     monkeypatch.setattr(sources, "config_view", lambda hass, domain: owners[domain])
+    related = module.NativeSearch._related
     monkeypatch.setattr(
         module.NativeSearch, "_related", lambda self, req: (False, None)
     )
@@ -102,6 +103,7 @@ def search(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
         registry=registry,
         entities=entities,
         prep=prep,
+        related=related,
     )
 
 
@@ -255,6 +257,76 @@ async def test_native_search_reference_hits_are_counted_before_window_even_witho
     assert row["entity_id"] == "script.two"
     assert row["script_id"] == "persisted-two"
     assert row["match_in_references"] is True
+
+
+@pytest.mark.parametrize("modern", [False, True], ids=["Core8-and9", "Core10"])
+async def test_native_search_calls_the_supported_core_searcher_constructor(
+    search: Any, monkeypatch: pytest.MonkeyPatch, modern: bool
+) -> None:
+    """Keep the real native graph adapter: Core8/9 have no disabled-entity option."""
+    script(search, "one", {"alias": "Unrelated body"})
+    sources = {"light.visible": {"domain": "light"}}
+    calls = []
+    disabled_options = []
+    loop_thread = threading.get_ident()
+
+    class CoreBeforeOctober:
+        def __init__(self, hass: Any, entity_sources: Any) -> None:
+            assert hass is search.manager.hass
+            assert entity_sources is sources
+            assert threading.get_ident() == loop_thread
+
+        def async_search(self, item_type: str, item_id: str) -> dict[str, set[str]]:
+            calls.append((item_type, item_id))
+            return {"script": {"script.one"}}
+
+    class CoreOctober(CoreBeforeOctober):
+        def __init__(
+            self,
+            hass: Any,
+            entity_sources: Any,
+            *,
+            include_disabled_entities: bool = False,
+        ) -> None:
+            super().__init__(hass, entity_sources)
+            disabled_options.append(include_disabled_entities)
+
+    monkeypatch.setattr(search.module.NativeSearch, "_related", search.related)
+    monkeypatch.setattr(
+        sys.modules["homeassistant.core"],
+        "valid_entity_id",
+        lambda value: value == "light.visible",
+        raising=False,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.search",
+        SimpleNamespace(
+            ItemType=SimpleNamespace(ENTITY="entity"),
+            Searcher=CoreOctober if modern else CoreBeforeOctober,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.helpers.entity",
+        SimpleNamespace(entity_sources=lambda _hass: sources),
+    )
+    result = await search.engine.call(
+        "ha_search",
+        {"query": "light.visible", "search_types": ["script"], "exact_match": True},
+        CallContext("actor"),
+    )
+    assert not result.is_error, result.data
+    assert result.data["config_total_matches"] == 1, result.data
+    row = result.data["scripts"][0]
+    assert row["entity_id"] == "script.one"
+    assert row["script_id"] == "persisted-one"
+    assert row["match_in_references"] is True
+    assert row["match_in_config"] is False
+    assert not result.data.get("partial"), result.data
+    assert calls == [("entity", "light.visible")]
+    assert disabled_options == ([False] if modern else [])
+    search.manager.backend.execute.assert_not_awaited()
 
 
 async def test_native_search_scrub_failure_does_not_scan_config_or_probe_secret_values(

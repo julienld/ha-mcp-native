@@ -72,10 +72,10 @@ class NativeSearch:
             from homeassistant.components.search import ItemType, Searcher
             from homeassistant.helpers.entity import entity_sources
 
+            # Core 10's optional disabled-entity flag defaults to the Core 8/9 behavior.
             payload = Searcher(
                 self.manager.hass,
                 entity_sources(self.manager.hass),
-                include_disabled_entities=False,
             ).async_search(ItemType.ENTITY, req.query_text.lower())
             return True, _parse_related(payload)
         except Exception:  # noqa: BLE001 - disclose unavailable graph; never acquire through another transport
