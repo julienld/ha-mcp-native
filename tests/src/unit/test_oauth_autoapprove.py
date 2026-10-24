@@ -18,7 +18,7 @@ import hashlib
 import importlib
 import secrets
 import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,25 +26,6 @@ import pytest
 from ._embedded_stubs import install
 
 install()
-
-
-class _FakeURL:
-    """Stand-in for ``yarl.URL`` covering only ``update_query`` + ``str()``."""
-
-    def __init__(self, url: str) -> None:
-        self._url = url
-
-    def update_query(self, params: dict[str, str]) -> _FakeURL:
-        sep = "&" if "?" in self._url else "?"
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        return _FakeURL(f"{self._url}{sep}{query}" if query else self._url)
-
-    def with_query(self, params) -> _FakeURL:
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        return _FakeURL(f"{self._url}?{query}" if query else self._url)
-
-    def __str__(self) -> str:
-        return self._url
 
 
 CORE_TOKEN_BODY = b'{"access_token":"x"}'
@@ -95,11 +76,6 @@ class _CoreTokenSession:
             raise self.error
         return _CoreTokenResponse(self.body, self.status)
 
-
-if "yarl" not in sys.modules:
-    _yarl = ModuleType("yarl")
-    _yarl.URL = _FakeURL  # type: ignore[attr-defined]
-    sys.modules["yarl"] = _yarl
 
 import custom_components.ha_mcp_tools.oauth_autoapprove as aa  # noqa: E402
 from custom_components.ha_mcp_tools import (  # noqa: E402
