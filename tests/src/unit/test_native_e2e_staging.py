@@ -1,5 +1,6 @@
 """Qualification must boot the selected runtime under a real fixture identity."""
 
+import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,10 +8,68 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.src.e2e import _conftest_testcontainer as container_harness
 from tests.src.e2e._conftest_native_runtime import (
     attest_native_runtime,
     configure_native_entry,
 )
+
+
+@pytest.fixture
+def container_build(tmp_path, monkeypatch):
+    container = Mock()
+    for method in (
+        "with_exposed_ports",
+        "with_volume_mapping",
+        "with_env",
+        "with_kwargs",
+    ):
+        getattr(container, method).return_value = container
+    constructor = Mock(return_value=container)
+    monkeypatch.setattr(container_harness, "DockerContainer", constructor)
+    monkeypatch.setattr(
+        container_harness,
+        "_collect_manifest_requirements",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(container_harness, "native_runtime_selected", lambda: True)
+    monkeypatch.delenv("HA_TEST_PORT", raising=False)
+    monkeypatch.delenv("HA_TEST_IMAGE", raising=False)
+    monkeypatch.delenv("HA_IMAGE_GHCR", raising=False)
+
+    def build() -> Mock:
+        spec = importlib.util.spec_from_file_location(
+            "selected_test_image", Path(__file__).parents[2] / "test_constants.py"
+        )
+        constants = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(constants)
+        monkeypatch.setattr(container_harness, "HA_TEST_IMAGE", constants.HA_TEST_IMAGE)
+        return container_harness._build_ha_testcontainer(
+            tmp_path, True, "candidate.whl"
+        )
+
+    return SimpleNamespace(build=build, constructor=constructor)
+
+
+def test_embedded_boot_uses_the_matrix_image_instead_of_the_stale_imported_pin(
+    monkeypatch, container_build
+):
+    image = "ghcr.io/home-assistant/home-assistant:2026.8.0"
+    monkeypatch.setenv("HA_IMAGE_GHCR", image)
+    container_build.build()
+    container_build.constructor.assert_called_once_with(image)
+
+
+def test_explicit_test_image_override_still_wins_over_the_workflow_image(
+    monkeypatch, container_build
+):
+    image = "registry.test/custom-core:candidate"
+    monkeypatch.setenv("HA_TEST_IMAGE", image)
+    monkeypatch.setenv(
+        "HA_IMAGE_GHCR", "ghcr.io/home-assistant/home-assistant:2026.10.3"
+    )
+    container_build.build()
+    container_build.constructor.assert_called_once_with(image)
 
 
 def _seed(config: Path, user: dict) -> Path:

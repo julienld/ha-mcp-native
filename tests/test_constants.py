@@ -21,12 +21,14 @@ NON_ADMIN_TEST_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIzNzkyOTc
 
 # Home Assistant Docker image for E2E/performance/UAT tests.
 # Keep in sync with .github/workflows/e2e-tests.yml and pr.yml.
-# HA_TEST_IMAGE in the environment overrides the pin: the container beta
-# lane (.github/workflows/e2e-beta-tests.yml) points it at the current
-# beta Core image resolved at run time.
+# HA_TEST_IMAGE overrides the workflow's HA_IMAGE_GHCR and the default pin:
+# the beta lane uses the explicit override, while compatibility matrices use
+# HA_IMAGE_GHCR for both their image pull and the containers booted by tests.
 # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
 _DEFAULT_HA_TEST_IMAGE = "ghcr.io/home-assistant/home-assistant:2026.10.2"
-HA_TEST_IMAGE = os.environ.get("HA_TEST_IMAGE", _DEFAULT_HA_TEST_IMAGE)
+HA_TEST_IMAGE = os.environ.get(
+    "HA_TEST_IMAGE", os.environ.get("HA_IMAGE_GHCR", _DEFAULT_HA_TEST_IMAGE)
+)
 
 # Test user credentials (for UI access)
 TEST_USER = "mcp"
