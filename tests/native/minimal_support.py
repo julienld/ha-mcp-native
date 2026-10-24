@@ -33,15 +33,28 @@ def environment() -> dict[str, Any]:
     }
 
 
-def changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "changed_preinstalled": {
-            name: {"before": version, "after": after["versions"].get(name)}
-            for name, version in before["versions"].items()
-            if after["versions"].get(name) != version
-        },
-        "new_issues": sorted(set(after["issues"]) - set(before["issues"])),
-    }
+def changes(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    constraint_path: Path | None = None,
+    previous_versions: dict[str, str] | None = None,
+    baseline_constraints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _receipt_helpers()["assess_dependencies"](
+        before["versions"],
+        after["versions"],
+        before["issues"],
+        after["issues"],
+        constraint_path=constraint_path,
+        previous_versions=previous_versions,
+        baseline_constraints=baseline_constraints,
+    )
+
+
+def core_constraint_context(path: Path) -> dict[str, Any]:
+    context = _receipt_helpers()["core_constraint_context"](path)
+    return {key: value for key, value in context.items() if key != "text"}
 
 
 def save(path: Path, proof: dict[str, Any]) -> None:

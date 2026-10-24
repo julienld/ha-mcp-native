@@ -9,7 +9,7 @@ async def exercise_installation(
     checks: Any, *, published_tag: str | None, phase: str
 ) -> None:
     mode = "published" if published_tag else "candidate"
-    proof = await checks.control("dependency_receipt")
+    proof = await checks.control("dependency_receipt?phase=" + phase)
     # Preserve failed dependency evidence too, separately from partial tool checks.
     output = Path(__file__).parent / "out" / f"{mode}-install.json"
     output.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
@@ -21,7 +21,13 @@ async def exercise_installation(
         key: observation.get(key)
         for key in (
             "changed_preinstalled",
+            "compatible_upgrades",
+            "rejected_changes",
             "new_issues",
+            "constraint_violations",
+            "new_constraint_violations",
+            "baseline_clean",
+            "policy_errors",
             "errors",
             "receipt",
             "payload",

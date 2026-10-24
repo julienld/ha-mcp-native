@@ -129,7 +129,37 @@ seeded with the older image's certifi. Both use Core's real installer and compar
 **all** distributions: the full lane after setup/restart, the minimal lane after
 each installation and its SDK/state/transport probes. Compatibility ranges admit
 future Core versions; they are not an assurance that every future dependency
-graph is unchanged. A changed shared dependency remains a qualification failure.
+graph is unchanged. Shared changes follow the qualification policy below.
+
+### Compatible shared-package upgrades
+
+On 23 October 2026 Julien chose compatible shared-package upgrades under Core's
+normal installer instead of adding private HTTPX2/HTTPCore2 copies. The native
+profile retains its existing capabilities, including the client email-schema
+dependency. HTTPX2 remains within its supported 2.x API range; the standalone
+lock keeps its selected versions.
+
+Qualification records every distribution before installation, after setup and
+after a complete Core restart. The minimal lane also checks each manifest root
+and declared integration dependency. Compatible upgrades may pass; removals,
+downgrades, incompatible release changes, new dependency conflicts and violations
+of Core's applicable constraints fail. Core, its shared MCP SDK, Pydantic, HTTPX
+and Cryptography retain their preinstalled versions. New packages must satisfy
+Core's constraints and the dependency checks too. Comparing each observation
+with its predecessor also detects a package added during setup then removed or
+downgraded at restart.
+
+The initial HACS wheel still has no active dependencies and must not change any
+preinstalled package before Core processes the manifest. Compatible upgrades
+belong to the ordinary requirement-manager path, not a wheel dependency graph.
+
+The records keep pre-existing diagnostics separate from newly introduced ones;
+a pre-existing conflict does not mean the environment is clean. A successful
+package check does not establish compatibility with every optional integration.
+Actual runtime probes before and after restart remain required because versions
+on disk do not identify every class already loaded in memory. These are
+qualification checks, not an integration-specific installer or automatic
+rollback in a user's Home Assistant.
 
 Optional integration APIs use `optional_integrations.loaded_integration_module`:
 Core must already have loaded the named integration before its module is

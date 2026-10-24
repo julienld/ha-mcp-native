@@ -9,14 +9,94 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import runpy
 import subprocess
 import sys
+from functools import cache
 from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from packaging.markers import default_environment
+
 PROOF = Path("/opt/native-dependencies.json")
 ASSETS = Path("/opt/native-assets")
+
+
+@cache
+def _dependency_policy() -> Any:
+    # This collector also runs standalone during image construction and via
+    # runpy in the minimal worker, without importing the HA fixture package.
+    return runpy.run_path(str(Path(__file__).with_name("dependency_policy.py")))[
+        "assess_dependency_changes"
+    ]
+
+
+def core_constraint_context(constraint_path: Path | None = None) -> dict[str, Any]:
+    if constraint_path is None:
+        from homeassistant.requirements import pip_kwargs
+
+        constraint_path = Path(pip_kwargs(None)["constraints"])
+    raw = constraint_path.read_bytes()
+    return {
+        "text": raw.decode("utf-8"),
+        "path": str(constraint_path),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "marker_environment": default_environment(),
+    }
+
+
+def assess_dependencies(
+    before_versions: dict[str, str],
+    after_versions: dict[str, str],
+    before_issues: list[str],
+    after_issues: list[str],
+    *,
+    constraint_path: Path | None = None,
+    previous_versions: dict[str, str] | None = None,
+    baseline_constraints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context_error = None
+    try:
+        context = core_constraint_context(constraint_path)
+    except (OSError, UnicodeError, ImportError, KeyError, TypeError) as error:
+        context_error = {
+            "reason": "core_constraints_unreadable",
+            "error_type": type(error).__name__,
+        }
+        context = {"text": "", "marker_environment": default_environment()}
+    result = _dependency_policy()(
+        before_versions,
+        after_versions,
+        before_issues=before_issues,
+        after_issues=after_issues,
+        constraints=context["text"],
+        marker_environment=context["marker_environment"],
+        previous_versions=previous_versions,
+    )
+    result["core_constraints"] = {
+        key: value for key, value in context.items() if key != "text"
+    }
+    if context_error is not None:
+        result["policy_errors"].append(context_error)
+    context_changed = False
+    if baseline_constraints is not None:
+        for key in ("sha256", "marker_environment"):
+            if key not in baseline_constraints or baseline_constraints[
+                key
+            ] != context.get(key):
+                context_changed = True
+                result["policy_errors"].append(
+                    {"reason": "core_constraint_context_changed", "field": key}
+                )
+    if context_error is not None or context_changed:
+        result.update(
+            verified=False,
+            policy_passed=False,
+            no_new_conflicts=False,
+            baseline_clean=False,
+        )
+    return result
 
 
 def installed_versions() -> dict[str, str]:
@@ -51,12 +131,18 @@ def capture_baseline(path: Path = PROOF) -> None:
     versions = installed_versions()
     if {"ha-mcp", "ha-mcp-dev"} & versions.keys():
         raise ValueError("Published lane must start without either HA-MCP distribution")
+    if "homeassistant" not in versions:
+        raise ValueError("Core baseline inventory has no Home Assistant distribution")
+    context = core_constraint_context()
     path.write_text(
         json.dumps(
             {
                 "mode": "published",
                 "before": versions,
                 "before_issues": dependency_issues(),
+                "core_constraints_baseline": {
+                    key: value for key, value in context.items() if key != "text"
+                },
             },
             indent=2,
         )
@@ -209,30 +295,35 @@ def observe_dependencies(
     component: Path,
     path: Path = PROOF,
     assets: Path = ASSETS,
+    phase: str = "unspecified",
 ) -> dict[str, Any]:
     proof: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     if proof.get("mode") not in {"candidate", "published"}:
         raise ValueError("Unknown installation qualification mode")
     after = installed_versions()
     issues = dependency_issues()
+    preceding = proof.get("observations", [])
     observation: dict[str, Any] = {
+        "phase": phase,
         "after": after,
         "after_issues": issues,
-        "changed_preinstalled": {
-            name: {"before": version, "after": after.get(name)}
-            for name, version in proof["before"].items()
-            if after.get(name) != version
-        },
-        "new_issues": sorted(set(issues) - set(proof["before_issues"])),
+        **assess_dependencies(
+            proof["before"],
+            after,
+            proof["before_issues"],
+            issues,
+            previous_versions=preceding[-1]["after"] if preceding else None,
+            baseline_constraints=proof.get("core_constraints_baseline", {}),
+        ),
         "errors": [],
     }
+    if any(item.get("verified") is not True for item in preceding):
+        observation["policy_errors"].append({"reason": "previous_observation_rejected"})
+        observation["verified"] = False
+        observation["policy_passed"] = False
     if proof["mode"] == "published":
         _public_observation(component, assets, proof, observation)
-    observation["verified"] = not (
-        observation["changed_preinstalled"]
-        or observation["new_issues"]
-        or observation["errors"]
-    )
+    observation["verified"] = observation["verified"] and not observation["errors"]
     proof.setdefault("observations", []).append(observation)
     # Keep the existing probe's dependency fields useful after reload/restart.
     proof.update({key: observation[key] for key in ("after", "after_issues")})

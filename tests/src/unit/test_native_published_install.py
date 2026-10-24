@@ -46,6 +46,14 @@ def installed_public_wheel(tmp_path, monkeypatch, install_receipt):
         json.dumps({"dependency": dependency, "library_version": version})
     )
     proof_path = tmp_path / "dependencies.json"
+    constraints = tmp_path / "package_constraints.txt"
+    constraints.write_text("homeassistant==2026.10.2\npydantic==2.12.0\nrich>=10\n")
+    context = install_receipt.core_constraint_context
+    monkeypatch.setattr(
+        install_receipt,
+        "core_constraint_context",
+        lambda _path=None: context(constraints),
+    )
     versions = {"homeassistant": "2026.10.2", "rich": "10.0.0", "pydantic": "2.12.0"}
     issues = ["known Core image conflict"]
     monkeypatch.setattr(install_receipt, "installed_versions", versions.copy)
@@ -69,6 +77,7 @@ def installed_public_wheel(tmp_path, monkeypatch, install_receipt):
         issues=issues,
         direct=direct,
         distribution=distribution,
+        constraints=constraints,
     )
 
 
@@ -84,13 +93,90 @@ def test_managed_receipt_retains_first_and_post_restart_observations(
     world = installed_public_wheel
     first = observe(install_receipt, world)
     assert first["observations"][0]["verified"]
-    # Core may add packages for exercised integrations, but cannot replace originals.
+    # Core may add packages for exercised integrations; sensitive roots stay fixed.
     world.versions["new-integration-dependency"] = "1.0"
     last = observe(install_receipt, world)
     assert len(last["observations"]) == 2
     assert all(item["verified"] for item in last["observations"])
     assert "ha-mcp" not in last["before"]
     assert last["observations"][-1]["wheel"]["url"] == world.direct["url"]
+
+
+def test_managed_receipt_accepts_and_records_a_compatible_library_upgrade(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.versions["rich"] = "10.1.0"
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert observation["verified"], observation
+    assert observation["compatible_upgrades"]["rich"] == {
+        "before": "10.0.0",
+        "after": "10.1.0",
+    }
+
+
+def test_baseline_inventory_must_actually_contain_core(
+    tmp_path, monkeypatch, install_receipt
+):
+    monkeypatch.setattr(install_receipt, "installed_versions", dict)
+    with pytest.raises(ValueError, match="no Home Assistant distribution"):
+        install_receipt.capture_baseline(tmp_path / "proof.json")
+
+
+def test_restart_cannot_remove_a_dependency_added_during_setup(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.versions["new-library"] = "1.0"
+    first = observe(install_receipt, world)
+    assert first["observations"][-1]["verified"]
+    del world.versions["new-library"]
+    last = observe(install_receipt, world)["observations"][-1]
+    assert not last["verified"]
+    assert any(
+        change["name"] == "new-library" and change["reason"] == "removed"
+        for change in last["rejected_changes"]
+    )
+
+
+def test_missing_core_constraints_do_not_become_an_empty_successful_check(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.constraints.unlink()
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert not observation["verified"]
+    assert observation["policy_errors"][0]["reason"] == "core_constraints_unreadable"
+    assert observation["baseline_clean"] is False
+
+
+def test_a_constraint_changed_after_baseline_cannot_be_misreported_as_preexisting_debt(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.constraints.write_text("rich==11\n")
+    observation = observe(install_receipt, world)["observations"][-1]
+    assert not observation["verified"]
+    assert any(
+        error["reason"] == "core_constraint_context_changed"
+        for error in observation["policy_errors"]
+    )
+    assert observation["baseline_clean"] is False
+
+
+def test_a_failed_installation_observation_cannot_be_erased_by_a_clean_restart(
+    install_receipt, installed_public_wheel
+):
+    world = installed_public_wheel
+    world.issues.append("temporary new conflict")
+    assert not observe(install_receipt, world)["observations"][-1]["verified"]
+    world.issues.pop()
+    last = observe(install_receipt, world)["observations"][-1]
+    assert not last["verified"] and last["no_new_conflicts"]
+    assert any(
+        error["reason"] == "previous_observation_rejected"
+        for error in last["policy_errors"]
+    )
 
 
 @pytest.mark.parametrize(

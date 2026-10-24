@@ -20,7 +20,13 @@ from scripts.native_published_assets import (
     verify_wheel,
 )
 
-from .minimal_support import changes, environment, sanitize, save
+from .minimal_support import (
+    changes,
+    core_constraint_context,
+    environment,
+    sanitize,
+    save,
+)
 
 
 def assert_isolated() -> None:
@@ -105,6 +111,35 @@ async def install_declared_dependencies(
         await hass.async_stop(force=True)
 
 
+def _dependency_observation(
+    before: dict[str, Any],
+    proof: dict[str, Any],
+    constraint_path: Path,
+    phase: str | None = None,
+) -> dict[str, Any]:
+    current = environment()
+    preceding = proof.get("observations", [])
+    delta = changes(
+        before,
+        current,
+        constraint_path=constraint_path,
+        previous_versions=preceding[-1]["versions"] if preceding else None,
+        baseline_constraints=proof.get("core_constraints_baseline", {}),
+    )
+    if phase == "paired_wheel" and delta["changed_preinstalled"]:
+        delta["policy_errors"].append(
+            {
+                "reason": "paired_wheel_changed_preinstalled",
+                "packages": sorted(delta["changed_preinstalled"]),
+            }
+        )
+        delta.update(verified=False, policy_passed=False)
+    if any(item.get("verified") is not True for item in preceding):
+        delta["policy_errors"].append({"reason": "previous_observation_rejected"})
+        delta.update(verified=False, policy_passed=False)
+    return {**({"phase": phase} if phase else {}), **current, **delta}
+
+
 def install(
     assets: Path, work: Path, output: Path, *, repository: str = REPOSITORY
 ) -> None:
@@ -138,18 +173,21 @@ def install(
     kwargs = pip_kwargs(str(config))
 
     def observe(label: str) -> None:
-        current = environment()
-        delta = changes(before, current)
-        proof.setdefault("observations", []).append(
-            {"phase": label, **current, **delta}
+        observation = _dependency_observation(
+            before, proof, Path(kwargs["constraints"]), label
         )
+        proof.setdefault("observations", []).append(observation)
         save(output, proof)
-        if delta["changed_preinstalled"] or delta["new_issues"]:
+        if not observation["verified"]:
             raise RuntimeError(
-                "Native installation changed the Core baseline or added conflicts"
+                "Native installation violated the dependency policy or added conflicts"
             )
 
     try:
+        proof["core_constraints_baseline"] = core_constraint_context(
+            Path(kwargs["constraints"])
+        )
+        save(output, proof)
         # Leave upgrade at Core's default; this is deliberately not pip's old
         # only-if-needed behaviour that concealed the public install regression.
         if not package.install_package(str(wheel), **kwargs):
@@ -182,8 +220,9 @@ def install(
             "message": sanitize(str(error)),
         }
         try:
-            current = environment()
-            proof["failure_environment"] = {**current, **changes(before, current)}
+            proof["failure_environment"] = _dependency_observation(
+                before, proof, Path(kwargs["constraints"])
+            )
         except (
             OSError,
             ValueError,

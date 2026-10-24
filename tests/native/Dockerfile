@@ -18,17 +18,20 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Last stage remains the default for unpublished source candidates.
 FROM ${HA_IMAGE} AS candidate
 COPY tests/native/fixtures/native_fixture/dependency_receipt.py /opt/native_dependency_receipt.py
+COPY tests/native/fixtures/native_fixture/dependency_policy.py /opt/dependency_policy.py
 COPY dist/native/*.whl /opt/native-wheels/
 RUN python - <<'PY'
 import json
 import sys
 from pathlib import Path
 sys.path.insert(0, '/opt')
-from native_dependency_receipt import capture_baseline, dependency_issues, installed_versions
+from native_dependency_receipt import capture_baseline
 # Exercise the published lane's baseline collector on real, untouched Core even
 # before release assets exist.
 capture_baseline(Path('/opt/public-baseline-smoke.json'))
-Path('/opt/native-dependencies.json').write_text(json.dumps({'mode': 'candidate', 'before': installed_versions(), 'before_issues': dependency_issues()}))
+proof = json.loads(Path('/opt/public-baseline-smoke.json').read_text())
+proof['mode'] = 'candidate'
+Path('/opt/native-dependencies.json').write_text(json.dumps(proof))
 PY
 RUN python - <<'PY'
 from pathlib import Path
@@ -41,13 +44,21 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, '/opt')
-from native_dependency_receipt import dependency_issues, installed_versions
+from native_dependency_receipt import assess_dependencies, dependency_issues, installed_versions
 p = Path('/opt/native-dependencies.json')
 proof = json.loads(p.read_text())
 after = installed_versions()
 proof['after'] = {name: after.get(name) for name in proof['before']}
 proof['added'] = {name: version for name, version in after.items() if name not in proof['before']}
 proof['after_issues'] = dependency_issues()
+proof['wheel_observation'] = assess_dependencies(
+    proof['before'], after, proof['before_issues'], proof['after_issues'],
+    constraint_path=Path('/usr/src/homeassistant/homeassistant/package_constraints.txt'),
+    baseline_constraints=proof['core_constraints_baseline'],
+)
+assert proof['wheel_observation']['verified'], proof['wheel_observation']
+# The dependency-free HACS wheel must not change any existing package. Allowed
+# shared upgrades belong to Core's subsequent manifest requirement processing.
 changed = {name: {'before': version, 'after': after.get(name)} for name, version in proof['before'].items() if after.get(name) != version}
 assert not changed, changed
 new_issues = set(proof['after_issues']) - set(proof['before_issues'])

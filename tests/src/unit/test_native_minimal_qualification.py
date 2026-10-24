@@ -162,7 +162,9 @@ def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         requirements=requirements,
         events=[],
         additions={},
+        constraints=tmp_path / "package_constraints.txt",
     )
+    world.constraints.write_text("homeassistant==2026.10.2\ncertifi>=2021.5.30\n")
 
     def prepare(_assets: Path, component: Path, *, repository: str) -> Any:
         component.mkdir(parents=True)
@@ -194,11 +196,11 @@ def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     def install_package(
         _requirement: str, *, upgrade: bool = True, **kwargs: Any
     ) -> bool:
-        assert upgrade is True and kwargs == {"constraints": "Core-owned-constraints"}
+        assert upgrade is True and kwargs == {"constraints": str(world.constraints)}
         return True
 
     def requirements_owner(values: list[str], kwargs: dict[str, Any]) -> Any:
-        assert kwargs == {"constraints": "Core-owned-constraints"}
+        assert kwargs == {"constraints": str(world.constraints)}
         world.events.append("direct")
         return set(values), set()
 
@@ -231,7 +233,7 @@ def minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         sys.modules,
         "homeassistant.requirements",
         SimpleNamespace(
-            pip_kwargs=lambda _config: {"constraints": "Core-owned-constraints"},
+            pip_kwargs=lambda _config: {"constraints": str(world.constraints)},
             _install_requirements_if_missing=world.owner,
             async_get_integration_with_requirements=world.dependency_owner,
         ),
@@ -285,7 +287,7 @@ def test_manifest_phase_failure_preserves_all_dependency_evidence(
         return original(values, kwargs)
 
     minimal.owner.side_effect = apply
-    with pytest.raises(RuntimeError, match="baseline or added conflicts"):
+    with pytest.raises(RuntimeError, match="dependency policy or added conflicts"):
         minimal.run()
     proof = json.loads(minimal.output.read_text())
     assert not proof["complete"] and len(proof["decisions"]) == len(
@@ -302,7 +304,7 @@ def test_core_skips_already_satisfied_roots_instead_of_force_upgrading_them(
     minimal: Any,
 ) -> None:
     minimal.package.is_installed.return_value = True
-    kwargs = {"constraints": "Core-owned-constraints"}
+    kwargs = {"constraints": str(minimal.constraints)}
     assert (
         minimal_install.install_requirement("starlette>=1", kwargs)
         == "already_satisfied"
@@ -339,6 +341,67 @@ def test_declared_dependencies_use_core_owners_after_direct_requirements(
     minimal.hass.async_stop.assert_awaited_once_with(force=True)
 
 
+def test_minimal_manifest_accepts_a_compatible_upgrade_and_retains_both_versions(
+    minimal: Any,
+) -> None:
+    original = minimal.owner.side_effect
+
+    def upgrade(values: list[str], kwargs: dict[str, Any]) -> Any:
+        result = original(values, kwargs)
+        minimal.additions["certifi"] = "2026.10.19"
+        return result
+
+    minimal.owner.side_effect = upgrade
+    minimal.run()
+    proof = json.loads(minimal.output.read_text())
+    assert proof["complete"]
+    assert proof["observations"][-1]["compatible_upgrades"]["certifi"] == {
+        "before": "2026.7.22",
+        "after": "2026.10.19",
+    }
+
+
+def test_dependency_free_wheel_cannot_upgrade_core_before_manifest_processing(
+    minimal: Any,
+) -> None:
+    def wheel_install(*_args: Any, **_kwargs: Any) -> bool:
+        minimal.additions["certifi"] = "2026.10.19"
+        return True
+
+    minimal.package.install_package.side_effect = wheel_install
+    with pytest.raises(RuntimeError, match="dependency policy"):
+        minimal.run()
+    proof = json.loads(minimal.output.read_text())
+    observation = proof["observations"][-1]
+    assert observation["phase"] == "paired_wheel" and not observation["verified"]
+    assert any(
+        error["reason"] == "paired_wheel_changed_preinstalled"
+        for error in observation["policy_errors"]
+    )
+    minimal.owner.assert_not_called()
+
+
+def test_minimal_subsequent_phase_cannot_downgrade_a_new_dependency(
+    minimal: Any,
+) -> None:
+    original = minimal.owner.side_effect
+
+    def install(values: list[str], kwargs: dict[str, Any]) -> Any:
+        result = original(values, kwargs)
+        minimal.additions["new-library"] = "2.0" if len(minimal.events) == 1 else "1.0"
+        return result
+
+    minimal.owner.side_effect = install
+    with pytest.raises(RuntimeError, match="dependency policy"):
+        minimal.run()
+    proof = json.loads(minimal.output.read_text())
+    assert not proof["complete"]
+    assert any(
+        row["reason"] == "downgrade"
+        for row in proof["observations"][-1]["rejected_changes"]
+    )
+
+
 def test_after_dependency_cannot_hide_a_shared_core_upgrade(minimal: Any) -> None:
     original = minimal.dependency_owner.side_effect
 
@@ -349,7 +412,7 @@ def test_after_dependency_cannot_hide_a_shared_core_upgrade(minimal: Any) -> Non
         return result
 
     minimal.dependency_owner.side_effect = upgrade
-    with pytest.raises(RuntimeError, match="baseline or added conflicts"):
+    with pytest.raises(RuntimeError, match="dependency policy or added conflicts"):
         minimal.run()
     proof = json.loads(minimal.output.read_text())
     assert not proof["complete"]
@@ -362,17 +425,21 @@ def test_after_dependency_cannot_hide_a_shared_core_upgrade(minimal: Any) -> Non
     minimal.hass.async_stop.assert_awaited_once_with(force=True)
 
 
-def test_new_packages_are_allowed_but_disappearing_preinstalled_packages_fail() -> None:
+def test_new_packages_are_allowed_but_disappearing_preinstalled_packages_fail(
+    tmp_path: Path,
+) -> None:
+    constraints = tmp_path / "package_constraints.txt"
+    constraints.write_text("")
     before = {"versions": {"Core-owned": "1"}, "issues": ["known"]}
-    assert not any(
-        changes(
-            before, {"versions": {"Core-owned": "1", "new": "2"}, "issues": []}
-        ).values()
-    )
+    assert changes(
+        before,
+        {"versions": {"Core-owned": "1", "new": "2"}, "issues": []},
+        constraint_path=constraints,
+    )["verified"]
     assert (
-        changes(before, {"versions": {}, "issues": []})["changed_preinstalled"][
-            "Core-owned"
-        ]["after"]
+        changes(before, {"versions": {}, "issues": []}, constraint_path=constraints)[
+            "changed_preinstalled"
+        ]["core-owned"]["after"]
         is None
     )
 

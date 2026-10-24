@@ -124,12 +124,17 @@ upgrading its shared packages.
 
 Core's normal installer uses `uv --upgrade` for a missing requirement. Broad
 ranges alone do not preserve the installed environment, and a local pip install
-under the constraints is not an equivalent qualification. Native candidate
-checks must run the real requirement manager, compare every preinstalled
-distribution after setup/restart, and exercise a minimal Core environment with
-older permitted transitive packages. Keep Pydantic declared: its constraint is
-not proof of presence in Core's base installation. Do not add a dependency on
-`homeassistant` itself, which would allow the URL wheel to re-resolve Core.
+under the constraints is not an equivalent qualification. Julien authorized
+compatible shared-package upgrades on 23 October 2026. Keep Core's installer
+and constraints, record all changes and reject removals, downgrades, incompatible
+release changes, protected Core/SDK replacements and new dependency conflicts.
+The [installation policy](../native-migration/installation.md#compatible-shared-package-upgrades)
+defines the qualification contract. Check every preinstalled distribution after
+setup/restart, also compare consecutive observations, and exercise a minimal
+Core environment with older permitted transitive packages. These are CI gates,
+not a production transaction or rollback mechanism. Keep Pydantic declared:
+its constraint is not proof of presence in Core's base installation. Do not add
+a dependency on `homeassistant` itself, which would re-resolve Core.
 
 Fast Checks verifies direct dependency alignment against both the current
 Core image and the `hacs.json` minimum, without adding E2E lanes. Existing
@@ -166,7 +171,9 @@ runtime floor. Historical public dev3 and the earlier qualification remain tied
 to **2026.10.2**; they do not establish this new minimum's runtime support.
 Record the matrix's results before claiming the development candidate qualified.
 Fail qualification on Core deprecations and blocking calls attributed to our
-component; retain other integrations' diagnostics without treating them as ours.
+component on the version actually running; an old API supported by an older
+Core may remain in its tested compatibility branch. Retain other integrations'
+diagnostics without treating them as ours. Do not globally ignore warnings.
 Keep the matrix pinned and update it deliberately with the compatibility floor;
 do not silently drop the advertised minimum as the current month advances.
 Native runtime support and the component installation floor are distinct claims. Candidate

@@ -136,3 +136,29 @@ async def test_fixture_observes_assist_data_and_failures_with_both_core_result_s
         {"tool_name": "ha_get_camera_image"},
     )
     assert response == {"data": payload, "error": True}
+
+
+async def test_dependency_receipt_keeps_the_requested_lifecycle_phase(
+    fixture_core: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def observe(component: Path, *, phase: str = "unspecified") -> dict[str, Any]:
+        return {"component": str(component), "phase": phase}
+
+    monkeypatch.setitem(
+        sys.modules,
+        fixture_core.module.__name__ + ".dependency_receipt",
+        SimpleNamespace(observe_dependencies=observe),
+    )
+
+    async def executor(job: Any, *args: Any) -> Any:
+        return job(*args)
+
+    component = tmp_path / "custom_components/ha_mcp_tools"
+    hass = SimpleNamespace(
+        config=SimpleNamespace(path=lambda _: str(component)),
+        async_add_executor_job=executor,
+    )
+    response = await fixture_core.module.FixtureView(hass)._observation(
+        SimpleNamespace(query={"phase": "after_restart"}), "dependency_receipt"
+    )
+    assert response == {"component": str(component), "phase": "after_restart"}

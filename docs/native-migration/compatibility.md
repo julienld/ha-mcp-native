@@ -24,6 +24,13 @@ serializers cause an explicit refusal before operations that require a read or
 snapshot, without a remote retry. These private names remain compatibility
 dependencies covered by the matrix.
 
+Deprecation checks apply to the Core version executing the integration. A small
+fallback may reference an older API that remains supported on that version;
+newer Core releases use their replacement. Do not suppress runtime warnings
+globally or raise the minimum merely to remove an inactive legacy symbol. If
+a supported release truly lacks a usable replacement, document any temporary
+exception with its exact API, version range and removal condition.
+
 ## Keep installation identity and stored intent
 
 Keep the integration domain `ha_mcp_tools`, existing config-entry IDs and the two

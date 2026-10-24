@@ -9,8 +9,6 @@ from ha_mcp.runtime import entity_fields as _fields
 from ..errors import ErrorCode, create_error_response
 from .helpers import raise_tool_error
 
-USE_DEVICE_NAME_MIN_CORE = _fields.USE_DEVICE_NAME_MIN_CORE
-
 
 async def ensure_use_device_name_allowed(
     use_device_name: bool | None,

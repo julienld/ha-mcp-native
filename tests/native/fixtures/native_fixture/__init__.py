@@ -10,6 +10,7 @@ import secrets
 import socket
 import sys
 import threading
+from functools import partial
 from importlib.abc import MetaPathFinder
 from pathlib import Path
 from typing import Any
@@ -153,7 +154,13 @@ class FixtureView(HomeAssistantView):
 
             component = Path(self.hass.config.path("custom_components/ha_mcp_tools"))
             return web.json_response(
-                await self.hass.async_add_executor_job(observe_dependencies, component)
+                await self.hass.async_add_executor_job(
+                    partial(
+                        observe_dependencies,
+                        component,
+                        phase=request.query.get("phase", "unspecified"),
+                    )
+                )
             )
         observed = self._configuration_observation(request, operation)
         if observed is not None:
