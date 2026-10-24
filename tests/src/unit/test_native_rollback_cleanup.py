@@ -17,16 +17,9 @@ async def test_rollback_keeps_primary_failure_and_reports_cleanup(
     rollback = importlib.import_module("legacy_rollback_checks")
     monkeypatch.setattr(rollback, "_register", AsyncMock(return_value="fixture-client"))
     monkeypatch.setattr(
-        rollback, "_code", AsyncMock(return_value=("fixture-code", "verifier"))
-    )
-    monkeypatch.setattr(
         rollback,
-        "_exchange",
-        AsyncMock(
-            return_value=SimpleNamespace(
-                status_code=200, json=lambda: {"refresh_token": "fixture-envelope"}
-            )
-        ),
+        "prepare_grant",
+        AsyncMock(return_value={"refresh_token": "fixture-envelope"}),
     )
     monkeypatch.setattr(
         rollback,
