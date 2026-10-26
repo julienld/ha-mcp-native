@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -19,6 +20,9 @@ ASGIApp = Callable[
     ],
     Awaitable[None],
 ]
+
+_HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_HEADER_CONTROL = re.compile(rb"[\x00-\x08\x0a-\x1f\x7f]")
 
 
 async def _read_body(request: web.Request, maximum: int) -> bytes:
@@ -72,13 +76,24 @@ def _scope(
 
 
 def _headers(message: ASGIMessage) -> CIMultiDict[str]:
+    """Accept ASCII token names and UTF-8 values, including plain ASCII.
+
+    aiohttp serializes response headers as UTF-8. This is an explicit subset
+    of ASGI's opaque-byte contract: unsupported bytes or forbidden controls
+    fail with a generic 502 before prepare, rather than changing on the wire.
+    """
     if message.get("trailers"):
         raise NotImplementedError("ASGI response trailers are not supported")
-    headers = CIMultiDict(
-        (key.decode("latin-1"), value.decode("latin-1"))
-        for key, value in message.get("headers", [])
-        if key.lower() != b"transfer-encoding"
-    )
+    headers: CIMultiDict[str] = CIMultiDict()
+    for key, value in message.get("headers", []):
+        if _HEADER_NAME.fullmatch(key) is None or _HEADER_CONTROL.search(value):
+            raise web.HTTPBadGateway(text="Unsupported ASGI response header")
+        try:
+            decoded = value.decode("utf-8")
+        except UnicodeDecodeError:
+            raise web.HTTPBadGateway(text="Unsupported ASGI response header") from None
+        if key.lower() != b"transfer-encoding":
+            headers.add(key.decode("ascii"), decoded)
     if "text/event-stream" in headers.get("Content-Type", ""):
         headers.update(
             {

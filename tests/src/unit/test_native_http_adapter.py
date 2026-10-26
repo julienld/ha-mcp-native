@@ -11,9 +11,9 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    ("probe", "case"),
+    ("probe", "case", "python_writer"),
     [
-        ("_native_http_probe", case)
+        ("_native_http_probe", case, False)
         for case in (
             "streaming",
             "oversized",
@@ -25,7 +25,7 @@ import pytest
         )
     ]
     + [
-        ("_native_http_contract_probe", case)
+        ("_native_http_contract_probe", case, False)
         for case in (
             "independent_import",
             "scope_direct",
@@ -46,17 +46,33 @@ import pytest
         )
     ]
     + [
-        ("_native_http_wire_probe", case)
+        ("_native_http_wire_probe", case, False)
         for case in (
             "head_wire",
             "no_content_wire",
             "not_modified_wire",
             "fastmcp_head_wire",
         )
+    ]
+    + [
+        ("_native_http_header_probe", f"{case}_{mode}", python_writer)
+        for case in ("conditional", "rejected", "host", "producers", "mcp")
+        for mode in ("streamed", "buffered")
+        for python_writer in (False, True)
     ],
 )
-def test_native_http_adapter(probe: str, case: str, tmp_path: Path) -> None:
+def test_native_http_adapter(
+    probe: str, case: str, python_writer: bool, tmp_path: Path
+) -> None:
     root = Path(__file__).resolve().parents[3]
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "AIOHTTP_NO_EXTENSIONS"
+    }
+    env["HA_MCP_CONFIG_DIR"] = str(tmp_path)
+    if python_writer:
+        env["AIOHTTP_NO_EXTENSIONS"] = "1"
     result = subprocess.run(
         [
             sys.executable,
@@ -67,7 +83,7 @@ def test_native_http_adapter(probe: str, case: str, tmp_path: Path) -> None:
             case,
         ],
         cwd=root,
-        env={**os.environ, "HA_MCP_CONFIG_DIR": str(tmp_path)},
+        env=env,
         capture_output=True,
         text=True,
         timeout=30,

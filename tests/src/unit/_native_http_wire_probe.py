@@ -16,15 +16,36 @@ from ._native_http_probe import adapter
 
 
 @asynccontextmanager
-async def wire_server(asgi: Any) -> AsyncIterator[BaseTestServer]:
+async def wire_server(
+    asgi: Any,
+    *,
+    buffered: bool = False,
+    prepare: Callable[[web.Request, web.StreamResponse], Awaitable[None]] | None = None,
+) -> AsyncIterator[BaseTestServer]:
     module = adapter()
 
     async def handle(request: web.Request) -> web.StreamResponse:
         app = PlainTextResponse("next") if request.path == "/next" else asgi
+        if buffered:
+            return cast(
+                web.Response,
+                await module.serve_buffered_asgi(
+                    app,
+                    method=request.method,
+                    path=request.path,
+                    headers=[
+                        (name.lower(), value) for name, value in request.raw_headers
+                    ],
+                    body=await request.read(),
+                    state={},
+                ),
+            )
         return cast(web.StreamResponse, await module.serve_asgi(app, request))
 
     listener = web.Application()
     listener.router.add_route("*", "/{path:.*}", handle)
+    if prepare is not None:
+        listener.on_response_prepare.append(prepare)
     async with TestServer(listener) as server:
         yield server
 
