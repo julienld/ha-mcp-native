@@ -55,7 +55,18 @@ class ServiceDiscoveryTools(LegacyBackendTools, SharedServiceDiscoveryTools):
         name="ha_list_services",
         tags={"Service & Device Control"},
         annotations=read_only_hints("List Available Services", open_world=False),
-    )(log_tool_usage(legacy_errors(SharedServiceDiscoveryTools.ha_list_services)))
+    )(
+        log_tool_usage(
+            legacy_errors(
+                SharedServiceDiscoveryTools.ha_list_services,
+                suggestions=[
+                    "Check Home Assistant connection",
+                    "Verify WebSocket API is available",
+                    "Try with a specific domain filter",
+                ],
+            )
+        )
+    )
 
 
 def register_services_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

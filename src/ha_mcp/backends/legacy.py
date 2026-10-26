@@ -29,7 +29,10 @@ def entry_write_guard(client: Any, entry_id: str) -> Any:
 
 
 def legacy_errors(
-    function: Callable[..., Any], *, classify: bool = True
+    function: Callable[..., Any],
+    *,
+    classify: bool = True,
+    suggestions: list[str] | None = None,
 ) -> Callable[..., Any]:
     """Keep the historical FastMCP error envelope on a shared implementation."""
 
@@ -52,15 +55,19 @@ def legacy_errors(
             # The old classifier raises ToolError; do not log secrets from args.
             bound = inspect.signature(function).bind_partial(*args, **kwargs)
             entity_id = bound.arguments.get("entity_id")
-            context = {"entity_id": entity_id} if isinstance(entity_id, str) else None
-            suggestions = None
+            context: dict[str, Any] | None = (
+                {"entity_id": entity_id} if isinstance(entity_id, str) else None
+            )
+            guidance = suggestions
             if function.__name__ == "ha_get_state" and context:
-                suggestions = [
+                guidance = [
                     f"Verify entity '{entity_id}' exists in Home Assistant",
                     "Check Home Assistant connection",
                     "Use ha_search() to find correct entity IDs",
                 ]
-            exception_to_structured_error(exc, context=context, suggestions=suggestions)
+            if function.__name__ == "ha_get_state" and isinstance(entity_id, list):
+                context = {"entity_ids": entity_id}
+            exception_to_structured_error(exc, context=context, suggestions=guidance)
             raise
 
     _preserve_resolved_signature(invoke, function)
