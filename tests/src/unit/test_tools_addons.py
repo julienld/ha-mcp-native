@@ -6677,7 +6677,7 @@ def redact_on(monkeypatch, _redaction_registry_clean):
 
     monkeypatch.setattr(
         "ha_mcp.redaction.get_global_settings",
-        lambda: SimpleNamespace(redact_secrets=True),
+        lambda: SimpleNamespace(redact_secrets=True, redact_app_option_keys=""),
     )
 
 
@@ -6687,7 +6687,7 @@ def redact_off(monkeypatch, _redaction_registry_clean):
 
     monkeypatch.setattr(
         "ha_mcp.redaction.get_global_settings",
-        lambda: SimpleNamespace(redact_secrets=False),
+        lambda: SimpleNamespace(redact_secrets=False, redact_app_option_keys=""),
     )
 
 

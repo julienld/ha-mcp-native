@@ -146,6 +146,30 @@ async def test_app_options_use_provider_validator_and_preserve_future_keys(
     assert result["status"] == "pending_restart" and result["post_write_verified"]
 
 
+async def test_operator_list_keeps_previous_and_submitted_app_secrets_scrubbable(
+    actions: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ha_mcp.runtime import redaction
+
+    monkeypatch.setattr(redaction, "_known_secrets", set())
+    actions.manager.policy.flags["redact_app_option_keys"] = (
+        "core_fixture:backup_password"
+    )
+    row = actions.replies["/addons/core_fixture/info"]
+    row["options"]["backup_password"] = "previous-native-scoped-secret"
+    row["schema"].append({"name": "backup_password", "type": "string"})
+
+    await actions.service._execute_config_mode(
+        "core_fixture",
+        {"options": {"backup_password": "submitted-native-scoped-secret"}},
+    )
+
+    assert {
+        "previous-native-scoped-secret",
+        "submitted-native-scoped-secret",
+    } <= set(redaction.known_secret_values())
+
+
 async def test_options_validation_cannot_overwrite_concurrent_changes(
     actions: Any,
 ) -> None:

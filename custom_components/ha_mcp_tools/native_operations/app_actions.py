@@ -21,6 +21,7 @@ from ha_mcp.utils.config_hash import json_values_equal
 from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
+from ..native_server_policy import setting_value
 from .app_reads import NativeAppReads
 from .app_transport import AppHTTPError
 from .registry_access import admit_registry_write
@@ -242,9 +243,24 @@ class AppActions(NativeAppReads):
                 if self.manager.policy.flag("redact_secrets") and isinstance(
                     before.get("schema"), list
                 ):
+                    option_keys = str(
+                        setting_value(
+                            self.manager.policy.flags, "redact_app_option_keys"
+                        )
+                        or ""
+                    )
                     register_known_secret_values(
                         collect_addon_secret_values(
-                            proposal["options"], before["schema"]
+                            before.get("options", {}),
+                            before["schema"],
+                            slug,
+                            option_keys=option_keys,
+                        )
+                        | collect_addon_secret_values(
+                            proposal["options"],
+                            before["schema"],
+                            slug,
+                            option_keys=option_keys,
                         )
                     )
                 validation = await self._validate_options(slug, proposal["options"])

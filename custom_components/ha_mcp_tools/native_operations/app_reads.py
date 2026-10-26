@@ -12,6 +12,7 @@ from ha_mcp.runtime.app_results import (
 from ha_mcp.runtime.app_values import _running_addon_slugs
 from ha_mcp.tool_api import CallContext, ToolFailure
 
+from ..native_server_policy import setting_value
 from .registry_access import registry_failure
 from .supervisor_access import SupervisorAccess
 
@@ -27,7 +28,12 @@ class NativeAppReads:
 
     def _info(self, data: dict[str, Any], slug: str) -> dict[str, Any]:
         return app_info_result(
-            data, slug, redact=self.manager.policy.flag("redact_secrets")
+            data,
+            slug,
+            redact=self.manager.policy.flag("redact_secrets"),
+            option_keys=str(
+                setting_value(self.manager.policy.flags, "redact_app_option_keys") or ""
+            ),
         )
 
     async def get_addon(

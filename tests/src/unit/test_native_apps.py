@@ -62,7 +62,7 @@ def apps(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
             config=SimpleNamespace(components={"hassio"}), data={"hassio": raw}
         ),
         backend=SimpleNamespace(authorize=AsyncMock()),
-        policy=SimpleNamespace(flag=lambda key: True),
+        policy=SimpleNamespace(flag=lambda key: True, flags={}),
     )
     module = importlib.import_module(
         "custom_components.ha_mcp_tools.native_operations.app_reads"
@@ -105,6 +105,19 @@ async def test_native_app_inventories_keep_provider_and_stats_fields(apps: Any) 
     assert available["addons"][0]["version_installed"] == "1.0"
     assert available["repositories"][0]["future_repository"]
     assert available["addons"][0]["options"]["password"] == REDACTED_SET
+
+
+async def test_native_app_uses_its_operator_list_for_unmarked_secrets(
+    apps: Any,
+) -> None:
+    apps.manager.policy.flags["redact_app_option_keys"] = "core_fixture:backup_password"
+    row = apps.replies["/addons/core_fixture/info"]
+    row["options"]["backup_password"] = "native-scoped-backup-secret"
+    row["schema"].append({"name": "backup_password", "type": "string"})
+
+    result = await read(apps, slug="core_fixture")
+
+    assert result["addon"]["options"]["backup_password"] == REDACTED_SET
 
 
 async def test_missing_supervisor_is_explicit_without_connection_discovery(

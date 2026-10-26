@@ -63,6 +63,7 @@ from ..errors import (
     create_validation_error,
 )
 from ..redaction import (
+    app_option_keys,
     collect_addon_secret_values,
     redaction_enabled,
     register_known_secret_values,
@@ -846,7 +847,12 @@ async def get_addon_info(client: HomeAssistantClient, slug: str) -> dict[str, An
     _validate_supervisor_slug(slug)
     response = await _supervisor_api_call(client, f"/addons/{slug}/info")
 
-    return app_info_result(response["result"], slug, redact=redaction_enabled())
+    return app_info_result(
+        response["result"],
+        slug,
+        redact=redaction_enabled(),
+        option_keys=app_option_keys(),
+    )
 
 
 async def list_addons(
@@ -2052,8 +2058,12 @@ class AddOnTools(AppTools, AppDispatch):
             # later read harvests it.
             if redaction_enabled() and isinstance(addon_info.get("schema"), list):
                 register_known_secret_values(
-                    collect_addon_secret_values(current_options, addon_info["schema"])
-                    | collect_addon_secret_values(merged_options, addon_info["schema"])
+                    collect_addon_secret_values(
+                        current_options, addon_info["schema"], slug
+                    )
+                    | collect_addon_secret_values(
+                        merged_options, addon_info["schema"], slug
+                    )
                 )
 
             # Pre-write schema check: identify fields not in the app's schema.

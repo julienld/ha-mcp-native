@@ -3,48 +3,20 @@
 from typing import Any
 
 from .app_values import _extract_addon_log_level
-from .redaction import (
-    collect_addon_secret_values,
-    redact_addon_options,
-    register_known_secret_values,
-    sentinel_replacement,
-)
+from .redaction import redact_addon_info
 
 
 def app_info_result(
-    addon: dict[str, Any], slug: str, *, redact: bool
+    addon: dict[str, Any], slug: str, *, redact: bool, option_keys: str = ""
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"success": True, "addon": addon}
 
     if redact:
-        options = addon.get("options")
-        schema = addon.get("schema")
-        if isinstance(options, dict) and options:
-            if isinstance(schema, list) and schema:
-                register_known_secret_values(
-                    collect_addon_secret_values(options, schema)
-                )
-                result["addon"] = {
-                    **addon,
-                    "options": redact_addon_options(options, schema),
-                }
-            else:
-                # No readable schema (absent, malformed, or empty) — the
-                # password fields cannot be told apart, so fail closed like
-                # the integration surface does rather than passing raw
-                # options through.
-                result["addon"] = {
-                    **addon,
-                    "options": {
-                        key: sentinel_replacement(value)
-                        for key, value in options.items()
-                    },
-                }
-                result.setdefault("warnings", []).append(
-                    f"redact_secrets: no options schema readable for '{slug}' — "
-                    "every option value was redacted conservatively (the "
-                    "password fields cannot be told apart without the schema)"
-                )
+        result["addon"], warnings = redact_addon_info(
+            addon, slug, option_keys=option_keys
+        )
+        if warnings:
+            result["warnings"] = warnings
 
     # Extracted AFTER redaction so an app (add-on) that schema-marks log_level as
     # a password surfaces the sentinel here, never the live value.

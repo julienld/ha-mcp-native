@@ -1,36 +1,4 @@
-"""Schema-driven secret redaction behind the ``redact_secrets`` flag (#2157).
-
-When ``Settings.redact_secrets`` is on (``redact_secrets`` addon option,
-``REDACT_SECRETS`` env var, or the Server Settings web-UI toggle), three
-surfaces stop returning operator secrets verbatim:
-
-1. **Add-on options** (``ha_get_app`` detail form, ``ha_manage_app``'s
-   proxy-mode 403 hints): every ``options`` value whose Supervisor-serialized
-   ``schema`` entry carries ``format: "password"`` is replaced with a
-   set/empty sentinel. The schema is authoritative — keys without a schema
-   entry are never touched, and no name-based guessing happens.
-2. **Integration options** (``ha_get_integration``): fields the
-   options-flow schema marks with a password text selector are replaced the
-   same way, on both the harvested options and the ``include_schema=True``
-   schema echo (whose ``suggested_value`` carries the live value).
-3. **Every other tool response**: password values seen while serving 1 and 2
-   are remembered in a process-local known-secrets set, and
-   :class:`RedactSecretsMiddleware` (registered just outside the
-   entity-visibility outbound scan, which stays innermost) scrubs any
-   occurrence in any tool response or tool error to ``<redacted>``.
-
-The set/empty sentinel split keeps the genuinely useful diagnostic — "is
-this credential configured at all?" — answerable without disclosing the
-value. ``ha_manage_app`` and the config-entry flow writes reject
-submitted values that are (or contain) a sentinel — unconditionally, not
-only while the flag is on — so a redacted marker can never be round-tripped
-into a live config (add-on writes still merge from the real, unredacted
-current options server-side).
-
-With the flag off (the default) every redaction path here is a passthrough
-and tool output is byte-identical to the legacy behavior. The sentinel write
-guards are the deliberate exception and stay active either way.
-"""
+"""Legacy settings and middleware around shared secret redaction."""
 
 from __future__ import annotations
 
@@ -43,16 +11,15 @@ from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
 )
 
 from .config import get_global_settings
+from .runtime import redaction as _shared_redaction
 from .runtime.redaction import (
     REDACTED_EMPTY,
     REDACTED_KNOWN,
     REDACTED_SET,
     _clear_known_secret_values,
-    collect_addon_secret_values,
     is_password_flow_field,
     is_sentinel,
     known_secret_values,
-    redact_addon_options,
     redact_flow_schema,
     redact_options_by_flow_schema,
     register_known_secret_values,
@@ -67,6 +34,31 @@ from .runtime.redaction import (
 def redaction_enabled() -> bool:
     """Live per-request read of the ``redact_secrets`` flag."""
     return bool(get_global_settings().redact_secrets)
+
+
+def app_option_keys() -> str:
+    """Read the operator list through the legacy settings owner."""
+    return str(getattr(get_global_settings(), "redact_app_option_keys", ""))
+
+
+def redact_addon_info(
+    addon: dict[str, Any], slug: str
+) -> tuple[dict[str, Any], list[str]]:
+    return _shared_redaction.redact_addon_info(
+        addon, slug, option_keys=app_option_keys()
+    )
+
+
+def redact_addon_options(options: Any, schema: Any, slug: str = "") -> Any:
+    return _shared_redaction.redact_addon_options(
+        options, schema, slug, option_keys=app_option_keys()
+    )
+
+
+def collect_addon_secret_values(options: Any, schema: Any, slug: str = "") -> set[str]:
+    return _shared_redaction.collect_addon_secret_values(
+        options, schema, slug, option_keys=app_option_keys()
+    )
 
 
 class RedactSecretsMiddleware(Middleware):
