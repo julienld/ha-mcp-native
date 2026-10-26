@@ -2663,7 +2663,7 @@
           "default": null
         },
         "offset": {
-          "type": "Annotated[int, Field(ge=0)] | str",
+          "type": "int | str",
           "description": "Page deeper into source='logbook', 'error_log' and 'fault_log' (ignored for other sources). On error_log it counts raw log lines back from the newest entry, or is the opaque token a previous page returned in 'next_offset' on Supervisor/journald installs, which keeps paging exact while new log lines arrive (`structured=True` accepts and returns that token too); on fault_log it counts lines from the start of the assembled crash text. Pass the response's 'next_offset' to continue while 'has_more' is true.",
           "default": 0
         },

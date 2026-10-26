@@ -14,6 +14,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.start import async_at_started
+from homeassistant.loader import DATA_CUSTOM_COMPONENTS, async_get_custom_components
 from homeassistant.setup import async_setup_component
 from yarl import URL
 
@@ -111,6 +112,11 @@ class QualificationView(HomeAssistantView):
         elif operation == "release_archive":
             network.release_archive.set()
         elif operation == "load_dummy":
+            # Core discovered custom integrations before the dummy was installed.
+            # HACS refreshes this cache only for config-flow integrations. Use
+            # Core's real discovery before explicitly loading this YAML dummy.
+            self.hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
+            await async_get_custom_components(self.hass)
             assert await async_setup_component(self.hass, DUMMY_DOMAIN, {})
         elif operation == "reload_owner":
             assert await self.hass.config_entries.async_reload(ENTRY_ID)

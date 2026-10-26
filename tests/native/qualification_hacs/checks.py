@@ -15,6 +15,25 @@ REPOSITORY_ID = "987654321"
 Control = Callable[..., Awaitable[dict[str, Any]]]
 
 
+async def hacs_call(
+    checks: Any, name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    result = await checks.call(name, arguments)
+    # The shared HACS facade wraps every successful action in timezone metadata.
+    # Keep the actual response in the log; never accept a flattened/incomplete
+    # substitute or unwrap the repository's own nested data a second time.
+    print(
+        "HACS_TOOL_RESULT "
+        + json.dumps({"tool": name, "arguments": arguments, "result": result}),
+        flush=True,
+    )
+    assert result.get("success") is True, result
+    assert isinstance(result.get("metadata"), dict), result
+    assert result["metadata"].get("home_assistant_timezone"), result
+    assert isinstance(result.get("data"), dict), result
+    return result["data"]
+
+
 def payload(body: dict[str, Any]) -> dict[str, Any]:
     assert "error" not in body, body
     result = body["result"]
@@ -59,6 +78,12 @@ async def ws_cache(base: str, token: str) -> None:
             assert response["success"], response
             if index == 1:
                 assert "hacs_cache" in response["result"]["capabilities"], response
+            else:
+                cached = response["result"]
+                assert cached["store"] == "hacs", cached
+                assert cached["repository"]["id"] == REPOSITORY_ID, cached
+                assert cached["repository"]["full_name"] == REPOSITORY, cached
+                assert cached["cache"]["refreshed_from_github"] is False, cached
 
 
 async def exercise_admission(checks: Any, control: Control, base: str) -> None:
@@ -70,7 +95,8 @@ async def exercise_admission(checks: Any, control: Control, base: str) -> None:
 
     # Register through the production tool, with real HACS validators and GitHub
     # client models populated by HTTP fixture payloads.
-    added = await checks.call(
+    added = await hacs_call(
+        checks,
         "ha_manage_hacs",
         {
             "action": "add_repository",
@@ -79,17 +105,26 @@ async def exercise_admission(checks: Any, control: Control, base: str) -> None:
         },
     )
     assert added["repository_id"] == REPOSITORY_ID, added
+    assert added["repository"] == REPOSITORY, added
+    assert added["category"] == "integration", added
     checks.passed("real_HACS_registration_from_controlled_GitHub_metadata")
     before = await control("probe")
     assert before["repository"]["data"]["new"] is True, before
-    search = await checks.call(
-        "ha_get_hacs_info", {"action": "search", "query": REPOSITORY}
+    assert before["update_entity"] is None, before
+    search = await hacs_call(
+        checks, "ha_get_hacs_info", {"action": "search", "query": REPOSITORY}
     )
     assert search["count"] == 1, search
-    info = await checks.call(
-        "ha_get_hacs_info", {"action": "info", "repository_id": REPOSITORY_ID}
+    assert len(search["results"]) == 1, search
+    assert search["results"][0]["id"] == REPOSITORY_ID, search
+    assert search["results"][0]["full_name"] == REPOSITORY, search
+    assert search["cache"]["refreshed_from_github"] is False, search
+    info = await hacs_call(
+        checks, "ha_get_hacs_info", {"action": "info", "repository_id": REPOSITORY_ID}
     )
+    assert info["repository_id"] == REPOSITORY_ID, info
     assert info["full_name"] == REPOSITORY, info
+    assert info["cache"]["refreshed_from_github"] is False, info
     await ws_cache(base, checks.credentials["alpha"]["access_token"])
     unchanged(before, await control("probe"))
     checks.passed(
@@ -136,7 +171,8 @@ async def exercise_hacs_owner(
     await exercise_admission(checks, control, base)
 
     async def install(version: str) -> dict[str, Any]:
-        return await checks.call(
+        result = await hacs_call(
+            checks,
             "ha_manage_hacs",
             {
                 "action": "download",
@@ -144,10 +180,21 @@ async def exercise_hacs_owner(
                 "version": version,
             },
         )
+        assert result["repository_id"] == REPOSITORY_ID, result
+        assert result["repository"] == REPOSITORY, result
+        assert result["installed_version"] == version, result
+        assert result["restart_requested"] is False, result
+        assert result["active_version_verified"] is False, result
+        return result
 
     installed = await install("1.0.0")
     assert installed["installed_version"] == "1.0.0", installed
-    after_first = await wait_probe(control, lambda p: bool(p["update_entity"]))
+    after_first = await wait_probe(
+        control, lambda p: bool(p["update_entity"] and p["update_state"])
+    )
+    assert after_first["update_state"]["attributes"]["installed_version"] == "1.0.0", (
+        after_first
+    )
     assert not after_first["install_services"], after_first
     await control("load_dummy", {})
     assert (await control("probe"))["dummy_running_version"] == "1.0.0"
@@ -196,6 +243,12 @@ async def exercise_recovery(
     assert failed["result"].get("isError"), failed
     assert payload(failed)["error"]["code"] == "OUTCOME_UNKNOWN", failed
     after_failure = await control("probe")
+    assert after_failure["archive_entered"], after_failure
+    assert not after_failure["unexpected_network"], after_failure
+    archive_requests = after_failure["network"][len(after_update["network"]) :]
+    assert (
+        sum(request.endswith("/3.0.0/fixture.zip") for request in archive_requests) == 1
+    ), archive_requests
 
     def dummy_files(observation: dict[str, Any]) -> dict[str, str]:
         return {
@@ -204,6 +257,7 @@ async def exercise_recovery(
             if k.startswith("custom_components/")
         }
 
+    assert dummy_files(after_update), after_update
     assert dummy_files(after_failure) == dummy_files(after_update), after_failure
     assert after_failure["repository"]["data"]["installed_version"] == "2.0.0", (
         after_failure

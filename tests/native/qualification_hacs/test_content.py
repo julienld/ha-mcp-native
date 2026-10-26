@@ -90,3 +90,34 @@ async def test_unknown_network_routes_fail_closed_without_a_proxy() -> None:
         assert server.unexpected == ["GET api.github.com/repos/real/production"]
     finally:
         await server.close()
+
+
+@pytest.mark.asyncio
+async def test_hacs_tag_ref_download_reaches_the_controlled_archive() -> None:
+    # HACS 2.0.5 async_install_repository sets ref="tags/<version>" before
+    # download_zip_files passes it to this unchanged owner URL builder.
+    source = (
+        Path(__file__).parents[2]
+        / "initial_test_state/custom_components/hacs/utils/url.py"
+    )
+    spec = importlib.util.spec_from_file_location("hacs_owner_urls", source)
+    assert spec and spec.loader
+    urls = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(urls)
+    url = urls.github_release_asset(
+        repository=content.REPOSITORY, version="tags/1.0.0", filename="fixture.zip"
+    )
+    server = content.ContentServer()
+    await server.start()
+    try:
+        async with (
+            aiohttp.ClientSession(trust_env=False) as session,
+            session.get(server.base + "/" + url.removeprefix("https://")) as response,
+        ):
+            assert response.status == 200, await response.text()
+            with zipfile.ZipFile(io.BytesIO(await response.read())) as bundle:
+                assert json.loads(bundle.read("manifest.json"))["version"] == "1.0.0"
+        assert server.archive_entered.is_set()
+        assert not server.unexpected, server.unexpected
+    finally:
+        await server.close()

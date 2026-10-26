@@ -16,21 +16,43 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Qualification to run (HACS owners never publishes)'
+        description: 'Qualification to run (live opens a temporary fork-only HA environment)'
         required: true
         type: choice
-        options: [native, hacs_owners]
+        options: [native, hacs_owners, protocol, live]
         default: native
       published_tag:
         description: 'Existing public native release tag to qualify from its unchanged manifest URL'
         required: false
         type: string
+      track_ref:
+        description: 'live only: SHA or branch in this fork to install, independent of the workflow ref'
+        required: false
+        type: string
+      public_key:
+        description: 'live only: base64 RSA-4096 PUBLIC key (PEM) for encrypted endpoint URLs'
+        required: false
+        type: string
+      minutes:
+        description: 'live only: lifetime in minutes (integer, 1–330)'
+        type: string
+        default: '60'
+      platform:
+        description: 'live only: Home Assistant install type'
+        type: choice
+        options: [docker, haos]
+        default: docker
+      server:
+        description: 'live only: server mode (app requires haos; oauth requires docker)'
+        type: choice
+        options: [standalone, embedded, app, oauth]
+        default: embedded
 
 permissions:
   contents: read
 
 concurrency:
-  group: native-migration-${{ github.ref }}-${{ inputs.target || 'native' }}-${{ inputs.published_tag || 'candidate' }}
+  group: native-migration-${{ github.ref }}-${{ inputs.target || 'native' }}-${{ inputs.published_tag || 'candidate' }}-${{ inputs.track_ref || 'self' }}-${{ inputs.platform || 'matrix' }}-${{ inputs.server || 'default' }}
   cancel-in-progress: true
 
 jobs:
@@ -45,15 +67,31 @@ jobs:
         env:
           TARGET: ${{ inputs.target || 'native' }}
           PUBLISHED_TAG: ${{ inputs.published_tag }}
+          TRACK_REF: ${{ inputs.track_ref }}
+          PUBLIC_KEY: ${{ inputs.public_key }}
+          MINUTES: ${{ inputs.minutes }}
         run: |
           python3 - <<'PY'
           import os
           from pathlib import Path
           target, tag = os.environ["TARGET"], os.environ["PUBLISHED_TAG"]
-          if target not in {"native", "hacs_owners"}:
+          if target not in {"native", "hacs_owners", "protocol", "live"}:
               raise SystemExit("Unknown qualification target")
-          if target == "hacs_owners" and tag:
+          if target != "native" and tag:
               raise SystemExit("published_tag is only valid with target=native")
+          ref, key = os.environ["TRACK_REF"], os.environ["PUBLIC_KEY"]
+          if target == "live":
+              if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch":
+                  raise SystemExit("live requires a manual workflow dispatch")
+              if os.environ["GITHUB_REPOSITORY"] == "homeassistant-ai/ha-mcp":
+                  raise SystemExit("live must run on a fork")
+              if not ref.strip() or not key.strip():
+                  raise SystemExit("live requires track_ref and public_key")
+              minutes = os.environ["MINUTES"]
+              if not minutes.isascii() or not minutes.isdecimal() or not 1 <= int(minutes) <= 330:
+                  raise SystemExit("live minutes must be an integer from 1 to 330")
+          elif ref or key:
+              raise SystemExit("track_ref and public_key are only valid with target=live")
           route = "published" if tag else target
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
               output.write(f"route={route}\n")
@@ -63,6 +101,22 @@ jobs:
     needs: select-qualification
     if: ${{ needs.select-qualification.outputs.route == 'hacs_owners' }}
     uses: ./.github/workflows/native-hacs-owner-qualification.yml
+
+  protocol:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'protocol' }}
+    uses: ./.github/workflows/native-protocol-comparison.yml
+
+  live:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'live' }}
+    uses: ./.github/workflows/dev-ha-env.yml
+    with:
+      track_ref: ${{ inputs.track_ref }}
+      public_key: ${{ inputs.public_key }}
+      minutes: ${{ inputs.minutes }}
+      platform: ${{ inputs.platform }}
+      server: ${{ inputs.server }}
 
   core-window:
     needs: select-qualification

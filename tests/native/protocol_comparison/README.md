@@ -7,65 +7,96 @@ Core image, read arguments, and measurement schedule. It is not the old
 8.7.0-versus-native benchmark and does not attribute a performance difference to
 either the SSE EOF fix or the derived-text cache in isolation.
 
-Local status on 2026-10-25: **25 harness tests pass on Windows**; **no live Core run has
-been performed by this test agent**. The parent owns deployment and fork execution.
-There is no workflow dispatch, release, production modification or remote service
-in this directory. All fixture writes are confined to the disposable containers.
+Local status on 2026-10-26: **50 harness/launcher tests pass on Windows**;
+**no live paired Core run has been performed by this implementation agent**.
+Docker is absent locally. The parent owns the checkpoint and fork execution.
+This does not qualify authentication, owner coverage or installation beyond the
+specific checks that actually pass in the resulting report.
 
-## Parent wiring: reuse continuity bring-up
+## Executable launcher
 
-Reuse the existing `tests/src/e2e/_conftest_testcontainer.py`,
-`_conftest_embedded.py`, `_conftest_native_runtime.py`, and
-`tests/qualification_artifacts.py` staging paths from native continuity. Keep two
-fixture processes alive concurrently on one isolated fork runner. These hooks are
-required before this CLI can run; it is not a second deployment engine.
+`launch.py` now performs the entire bring-up/comparison/cleanup. The continuity
+sources are [`tests/continuity/README.md`](../../continuity/README.md) and
+[`.github/workflows/native-continuity.yml`](../../../.github/workflows/native-continuity.yml)
+(the repository has no `tests/native/continuity/` directory).
 
-1. Check out **complete immutable SHAs** into separate source directories.
-   Upstream is the full SHA resolving `586bdfda`; candidate is the parent's future
-   committed checkpoint. No default silently substitutes the current worktree.
-   Build each wheel and component from its own clean application checkout. Keep
-   `src`, `custom_components`, `pyproject.toml`, and `uv.lock` unchanged by harness
-   overlays. For a source archive, create the receipt in a clean checkout at that
-   commit before archiving; the receipt command intentionally requires Git proof.
-2. Pull one pinned Core image and use its immutable image ID for **both** containers.
-   Record the actual `.Image` from `docker inspect` for each container, not a mutable
-   tag. Same CPU/memory configuration, architecture and runner. The harness rejects
-   different Core, Python, architecture, image ID or private SDK versions.
-3. Baseline: continuity embedded **legacy** path, upstream's own component and
-   wheel. Candidate: continuity **native** path, paired native artifact staging.
-   Do not point an upstream external client at the candidate component.
-4. Copy `protocol_fixture/` to each config's
-   `custom_components/protocol_fixture/`; append `protocol_fixture:` to its YAML.
-   Copy each wheel to that config root and keep it there for byte attestation.
-   Stage receipts below as `protocol-build.json` before Core startup.
-5. Keep the standard continuity `.ha_mcp/feature_flags.json` location. Begin with
-   read-only **off**, all three read tools and `ha_call_service` enabled, identical
-   module selection, automatic backup off and mandatory BPS off in both fixtures.
-   Disable developer edits during the run. The policy check persists read-only on,
-   unloads/reloads the actual server entry, verifies rejection without an effect,
-   then restores read-only off in `finally`. Dispose both configs after the run.
-6. Provision two disposable active human admins with different tokens. Configure
-   the native ingress to use HA authentication when checking per-caller identity;
-   a webhook configured to run as its owner deliberately has owner attribution.
-   The baseline actor expectation is its configured HA token owner. The two actor
-   expectations are explicit inputs, not inferred from successful replies. Put
-   tokens and IDs in process environment variables, never in uploaded artifacts.
-7. Keep each container's stdout/stderr streaming into a separate **private local**
-   log file for the whole comparison. The fixture writes
-   `PROTOCOL_COMPARISON_CAPTURE` at observations; at least two markers per log
-   window are required so an empty/stale file cannot qualify as error-free.
-8. Build a private config with loopback MCP and fixture URLs. Only literal
-   `http://127.0.0.1` / `http://[::1]` targets are accepted. Redirects, proxy env
-   variables, LAN hosts and ambient Home Assistant environment variables are not
-   used. The fixture nonce and all artifact identities must match before writes.
-   Each MCP URL must share its fixture's Core origin, and the two roles must use
-   different listener ports, preventing cross-wiring to the other component.
-   Run the CLI, retain only its sanitized JSON, then stop both fixture processes
-   and containers in the parent's unconditional cleanup.
+Use **three separate checkouts**: this harness, baseline at exactly
+`3690af6e0f62ccec6c7fa70f748494ba2605f419` (U2), and the committed candidate.
+Initialize their pinned submodules. Both application checkouts must be disposable:
+the launcher overlays only test helpers, never `src`, `custom_components`,
+`pyproject.toml` or `uv.lock`. It checks their Git identities before staging,
+after building, and after comparison. It neither commits nor changes branches.
 
-The fixture's response service is real Core registration, not a mocked MCP
-transport or tool. Its state and service records are inspected independently of
-the public MCP response. No Home Assistant production instance is involved.
+```powershell
+uv run -s tests/native/protocol_comparison/launch.py run --baseline-source <U2-checkout> --candidate-source <candidate-checkout> --candidate-revision <full-sha> --output <new-report-directory> --state <private-cleanup-state.json>
+```
+
+`--candidate-revision` defaults to `GITHUB_SHA` in Actions and is required outside
+Actions. Baseline is not a floating/ref input. `--core-image` defaults to the
+continuity-compatible Core `2026.10.4`; the launcher pulls it once and starts both
+roles from that **same immutable image ID**. It verifies each container's actual
+Docker `.Image`, privilege flag and published bindings. Runtime checks additionally
+require equal Core/Python/architecture and private FastMCP **4.1.2**, MCP **2.3.0**
+and mcp-types **2.3.0** before the measured calls.
+
+The launcher reuses continuity's `_build_embedded_server_wheel`,
+`_install_custom_component`, `pair_component_library`, `_install_embedded_server`,
+`stage_native_runtime` and `_build_ha_testcontainer`, with
+`tests/qualification_artifacts.py` for the native paired artifacts. Each role
+imports the same overlaid helpers inside its **own source checkout and process**;
+legacy builds U2's own wheel/component, and native builds the candidate's own
+paired release-profile artifacts. It seeds a minimal fresh config for these
+contracts, rather than copying the broad suite's recorder, HACS or known tokens.
+No shared continuity source file needs modification.
+
+Each container has its own Docker bridge, the same two-CPU/two-GiB limit, no
+privileged mode, and only Core port 8123 published on `127.0.0.1` with a distinct
+dynamic host port. Package installation can use outbound network access; neither
+the legacy private listener nor any public tunnel is published. A nonlocal Docker
+daemon is refused. The candidate webhook uses `ha_auth`; the legacy webhook uses
+its random secret URL and its configured administrator token. These are deliberate
+runtime semantics: baseline calls must be attributed to its configured owner;
+native calls must be attributed to the two distinct authenticated callers.
+
+For each role the launcher seeds two actual, active human administrator records
+with random identifiers and signed run-local LLATs expiring after two hours. Core
+validates the credentials normally. The provenance fixture remains an authenticated
+observer, never an authentication/owner substitute. The native entry contains no
+internal admin token. No household token, GitHub token or ambient HA/proxy setting
+is passed to workers or the comparison CLI.
+
+Read-only begins off; module selection is identical, automatic backups, developer
+mode and mandatory BPS are off. The existing CLI runs **60 rounds × (1 + 4) × 2 =
+600 measured reads**, plus its separate warmups and protocol/actor/read-only
+contracts. It alternates AB/BA and restores real persisted read-only policy through
+the entry lifecycle. No performance threshold or faster-native claim is made.
+
+Continuous stdout/stderr capture starts immediately after each container starts,
+and remains in a mode-0700 private temporary directory until cleanup. Source
+builds, worker errors, tokens, URLs, identities and raw logs are never uploaded.
+Only `comparison.json` (the existing sanitized CLI report) and `launch.json`
+(source/helper hashes, immutable image ID, completion/cleanup and bounded failure
+phase/type) are deliverable artifacts. `launch.json.complete` also requires clean
+worker exits and successful cleanup; a green comparison alone is insufficient.
+
+The controller cleans up on success, exceptions, timeouts and SIGTERM. Worker
+stdin is a lifetime lease; normal completion closes both leases and joins both
+workers. POSIX cancellation also terminates their process groups. A label-scoped,
+idempotent fallback removes only this run's containers/networks, repairs ownership
+of the private mount, and deletes its configs/logs. It never runs Docker prune.
+If cleanup failed or the controller was killed, retry using its private state:
+
+```powershell
+uv run -s tests/native/protocol_comparison/launch.py cleanup --state <private-cleanup-state.json>
+```
+
+The new [`native-protocol-comparison.yml`](../../../.github/workflows/native-protocol-comparison.yml)
+has `workflow_call` and manual `workflow_dispatch` only, read-only permissions,
+three checkouts, locked launcher dependencies, unconditional cleanup and an exact
+two-JSON upload allowlist. It selects candidate `github.sha`. The parent wires it
+into `native-migration` as `target=protocol`, because a new workflow on a fork branch
+may not yet have a dispatch registration. This implementation does not dispatch,
+publish a release, or modify `native-migration.yml`.
 
 ## Build receipt and private configuration
 
@@ -163,19 +194,25 @@ evidence of an incomplete/failed qualification, even if some timings look good.
 - Pair timing describes this fixture and machine. It does not isolate effects of
   two patches or qualify other architectures/Core versions. Runtime package hashes
   establish byte identity, while source origin and container image ID remain
-  builder attestations. Parent must preserve the build log and actual image ID.
+  builder attestations. The launcher records actual container image IDs; build logs remain private and are deleted during cleanup.
 
 ## Local harness verification
 
 From the worktree, using its existing Windows venv:
 
 ```powershell
-.venv/Scripts/python.exe -m pytest tests/native/protocol_comparison/test_wire.py tests/native/protocol_comparison/test_measurements.py --timeout-method=thread -q
+.venv/Scripts/python.exe -m pytest tests/native/protocol_comparison/ --timeout-method=thread -q
 .venv/Scripts/ruff.exe check tests/native/protocol_comparison
-uv run -s tests/native/protocol_comparison/run.py --help
+uv run --locked -s tests/native/protocol_comparison/launch.py --help
 ```
 
 The socket test starts only a loopback fixture HTTP server. It validates the
 client's emitted envelope and parser over a real socket; it does **not** qualify
 the real HA server. Parser/scheduling tests deliberately use synthetic inputs and
 do not claim to exercise the production EOF patch or native text cache.
+
+`test_launch.py` exercises real continuity entry seeding and real child-process
+lifetimes (success, CLI failure and failed bring-up), source admission, Docker
+inspection refusal, credential isolation and cleanup failure. Docker commands and
+comparison peers are test doubles in the launcher lifecycle tests. They establish
+orchestration behavior, not a live Home Assistant or MCP pass.

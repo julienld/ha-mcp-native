@@ -19,7 +19,14 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).with_name("native")))
 import run_container as bench
-from checks import REPOSITORY_ID, Control, exercise_hacs_owner, wait_probe, ws_cache
+from checks import (
+    REPOSITORY_ID,
+    Control,
+    exercise_hacs_owner,
+    hacs_call,
+    wait_probe,
+    ws_cache,
+)
 
 bench.CONFIG = Path("/config")
 bench.OUT = Path("/qualification-evidence")
@@ -54,9 +61,10 @@ async def after_restart(checks: Any, control: Control) -> dict[str, Any]:
     assert not active["install_services"], active
     checks.passed("real_process_restart_loads_installed_dummy_version_without_replay")
     await ws_cache(bench.BASE, checks.credentials["alpha"]["access_token"])
-    removed = await checks.call(
-        "ha_manage_hacs", {"action": "remove", "repository_id": REPOSITORY_ID}
+    removed = await hacs_call(
+        checks, "ha_manage_hacs", {"action": "remove", "repository_id": REPOSITORY_ID}
     )
+    assert removed["repository_id"] == REPOSITORY_ID, removed
     assert removed["restart_requested"] is False, removed
     after = await control("probe")
     assert not after["repository"]["data"]["installed"], after
@@ -123,7 +131,10 @@ async def main(phase: str, topology: str) -> None:
                     else await client.post(url, headers=checks.headers(), json=body)
                 )
                 response.raise_for_status()
-                return response.json()
+                result = response.json()
+                if operation == "probe":
+                    evidence["last_owner_probe"] = result
+                return result
 
             if phase == "exercise":
                 await bench.create_entry(checks, identities["alpha"]["user_id"])

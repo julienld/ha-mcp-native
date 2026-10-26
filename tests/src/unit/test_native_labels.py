@@ -497,7 +497,9 @@ async def test_component_catalog_has_one_label_getter_and_preserves_immutable_co
         if definition.name not in label_contract:
             continue
         previous = label_contract[definition.name]
-        assert not _changed_inputs(previous["inputSchema"], definition.input_schema)
+        assert not _changed_inputs(
+            previous["inputSchema"], definition.input_schema, tool_name=definition.name
+        )
         assert all(
             previous["annotations"].get(key) == definition.annotations.get(key)
             for key in _ANNOTATIONS

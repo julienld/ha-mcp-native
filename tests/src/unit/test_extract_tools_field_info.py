@@ -288,6 +288,12 @@ class TestFieldConstraints:
 class TestUnionMetadata:
     """Metadata belongs to the branch that declared it."""
 
+    def test_outer_metadata_keeps_union_types_without_promoting_branch_bounds(self):
+        info = _field_info(
+            "Annotated[Annotated[int, Field(ge=0)] | str, Field(description='Cursor.')]"
+        )
+        assert info == {"type": "int | str", "description": "Cursor."}
+
     def test_metadata_from_the_single_annotated_branch_applies(self):
         info = _field_info("Annotated[int, Field(ge=1, description='n')] | None")
 

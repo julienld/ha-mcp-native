@@ -1,9 +1,11 @@
 # Isolated HACS owner qualification
 
-Status: **first runner attempt failed during bootstrap; local repair awaits a
-new checkpoint/run**. On 2026-10-26 UTC, [run 40264628510](https://github.com/julienld/ha-mcp-native/actions/runs/40264628510)
-at `1a9cdadef8c5661b4f09dbbadc7866bd1bd78a52` failed in both topologies,
-before any HACS qualification check. Local Windows has no Docker executable.
+Status: **second runner attempt loaded Core/HACS in both topologies, then failed
+in the bench's response assertion; the local repair needs a new checkpoint/run**.
+On 2026-10-26 UTC, [run 40266553395](https://github.com/julienld/ha-mcp-native/actions/runs/40266553395)
+at `68b441c5120b6998941bee7038ec651abb8036c0` reached the loaded-owner check,
+then stopped on `KeyError: 'repository_id'`. The first attempt and its bootstrap
+repair are retained below. Local Windows has no Docker executable.
 A green local protocol test is not a live Home Assistant qualification.
 
 This lane fills the gap left by `tests/native/hacs_checks.py`, which proves only
@@ -98,7 +100,10 @@ uv run -s tests/native/qualification_hacs/run.py --topology both --output tests/
 
 Output directories must be fresh so an old `complete: true` cannot hide a failed
 run. The container is removed after evidence collection, including on failure.
-Inspect `evidence.json`, both driver logs, `ha.log`, and `isolation.json`. Only the
+Inspect `evidence.json`, both driver logs, `ha.log`, and `isolation.json`. HACS
+tool results retain their complete public envelope in `HACS_TOOL_RESULT` log
+records; `last_owner_probe` preserves the last successful observation even if a
+later assertion fails. Only the
 second driver phase can set `complete: true`. `ha_mcp_self_update_qualified`,
 `publication_chain_qualified`, and `marketplace_qualified` remain false even on
 success. The image ID, source build metadata, actual Core/HACS versions, owner
@@ -111,9 +116,68 @@ fixture. Do not aim it at an existing/personal Home Assistant.
 
 ## Local validation
 
+### Second runner attempt: public result envelope
+
+Both topology artifacts under `local/qualification-68b/hacs/` contain only
+`real_Core_2026_10_4_HACS_2_0_5_loaded_owner` in their successful checks and keep
+`complete: false`. Their complete exercise logs, Core logs and evidence were
+read. Isolation records still show network `none`, no host binds and no published
+ports. The bootstrap repairs therefore reached their intended milestone; this
+does not qualify registration or the later lifecycle.
+
+The common [`HacsFacade`](../../../src/ha_mcp/runtime/hacs_tools.py),
+[`added_data`](../../../src/ha_mcp/runtime/hacs_results.py), and native
+[`HacsReads.wrapped`](../../../custom_components/ha_mcp_tools/native_operations/hacs_reads.py)
+return `{"success": true, "data": {...}, "metadata": {...}}`. The shared native
+MCP client removes the MCP transport envelope only. The bench had read
+`repository_id`, `count`, `installed_version` and other fields one level too high.
+It now requires the successful timezone envelope and reads exactly its `data`.
+Repository ID/name/category, installed versions, pending restart and real owner
+observations remain assertions; missing or wrong identities are rejected.
+The original logs did not retain the successful tool response, so the diagnosis
+is supported by the shared source and the local reproducer, not by an invented
+raw response from that run. Future logs retain it explicitly.
+
+The source audit also checked the **official release archive**, with the SHA-256
+above, rather than assuming its Git tag or vendored fixture is byte-identical:
+
+- HACS `async_install_repository` sets `ref = "tags/<version>"`; its
+  `download_zip_files` passes that to `github_release_asset`. The HTTP fixture
+  now accepts this exact prefix for the same allowlisted dummy versions/archive.
+  The regression uses the unchanged owner URL builder (identical to the archive)
+  and real local HTTP; before the fix it returned 404. No owner URL or method is
+  replaced. Unknown paths still fail closed.
+- Core [2026.10.4 custom-component discovery](https://github.com/home-assistant/core/blob/2026.10.4/homeassistant/loader.py)
+  caches the catalog before installation. HACS only refreshes it for config-flow
+  integrations; the dummy uses YAML setup. The explicit `load_dummy` control now
+  invalidates that discovery cache and calls Core's real loader before real
+  component setup. Its local regression first failed with a stale catalog. It
+  does not reload the already imported dummy module or change its running version.
+- The rollback assertion now also requires an observed archive request exactly
+  once, no unexpected route, and a nonempty pre-failure code image. The first
+  install requires no preexisting update entity and waits for its live state.
+  Context, requested version, response-loss dispatch count, storage restore,
+  actual process restart and loaded-versus-installed checks remain in the lane.
+
+Local regressions failed before their respective fixes: three envelope/identity
+cases raised the runner's `KeyError`, the tagged archive returned HTTP 404, and
+the first dummy load retained Core's stale catalog. These are bench tests with
+explicit stand-ins where Core is unavailable, not new live owner evidence.
+After repair, the command below with the existing isolated test dependencies
+passed **15 tests in 24.79 seconds**, including rejection of missing envelope
+fields. Ruff check/format, Python compilation and `git diff --check` passed for
+this directory. The ignored `local-validation-68b.log` beside this README retains
+the final pytest output. No package sync/install, production edit, shared-image
+change, minimal-lane change, index, commit, push or workflow dispatch was made.
+The Core logs also contain blocking-I/O warnings from the bench's metadata
+version probe; those warnings were not the failing assertion.
+
+### First runner attempt: bootstrap
+
 The complete `ha.log` and `exercise.log` artifacts from **both** failed jobs were
 read, along with their evidence/isolation records and the external job failure
-log. Both failures have the same causes:
+log in [run 40264628510](https://github.com/julienld/ha-mcp-native/actions/runs/40264628510)
+at `1a9cdadef8c5661b4f09dbbadc7866bd1bd78a52`. Both failures have the same causes:
 
 - Core's aiohttp resolver creates Zeroconf for Analytics and HACS. Automatic
   adapter selection leaves no enabled adapter in `--network none`; Zeroconf
@@ -151,7 +215,7 @@ $env:PYTHONPATH = (Resolve-Path local/qualification-1a9/hacs-test-deps).Path
 .venv/Scripts/python.exe -m pytest tests/native/qualification_hacs --timeout-method=thread -o addopts='' -q
 ```
 
-Observed after repair: **7 passed**. Ruff check/format and compilation passed for
+Observed after the bootstrap repair: **7 passed**. Ruff check/format and compilation passed for
 this directory. No workflow, owner implementation, update service or provenance
 check was changed; no dispatch, index, commit or push was performed by this repair.
 

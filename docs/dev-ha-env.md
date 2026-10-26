@@ -8,8 +8,9 @@ bring-up and config (user `mcp` / `mcp`, token `TEST_TOKEN` in
 `tests/test_constants.py`). The E2E seed gives `mcp` a French interface; after
 logging in, change it under your profile (your name at the bottom of the
 sidebar) → **General** → **Language**. It is separate from the test suite:
-nothing in CI runs it, and its runner script (`.github/dev-ha-env/hold.py`) is
-copied into the tracked branch's E2E directory only for the run.
+only an explicit manual request starts it, and its runner script
+(`.github/dev-ha-env/hold.py`) is copied into the tracked branch's E2E directory
+only for the run.
 
 | `platform` | `server` | What runs |
 |---|---|---|
@@ -36,8 +37,8 @@ best-practices mode for the standalone and embedded servers. `ha_image`
 overrides the Docker image (default: `ghcr.io/home-assistant/home-assistant:stable`).
 Pass an explicit version tag to test an older Core release, or `:beta` to test
 the current beta. This dev default is independent of the branch's E2E pin. `minutes`
-defaults to and is capped at 330. On HAOS, `cpu_max` caps the VM's CPU once Home
-Assistant is up (cgroup `cpu.max`, e.g. `25000 100000` for a quarter of a host
+defaults to 330 and must be an integer from 1 to 330. On HAOS, `cpu_max` caps the
+VM's CPU once Home Assistant is up (cgroup `cpu.max`, e.g. `25000 100000` for a quarter of a host
 core), to reproduce a report from a slow board. A HAOS run builds the HAOS image the first
 time the image build files, the test config or the proxy app change, and saves
 it to the fork's cache for later runs. A branch whose component differs from
@@ -47,8 +48,10 @@ at boot with a Core restart.
 Run it **from your fork only**. The job refuses to run in
 `homeassistant-ai/ha-mcp`, whose runners are shared CI capacity.
 
-1. Enable Actions on your fork and sync its `master`, since GitHub only
-   dispatches workflows that exist on the default branch.
+1. Enable Actions on your fork. If `dev-ha-env.yml` is not registered for
+   dispatch, use the [native qualification caller](#calling-through-native-qualification)
+   below when it is already registered. Do not change a historical fork base
+   just to register the dev workflow.
 2. Make a throwaway key pair for this run. The tunnel URLs are published
    only encrypted to its public key, so nothing secret goes to GitHub and
    any machine can start a run:
@@ -136,3 +139,62 @@ Run it **from your fork only**. The job refuses to run in
 
 Anyone who has a tunnel URL has admin on that instance through the public test
 credentials. Don't share the URLs, and don't put anything real in it.
+
+## Calling through native qualification
+
+`dev-ha-env.yml` also accepts `workflow_call`, with the same inputs and defaults
+as direct dispatch (choice inputs become strings and are validated before
+checkout). The caller must originate from a manual dispatch on a fork. It needs
+only `contents: read`, with no `secrets: inherit` or write permissions.
+
+On a fork where `native-migration.yml` is already registered in Actions but
+`dev-ha-env.yml` dispatch returns 404, push the caller and its referenced reusable
+workflows (including `native-protocol-comparison.yml`) to the working branch and
+dispatch `native-migration.yml` on that branch. The local reusable
+workflow is loaded from the caller's commit; it does not need a separate dispatch
+registration. GitHub documents the [same-commit local reference](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#calling-a-reusable-workflow)
+and the [caller event payload](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_call).
+No fork default-branch update is needed for this route.
+
+PowerShell example, after the operator has prepared the throwaway RSA-4096 key
+and saved **only its base64 PEM public key** in `devenv-public-key.b64`:
+
+```powershell
+$workflowBranch = '<branch-with-the-routing-changes>'
+$installRef = '<SHA-or-branch-present-in-your-fork>'
+$publicKey = (Get-Content -Raw devenv-public-key.b64).Trim()
+gh workflow run native-migration.yml -R julienld/ha-mcp-native --ref $workflowBranch `
+  -f target=live -f "track_ref=$installRef" -f "public_key=$publicKey" `
+  -f minutes=60 -f platform=docker -f server=embedded
+```
+
+`--ref` selects the workflow and trusted holder/tunnel helpers; `track_ref`
+selects the server, component and fixture code installed from that same fork.
+Prefer an exact SHA for reproducible PR qualification. These are independent
+revisions. The caller exposes seven inputs including `target` and `published_tag`;
+live defaults are Docker, embedded server and 60 minutes. Other dev-environment
+settings use the reusable workflow defaults: File & YAML Tools present, strict
+best practices enabled, current stable HA, no HAOS CPU cap.
+
+The selector requires `track_ref` and `public_key`, rejects `published_tag` for
+`live` and `protocol`, and bounds live sessions to 1–330 minutes. Passing live
+revision/key inputs to another target is an error. Platform/server combinations
+are checked before checkout or boot. The public key is not a secret; the private
+key stays with the operator and is never sent to the runner. Keep the encrypted
+`dev-ha-env-urls` download/decryption and cancellation steps above. Never paste
+decrypted endpoint URLs in public logs, comments or reports. The existing job
+timeout, holder teardown and disposable runner lifetime still apply.
+
+For the paired protocol bench instead:
+
+```powershell
+gh workflow run native-migration.yml -R julienld/ha-mcp-native --ref $workflowBranch -f target=protocol
+```
+
+Each target selects only its own workload: `protocol` calls the paired protocol
+workflow, `live` calls this environment, and neither starts the native build/unit
+jobs or HACS owner qualification. A protocol/SDK bench is not an LLM conversation:
+PRs #2858/#2859 still require a separate isolated live LLM session against the
+selected revision, with observations and cleanup recorded by the operator.
+The routing tests provide local evidence only; they do not establish that an
+endpoint booted, a tunnel was reachable, or those PR scenarios passed.

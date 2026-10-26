@@ -150,7 +150,9 @@ class ContentServer:
                 return response
         prefix = f"/{REPOSITORY}/releases/download/"
         if host == "github.com" and path.startswith(prefix):
-            version, _, filename = path.removeprefix(prefix).partition("/")
+            # The pinned owner passes its tags/<version> ref to the URL builder.
+            ref = path.removeprefix(prefix).removeprefix("tags/")
+            version, _, filename = ref.partition("/")
             if (version, filename) in {(tag, "fixture.zip") for tag in VERSIONS}:
                 return await self.download(version, headers)
         self.unexpected.append(key)
