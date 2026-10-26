@@ -89,6 +89,39 @@ def test_contract_changes_dominate_missing_breaking_heading(
     )
 
 
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "BREAKING: Authentication is now OAuth.",
+        "## Breaking\nThe legacy connection endpoint no longer exists.",
+        "No breaking changes to tools. BREAKING: Authentication is now OAuth.",
+    ],
+)
+def test_declared_breaking_markers_require_review_without_the_word_change(
+    notes: str,
+) -> None:
+    result = assess_releases(
+        "7.0.0", "7.1.0", releases(("7.1.0", notes), ("7.0.0", "old"))
+    )
+    assert result["classification"] == "breaking"
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "No breaking change. This is not a breaking change: bug fixes only.",
+        "Avoid breaking existing connections during retries.",
+    ],
+)
+def test_negated_or_incidental_breaking_mentions_remain_ordinary_updates(
+    notes: str,
+) -> None:
+    result = assess_releases(
+        "7.0.0", "7.1.0", releases(("7.1.0", notes), ("7.0.0", "old"))
+    )
+    assert result["classification"] == "compatible"
+
+
 def test_detected_auth_or_data_change_overrides_even_unchanged_release() -> None:
     result = assess_releases(
         "7.0.0", "7.0.0", [], detected_changes=["authentication", "data"]

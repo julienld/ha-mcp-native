@@ -35,7 +35,7 @@ def _has_key(value: Any, key: str) -> bool:
         return key in value or any(_has_key(child, key) for child in value.values())
     if isinstance(value, list):
         return any(_has_key(child, key) for child in value)
-    return value == key
+    return isinstance(value, str) and value == key
 
 
 async def tool_catalog(client: Client) -> dict[str, Any]:
@@ -129,6 +129,11 @@ async def service_call(client: Client, marker: str) -> Observation:
     )
 
 
+def _same_json(actual: Any, expected: Any) -> bool:
+    """Compare bounded wire JSON without Python's bool/int equality coercion."""
+    return json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+
 async def actor_contract(target: Any) -> dict[str, Any]:
     observed = []
     for index, actor in enumerate(target.actors):
@@ -140,11 +145,11 @@ async def actor_contract(target: Any) -> dict[str, Any]:
             "actor": actor["expected_user_id"],
             "nested": {"values": [0, False, ""], "empty": {}},
         }
-        if result.get("service_response") != expected:
+        if not _same_json(result.get("service_response"), expected):
             raise WireError("service_response_or_actor_mismatch")
         snapshot = await target.snapshot()
         if (
-            snapshot["records"] != before["records"] + [expected]
+            not _same_json(snapshot["records"], before["records"] + [expected])
             or snapshot["state"] != marker
         ):
             raise WireError("core_effect_or_actor_mismatch")
@@ -182,7 +187,9 @@ async def read_only_contract(target: Any) -> dict[str, Any]:
         )
         validate_read(0, read, before["state"])
         after = await target.snapshot()
-        if after["state"] != before["state"] or after["records"] != before["records"]:
+        if after["state"] != before["state"] or not _same_json(
+            after["records"], before["records"]
+        ):
             raise WireError("read_only_call_changed_fixture")
         result = {
             "write_rejected": True,
@@ -203,9 +210,9 @@ async def read_only_contract(target: Any) -> dict[str, Any]:
     }
     after_restore = await target.snapshot()
     if (
-        restored.get("service_response") != expected
+        not _same_json(restored.get("service_response"), expected)
         or after_restore["state"] != "actor-a"
-        or after_restore["records"] != before["records"] + [expected]
+        or not _same_json(after_restore["records"], before["records"] + [expected])
     ):
         raise WireError("read_only_restoration_not_effective")
     return {**result, "writes_work_after_restoration": True}

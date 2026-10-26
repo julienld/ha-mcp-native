@@ -2,17 +2,20 @@
 
 import asyncio
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ha_mcp.runtime.error_log_journald import (
+    JournaldPage,
+    container_page,
+    first_cursor,
+    journald_page,
+    range_header,
+)
 from ha_mcp.runtime.fault_log_results import FAULT_LOG_PATH, FAULT_LOG_WINDOW_LINES
 from ha_mcp.runtime.log_common import SYSTEM_SERVICE_SLUGS
-from ha_mcp.runtime.log_window import (
-    ErrorLogPage,
-    _container_error_log_page,
-    _journald_error_log_page,
-    _journald_range_header,
-)
+from ha_mcp.runtime.log_window import MIN_LOG_WINDOW_LINES, ErrorLogPage
 from ha_mcp.tool_api import ToolFailure, UnsupportedOperation
 from ha_mcp.utils.owned_executor import await_owned_io
 
@@ -24,13 +27,20 @@ class NativeLogFiles:
     def __init__(self, service: Any) -> None:
         self.service = service
 
-    async def error_log(self, lines: int, offset: int) -> ErrorLogPage:
+    async def error_log(self, lines: int, offset: int | str) -> ErrorLogPage:
         from homeassistant.const import KEY_DATA_LOGGING
 
         hass = self.service.hass
+        lines = max(lines, MIN_LOG_WINDOW_LINES)
         if "hassio" in hass.config.components:
             async with asyncio.timeout(30):
-                return await _journald_error_log_page(lines, offset, self._core_window)
+                return await journald_page(
+                    lines, offset, self._core_window, project=self._project
+                )
+        if isinstance(offset, str):
+            raise UnsupportedOperation(
+                "Cursor-token paging needs a Supervisor-backed log source"
+            )
         filename = hass.data.get(KEY_DATA_LOGGING)
         if filename is None:
             raise UnsupportedOperation("Core has no configured error log file")
@@ -45,10 +55,13 @@ class NativeLogFiles:
                     "Core's configured error log file is not readable",
                     status="not_started",
                 )
-            page = _container_error_log_page(result["content"], lines, offset)
+            page = container_page(result["content"], lines, offset)
             return ErrorLogPage(page.text, page.has_more or result["truncated"])
 
         return await await_owned_io(hass.async_add_executor_job(read))
+
+    async def _project(self, operation: Callable[[], Any]) -> Any:
+        return await await_owned_io(self.service.hass.async_add_executor_job(operation))
 
     async def fault_log(self) -> dict[str, Any]:
         from .. import _is_path_allowed_for_read, _read_log_tail_sync
@@ -84,12 +97,20 @@ class NativeLogFiles:
             )
         return result
 
-    async def _core_window(self, lines: int, offset: int) -> str:
-        return await self.supervisor("core", None, lines, offset=offset)
+    async def _core_window(self, header: str) -> JournaldPage:
+        return await self._supervisor_page("core", None, header)
 
     async def supervisor(
         self, service: str | None, addon: str | None, lines: int, *, offset: int = 0
     ) -> str:
+        page = await self._supervisor_page(
+            service, addon, range_header(max(lines, MIN_LOG_WINDOW_LINES), offset)
+        )
+        return page.text
+
+    async def _supervisor_page(
+        self, service: str | None, addon: str | None, header: str
+    ) -> JournaldPage:
         """aiohasupervisor 0.6 lacks Range; borrow only its existing transport.
 
         This private seam is limited to log endpoints. Core owns the endpoint,
@@ -130,7 +151,7 @@ class NativeLogFiles:
                     headers={
                         "Authorization": f"Bearer {transport.token}",
                         "Accept": "text/plain",
-                        "Range": _journald_range_header(lines, offset),
+                        "Range": header,
                     },
                     timeout=ClientTimeout(total=30),
                     allow_redirects=False,
@@ -140,6 +161,7 @@ class NativeLogFiles:
                 if response.status not in {200, 206}:
                     raise RuntimeError("Unexpected Supervisor log status")
                 text: str = await response.text()
+                cursor = first_cursor(response)
         except Exception as error:  # noqa: BLE001 - transport errors may embed credential headers
             # Client exception objects can hold request headers. The public
             # failure only identifies the failure class, never those objects.
@@ -149,4 +171,4 @@ class NativeLogFiles:
                 status="not_started",
             ) from None
         await authorize_actor(self.service.actor, self.service.authorize)
-        return text
+        return JournaldPage(text, cursor)

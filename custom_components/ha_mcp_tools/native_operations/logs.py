@@ -1,6 +1,7 @@
 """Canonical log sources backed by Core collections, recorder and configured files."""
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -8,6 +9,7 @@ from typing import Any, Literal
 from homeassistant.core import HomeAssistant
 
 from ha_mcp.runtime.error_log_parsing import _error_log_window_lines
+from ha_mcp.runtime.error_log_read import wider_error_log_window
 from ha_mcp.runtime.fault_log_results import (
     FAULT_LOG_PATH,
     FAULT_LOG_WINDOW_LINES,
@@ -30,6 +32,8 @@ from ha_mcp.utils.owned_executor import await_owned_io
 from .log_files import NativeLogFiles
 from .registry_access import Authorize, authorize_actor, registry_failure
 from .registry_failures import with_recovery_hint
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -103,12 +107,35 @@ class NativeLogs(LogQuery, LogResults, LogbookResults):
         search: str | None,
         level: str | None,
         order: Literal["newest", "oldest"],
-        offset: int,
+        offset: int | str,
         structured: bool,
         top_n: int | None,
     ) -> dict[str, Any]:
         lines = _error_log_window_lines(limit, search, level, structured)
-        page = await await_owned_io(NativeLogFiles(self).error_log(lines, offset))
+        reader = NativeLogFiles(self)
+        page = await await_owned_io(reader.error_log(lines, offset))
+        refetch_failed = False
+        wider = (
+            lines
+            if structured
+            else await await_owned_io(
+                self.hass.async_add_executor_job(wider_error_log_window, page, lines)
+            )
+        )
+        if wider > lines:
+            try:
+                page = await await_owned_io(reader.error_log(wider, offset))
+                lines = wider
+            except ToolFailure as error:
+                # Reauthorization failures must suppress even the first page.
+                if error.code not in {"SUPERVISOR_LOG_FAILED", "RESOURCE_NOT_FOUND"}:
+                    raise
+                _LOGGER.warning(
+                    "error_log: wider read for a record header failed (%s); "
+                    "continuing with the first window",
+                    error.code,
+                )
+                refetch_failed = True
         result: dict[str, Any] = await await_owned_io(
             self.hass.async_add_executor_job(
                 self.error_log_result,
@@ -121,6 +148,7 @@ class NativeLogs(LogQuery, LogResults, LogbookResults):
                 offset,
                 structured,
                 top_n,
+                refetch_failed,
             )
         )
         return result

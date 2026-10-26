@@ -7,7 +7,6 @@ Module Size; per-source fetchers live in ``log_sources`` and
 ``log_sources_supervisor``, and the tool surface in ``tools_logs``.
 """
 
-import re
 from typing import Any, Literal
 
 from ..errors import ErrorCode, create_error_response
@@ -45,11 +44,6 @@ DEFAULT_LOG_LIMIT = 100
 # behind it than the limit itself.
 SUPERVISOR_SEARCH_WINDOW_LINES = 2000
 MAX_LIMIT = 500
-
-# Regex to match log level at the start of a log line
-_LOG_LEVEL_RE = re.compile(
-    r"(?:^|\s)(DEBUG|INFO|WARNING|ERROR|CRITICAL)(?:\s|:|\])", re.IGNORECASE
-)
 
 VALID_LOG_LEVELS = ("ERROR", "WARNING", "INFO", "DEBUG", "CRITICAL")
 
@@ -112,7 +106,7 @@ def _collect_log_warnings(
     end_time: str | None,
     slug: str | None,
     order: Literal["newest", "oldest"],
-    offset: int,
+    offset: int | str,
 ) -> list[str]:
     warnings: list[str] = []
     if source == "logger" and order != "newest":
@@ -197,4 +191,4 @@ def _validate_log_slug(source: str, slug: str | None) -> None:
         )
 
 
-__all__ = ["DEFAULT_LOG_LIMIT", "SUPERVISOR_SEARCH_WINDOW_LINES", "_LOG_LEVEL_RE"]
+__all__ = ["DEFAULT_LOG_LIMIT", "SUPERVISOR_SEARCH_WINDOW_LINES"]

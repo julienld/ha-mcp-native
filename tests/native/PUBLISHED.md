@@ -95,8 +95,11 @@ and report what ran. HAOS, another architecture, authenticated HACS selection,
 upgrade between releases and rollback require their own evidence; a public
 Container run does not establish them.
 
-Candidate qualification additionally exercises minimal Core, with older permitted
-transitive packages, through the compatibility-window lane. It processes each
+Candidate qualification additionally exercises minimal Core and its exact frontend,
+with older permitted transitive packages, through the compatibility-window lane.
+The frontend belongs to the selected Core baseline; its exact requirement comes
+from that image's manifest. The ha-mcp phase retains the repository's dependency
+cooldown and records its bounded security exception separately. It processes each
 manifest requirement and declared integration dependency using Core's real
 installer, observes dependency changes, and probes protocol, storage and native
 imports. Only that test maps the unpublished URL to its paired local wheel.

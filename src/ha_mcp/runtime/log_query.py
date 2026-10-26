@@ -2,7 +2,49 @@
 
 from typing import Any, Literal, cast
 
+from ha_mcp.tool_api import ToolFailure
+
+from .error_log_journald import parse_cursor_token
 from .log_common import _collect_log_warnings, _validate_log_level, _validate_log_slug
+
+
+def _validate_log_offset(source: str, offset: int | str) -> int | str:
+    """Validate a paging anchor: an integer, or an error-log cursor token."""
+    if isinstance(offset, str):
+        text = offset.strip()
+        if not text:
+            return 0
+        try:
+            offset = int(text)
+        except ValueError:
+            return _validate_cursor_offset(source, text)
+    if offset < 0:
+        raise ToolFailure(
+            "VALIDATION_INVALID_PARAMETER",
+            f"'offset' must not be negative, got {offset}",
+            status="not_started",
+        )
+    return offset
+
+
+def _validate_cursor_offset(source: str, offset: str) -> str:
+    if source != "error_log":
+        raise ToolFailure(
+            "VALIDATION_INVALID_PARAMETER",
+            "Cursor tokens only apply to source='error_log'; "
+            f"source='{source}' takes a non-negative integer offset",
+            status="not_started",
+        )
+    try:
+        parse_cursor_token(offset)
+    except ValueError as error:
+        raise ToolFailure(
+            "VALIDATION_INVALID_PARAMETER",
+            f"Invalid 'offset' token for source='error_log' ({error}); pass the "
+            "'next_offset' value a previous response returned",
+            status="not_started",
+        ) from error
+    return offset
 
 
 class LogQuery:
@@ -24,7 +66,7 @@ class LogQuery:
         device_id: str | None,
         context_id: str | None,
         end_time: str | None,
-        offset: int,
+        offset: int | str,
         compact: bool,
         level: str | None,
         slug: str | None,
@@ -32,6 +74,7 @@ class LogQuery:
         structured: bool = False,
         top_n: int | None = None,
     ) -> dict[str, Any]:
+        numeric_offset = offset if isinstance(offset, int) else 0
         if source == "logbook":
             return cast(
                 dict[str, Any],
@@ -42,7 +85,7 @@ class LogQuery:
                     context_id=context_id,
                     end_time=end_time,
                     limit=limit,
-                    offset=offset,
+                    offset=numeric_offset,
                     search=search,
                     compact=compact,
                     order=order,
@@ -82,7 +125,7 @@ class LogQuery:
             return cast(
                 dict[str, Any],
                 await self._get_fault_log(
-                    limit=limit, search=search, offset=offset, order=order
+                    limit=limit, search=search, offset=numeric_offset, order=order
                 ),
             )
         if source == "system_service":
@@ -111,7 +154,7 @@ class LogQuery:
         device_id: str | None,
         context_id: str | None,
         end_time: str | None,
-        offset: int,
+        offset: int | str,
         compact: bool,
         level: str | None,
         slug: str | None,
@@ -120,6 +163,7 @@ class LogQuery:
         top_n: int | None = None,
     ) -> dict[str, Any]:
         level = _validate_log_level(level)
+        offset = _validate_log_offset(source, offset)
         warnings = _collect_log_warnings(
             source,
             level,

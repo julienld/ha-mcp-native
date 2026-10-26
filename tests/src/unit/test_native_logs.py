@@ -25,12 +25,17 @@ from .test_native_engine_backend import authorize
 from .test_native_engine_backend import native as native
 
 
+def _log_line(kind: str, index: int) -> str:
+    return f"2026-10-25 10:00:00.000 ERROR (MainThread) [native.test] {kind} {index}"
+
+
 class _SupervisorResponse:
     status = 200
 
-    def __init__(self, world: Any, text: str) -> None:
+    def __init__(self, world: Any, text: str, cursor: str | None) -> None:
         self.world = world
         self.value = text
+        self.headers = {"X-First-Cursor": cursor} if cursor else {}
 
     async def __aenter__(self) -> Any:
         return self
@@ -74,6 +79,7 @@ async def logs(
     native: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log_url_library: Any
 ) -> Any:
     world = SimpleNamespace(
+        journal_entries=[_log_line("journal", index) for index in range(300)],
         entries=[
             {
                 "name": "native.example",
@@ -100,7 +106,8 @@ async def logs(
 
     path = tmp_path / "core.log"
     path.write_text(
-        "\n".join(f"line {index}" for index in range(10)) + "\n", encoding="utf-8"
+        "\n".join(_log_line("line", index) for index in range(300)) + "\n",
+        encoding="utf-8",
     )
     hass = SimpleNamespace(
         data={
@@ -162,12 +169,19 @@ async def logs(
 
     def request(method: str, url: Any, **kwargs: Any) -> _SupervisorResponse:
         world.requests.append((method, url, kwargs))
-        match = re.fullmatch(r"entries=:(-?\d+):(\d+)", kwargs["headers"]["Range"])
+        match = re.fullmatch(
+            r"entries=([^:]*):(-?\d+):(\d+)", kwargs["headers"]["Range"]
+        )
         assert match is not None
-        skip, count = map(int, match.groups())
-        all_lines = [f"journal {index}" for index in range(10)]
-        start = max(0, len(all_lines) - 1 + skip)
-        return _SupervisorResponse(world, "\n".join(all_lines[start : start + count]))
+        cursor, skip_value, count_value = match.groups()
+        skip, count = int(skip_value), int(count_value)
+        all_lines = world.journal_entries
+        anchor = int(cursor[1:]) if cursor else len(all_lines) - 1
+        start = max(0, anchor + skip)
+        block = all_lines[start : start + count]
+        return _SupervisorResponse(
+            world, "\n".join(block), f"e{start}" if block else None
+        )
 
     async def status(response: Any) -> None:
         assert response.status == 200
@@ -255,13 +269,19 @@ async def test_core_configured_file_pages_from_tail_without_skipping_lines(
 ) -> None:
     first = await _get(logs, source="error_log", limit=2)
     assert not first.is_error, first.data
-    assert first.data["log"].splitlines() == ["line 9", "line 8"]
+    assert first.data["log"].splitlines() == [
+        _log_line("line", 299),
+        _log_line("line", 298),
+    ]
     assert first.data["has_more"] and first.data["next_offset"] == 2
     second = await _get(
         logs, source="error_log", limit=2, offset=first.data["next_offset"]
     )
-    assert second.data["log"].splitlines() == ["line 7", "line 6"]
-    last = await _get(logs, source="error_log", limit=2, offset=99)
+    assert second.data["log"].splitlines() == [
+        _log_line("line", 297),
+        _log_line("line", 296),
+    ]
+    last = await _get(logs, source="error_log", limit=2, offset=999)
     assert last.data["log"] == "" and not last.data["has_more"]
 
 
@@ -303,11 +323,24 @@ async def test_supervisor_uses_existing_transport_and_real_range_pagination(
     logs.hass.config.components.add("hassio")
     result = await _get(logs, source="error_log", limit=2)
     assert not result.is_error, result.data
-    assert result.data["log"].splitlines() == ["journal 9", "journal 8"]
+    assert result.data["log"].splitlines() == [
+        _log_line("journal", 299),
+        _log_line("journal", 298),
+    ]
     assert result.data["has_more"] and len(logs.world.requests) == 2
     assert all(request[1].path == "/core/logs" for request in logs.world.requests)
-    assert logs.world.requests[0][2]["headers"]["Range"] == "entries=:-1:2"
+    assert logs.world.requests[0][2]["headers"]["Range"] == "entries=:-201:202"
     assert logs.world.closed == 2
+    logs.world.journal_entries.append(_log_line("journal", 300))
+    second = await _get(
+        logs, source="error_log", limit=2, offset=result.data["next_offset"]
+    )
+    assert not second.is_error, second.data
+    assert second.data["log"].splitlines() == [
+        _log_line("journal", 297),
+        _log_line("journal", 296),
+    ]
+    assert logs.world.closed == len(logs.world.requests)
     app = await _get(logs, source="supervisor", slug="core_ssh", limit=2)
     assert (
         not app.is_error and logs.world.requests[-1][1].path == "/addons/core_ssh/logs"
@@ -422,3 +455,68 @@ async def test_cancelled_supervisor_read_retains_response_until_drain(
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 1)
     assert logs.world.closed == 1
+
+
+@pytest.mark.parametrize("supervised", [False, True])
+async def test_record_projection_and_journal_split_run_off_the_core_loop(
+    logs: Any, monkeypatch: pytest.MonkeyPatch, supervised: bool
+) -> None:
+    from ha_mcp.runtime import error_log_parsing, error_log_read, log_results
+
+    loop_thread = threading.get_ident()
+    split = error_log_parsing._split_log_records
+    calls = []
+
+    def checked(lines: list[str]) -> Any:
+        assert threading.get_ident() != loop_thread
+        calls.append(len(lines))
+        return split(lines)
+
+    monkeypatch.setattr(error_log_read, "_split_log_records", checked)
+    monkeypatch.setattr(log_results, "_split_log_records", checked)
+    if supervised:
+        logs.hass.config.components.add("hassio")
+        text = _SupervisorResponse.text
+
+        class OffLoopText(str):
+            def splitlines(self, keepends: bool = False) -> list[str]:
+                assert threading.get_ident() != loop_thread
+                return super().splitlines(keepends)
+
+        async def detached(response: Any) -> str:
+            return OffLoopText(await text(response))
+
+        monkeypatch.setattr(_SupervisorResponse, "text", detached)
+    result = await _get(logs, source="error_log", limit=2)
+    assert not result.is_error, result.data
+    assert calls and result.data["returned_records"] == 2
+
+
+@pytest.mark.parametrize("failure_code", ["RESOURCE_NOT_FOUND", "AUTH_FORBIDDEN"])
+async def test_native_widening_retains_first_page_only_for_read_failures(
+    logs: Any, monkeypatch: pytest.MonkeyPatch, failure_code: str
+) -> None:
+    from ha_mcp.runtime.log_window import ErrorLogPage
+    from ha_mcp.tool_api import ToolFailure
+
+    reader = importlib.import_module(
+        "custom_components.ha_mcp_tools.native_operations.log_files"
+    )
+    calls = []
+
+    async def read(_self: Any, lines: int, offset: int | str) -> ErrorLogPage:
+        calls.append(lines)
+        if len(calls) > 1:
+            raise ToolFailure(failure_code, "Read unavailable", status="not_started")
+        return ErrorLogPage("  older frame\n" + _log_line("new", 1), True)
+
+    monkeypatch.setattr(reader.NativeLogFiles, "error_log", read)
+    result = await _get(logs, source="error_log", limit=10)
+    assert len(calls) == 2 and calls[0] < calls[1] <= 2000
+    if failure_code == "AUTH_FORBIDDEN":
+        assert result.is_error and result.data["error"]["code"] == failure_code
+        assert "older frame" not in json.dumps(result.data)
+    else:
+        assert not result.is_error, result.data
+        assert any("wider read" in warning for warning in result.data["warnings"])
+        assert "new 1" in result.data["log"]

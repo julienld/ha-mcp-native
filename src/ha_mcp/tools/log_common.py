@@ -9,7 +9,6 @@ SYSTEM_SERVICE_SLUGS = _shared.SYSTEM_SERVICE_SLUGS
 DEFAULT_LOG_LIMIT = _shared.DEFAULT_LOG_LIMIT
 SUPERVISOR_SEARCH_WINDOW_LINES = _shared.SUPERVISOR_SEARCH_WINDOW_LINES
 MAX_LIMIT = _shared.MAX_LIMIT
-_LOG_LEVEL_RE = _shared._LOG_LEVEL_RE
 _compact_logbook_entries = _shared._compact_logbook_entries
 _coerce_limit = legacy_errors_sync(_shared._coerce_limit)
 

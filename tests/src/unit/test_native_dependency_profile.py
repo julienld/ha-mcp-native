@@ -46,12 +46,12 @@ def test_native_manifest_does_not_reactivate_optional_extra_graphs(
         "email-validator",
         "py-key-value-aio",
         "cachetools",
+        "joserfc",
     } <= parsed.keys()
     assert (
         not {
             "mcp",
             "authlib",
-            "joserfc",
             "httpx",
             "cryptography",
             "pyjwt",

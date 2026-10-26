@@ -33,6 +33,11 @@ def core_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     origin.write_text("")
     constraints = package / "package_constraints.txt"
     constraints.write_text("# Bootstrap constraints shipped by this image\n")
+    frontend = package / "components/frontend/manifest.json"
+    frontend.parent.mkdir(parents=True)
+    frontend.write_text(
+        json.dumps({"requirements": ["home-assistant-frontend==20260930.5"]})
+    )
     world = SimpleNamespace(core="2026.8.0", uv="0.11.31", constraints=constraints)
     world.distribution = SimpleNamespace(
         version=world.core,
@@ -106,6 +111,31 @@ def test_minimal_lane_installs_the_image_core_and_its_own_uv(
     proof = json.loads(core_image.output.read_text())
     assert proof["core_version"] == core_version
     assert proof["uv_version"] == uv_version
+
+
+def test_core_baseline_contains_only_its_exact_frontend_not_ha_mcp_dependencies(
+    core_image: Any,
+) -> None:
+    core_image.qualify()
+    bootstrap = core_image.run.call_args_list[0].args[0]
+    assert "home-assistant-frontend==20260930.5" in bootstrap
+    assert not any("joserfc" in arg or "ha-mcp" in arg for arg in bootstrap)
+    proof = json.loads(core_image.output.read_text())
+    assert proof["bootstrap_frontend"] == "home-assistant-frontend==20260930.5"
+
+
+@pytest.mark.parametrize(
+    "requirements", [["unrelated==1.0"], ["home-assistant-frontend>=1.0"], []]
+)
+def test_core_baseline_rejects_unexpected_frontend_manifest(
+    core_image: Any,
+    requirements: list[str],
+) -> None:
+    path = core_image.constraints.parent / "components/frontend/manifest.json"
+    path.write_text(json.dumps({"requirements": requirements}))
+    with pytest.raises(ValueError, match="frontend"):
+        core_image.qualify()
+    core_image.run.assert_not_called()
 
 
 def test_minimal_lane_rejects_bootstrap_constraints_from_another_core(

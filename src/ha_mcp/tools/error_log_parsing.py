@@ -23,3 +23,7 @@ __all__ = [
     "_get_component_prefix",
     "_parse_error_log_structured",
 ]
+
+_ERROR_LOG_HEADER_LOOKBACK_LINES = _shared._ERROR_LOG_HEADER_LOOKBACK_LINES
+
+_split_log_records = _shared._split_log_records

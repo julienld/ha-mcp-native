@@ -54,7 +54,6 @@ _STANDALONE_ONLY = frozenset(
         "watchfiles",
         "pywin32",
         "authlib",
-        "joserfc",
         "jsonschema-path",
         "openapi-pydantic",
     }

@@ -11,9 +11,11 @@ Split out of ``tools_utility`` under `.gemini/styleguide.md` § Tool
 Consolidation and Module Size.
 """
 
+import logging
 from typing import Any, Literal
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.runtime.error_log_read import wider_error_log_window
 from ha_mcp.runtime.log_results import (
     _SYSTEM_LOG_MESSAGE_CAP,
     LogResults,
@@ -33,6 +35,8 @@ from .log_common import (
     _addon_auth_error_suggestions,
     _coerce_limit,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CoreLogSourcesMixin(LogResults):
@@ -98,7 +102,7 @@ class CoreLogSourcesMixin(LogResults):
         search: str | None = None,
         level: str | None = None,
         order: Literal["newest", "oldest"] = "newest",
-        offset: int = 0,
+        offset: int | str = 0,
         structured: bool = False,
         top_n: int | None = None,
     ) -> dict[str, Any]:
@@ -119,6 +123,27 @@ class CoreLogSourcesMixin(LogResults):
         try:
             fetch_lines = _error_log_window_lines(limit, search, level, structured)
             page = await self._client.get_error_log(lines=fetch_lines, offset=offset)
+            refetch_failed = False
+            wider = (
+                fetch_lines if structured else wider_error_log_window(page, fetch_lines)
+            )
+            if wider > fetch_lines:
+                try:
+                    page = await self._client.get_error_log(lines=wider, offset=offset)
+                    fetch_lines = wider
+                except (
+                    HomeAssistantConnectionError,
+                    HomeAssistantAPIError,
+                    HomeAssistantAuthError,
+                    TimeoutError,
+                    OSError,
+                ) as error:
+                    logger.warning(
+                        "error_log: wider read for a record header failed (%s); "
+                        "continuing with the first window",
+                        type(error).__name__,
+                    )
+                    refetch_failed = True
             return self.error_log_result(
                 page,
                 fetch_lines,
@@ -129,6 +154,7 @@ class CoreLogSourcesMixin(LogResults):
                 offset,
                 structured,
                 top_n,
+                refetch_failed,
             )
 
         except ToolError:

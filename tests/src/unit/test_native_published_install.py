@@ -358,10 +358,15 @@ def test_published_lane_uses_same_full_bench_without_preinstall_or_manifest_rewr
         (ROOT / ".github/workflows/native-migration.yml").read_text()
     )
     jobs = workflow["jobs"]
-    assert "!inputs.published_tag" in jobs["unit"]["if"]
-    assert "!inputs.published_tag" in jobs["package"]["if"]
-    assert "workflow_dispatch" in jobs["published"]["if"]
-    assert "inputs.published_tag != ''" in jobs["published"]["if"]
+    for name in ("unit", "package"):
+        assert (
+            jobs[name]["if"]
+            == "${{ needs.select-qualification.outputs.route == 'native' }}"
+        )
+    assert (
+        jobs["published"]["if"]
+        == "${{ needs.select-qualification.outputs.route == 'published' }}"
+    )
     commands = [step.get("run", "") for step in jobs["published"]["steps"]]
     assert any("run_container.py --published-tag" in command for command in commands)
     assert any("--target published" in command for command in commands)

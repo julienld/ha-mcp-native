@@ -1,9 +1,10 @@
 # Isolated HACS owner qualification
 
-Status: **implemented, not yet run against Core**. On 2026-10-26 UTC the local
-Windows preflight found no Docker executable. No workflow was dispatched and no
-tag, release, package or image was published. A green local protocol test is not
-a live Home Assistant qualification.
+Status: **first runner attempt failed during bootstrap; local repair awaits a
+new checkpoint/run**. On 2026-10-26 UTC, [run 40264628510](https://github.com/julienld/ha-mcp-native/actions/runs/40264628510)
+at `1a9cdadef8c5661b4f09dbbadc7866bd1bd78a52` failed in both topologies,
+before any HACS qualification check. Local Windows has no Docker executable.
+A green local protocol test is not a live Home Assistant qualification.
 
 This lane fills the gap left by `tests/native/hacs_checks.py`, which proves only
 HACS absence. It reuses the native candidate image, fixture identities, real HA
@@ -32,7 +33,13 @@ fixture, production adapter or self-updater.
   run. No GitHub credential is needed. The literal HACS token is dummy text.
 - Runtime has `docker --network none`, no published port and no host bind mount.
   The driver runs through `docker exec` in the same disposable container. Image
-  build downloads are setup, before isolation. Config, identities and auth tokens
+  build downloads are setup, before isolation. The build installs the requirements
+  of the actual HACS and candidate component manifests using Core's installer and
+  constraints, skips satisfied requirements and rechecks the whole set. It adds
+  no bench-specific replacement for a missing native manifest requirement.
+  Core's `core.network` store selects the real `lo` interface before startup;
+  neither Core's resolver nor its Zeroconf implementation is replaced.
+  Config, identities and auth tokens
   never leave the container. Only scoped observations and logs are copied out.
 - The installed subject is the explicit `qualification_dummy` integration, with
   fixture versions 1.0.0, 2.0.0 and 3.0.0. These are **not HA-MCP releases**. HA-MCP
@@ -60,7 +67,7 @@ that an installed HA-MCP version is active.
 
 ## Execute after the parent's checkpoint
 
-The workflow has only `workflow_dispatch` and `contents: read`; it contains no
+The workflow has `workflow_dispatch`, `workflow_call` and `contents: read`; it contains no
 personal repository name, ownership guard or permanent restriction to forks.
 The current task still requires the parent to execute on the authorized public
 fork. No workflow dispatch has been performed by this sub-agent.
@@ -104,25 +111,56 @@ fixture. Do not aim it at an existing/personal Home Assistant.
 
 ## Local validation
 
-This tests the actual HTTP fixture with both real aiogithubapi clients and proves
-the archive fault occurs after a first write. It does not import or stub HACS or
-Home Assistant:
+The complete `ha.log` and `exercise.log` artifacts from **both** failed jobs were
+read, along with their evidence/isolation records and the external job failure
+log. Both failures have the same causes:
+
+- Core's aiohttp resolver creates Zeroconf for Analytics and HACS. Automatic
+  adapter selection leaves no enabled adapter in `--network none`; Zeroconf
+  tries default multicast membership and raises `OSError: [Errno 19] No such
+  device`. Selecting `lo` in Core's persisted network preferences avoids that
+  default-interface branch. Core itself filters loopback from multicast source
+  addresses. This follows the unchanged tagged
+  [network selection](https://github.com/home-assistant/core/blob/2026.10.4/homeassistant/components/network/util.py),
+  [Zeroconf arguments](https://github.com/home-assistant/core/blob/2026.10.4/homeassistant/components/zeroconf/__init__.py)
+  and [socket construction](https://github.com/python-zeroconf/python-zeroconf/blob/0.151.5/src/zeroconf/_utils/net.py).
+- `ruamel.yaml>=0.18.0` is declared by the component but absent from the candidate
+  image. Core attempts installation after isolation; DNS retries exhaust the
+  driver's config-flow deadline. The dedicated image now processes both manifests
+  before isolation, including the candidate's generated native requirements.
+
+The `AssertionError` is in this fixture's `started()` callback, after Core's
+`async_set_disabled_by()` returns the failed HACS reload result. It is retained:
+it is a symptom of the resolver failure, not a reason to weaken owner checks.
+No product bug outside the bench was confirmed by these traces. `checks` remains
+empty and `complete` false in the original artifacts; none were rewritten.
+
+The bootstrap regression failed locally before the fix (`core.network` absent),
+then passed. Build-policy tests cover missing requirements, preserving satisfied
+packages, installer failure and a later install invalidating an earlier
+requirement. These use an installer stand-in; the actual Docker build and Linux
+Core startup still require the parent's runner. The HTTP tests use both real
+aiogithubapi clients and prove the archive fault occurs after a first write.
+
+Local setup and tests with the existing Windows venv, without modifying that venv
+or running `uv sync`:
 
 ```powershell
-uv run --no-project --with aiogithubapi==26.0.0 --with pytest==8.4.2 --with pytest-asyncio==1.1.0 --with pytest-timeout==2.4.0 pytest tests/native/qualification_hacs/test_content.py --timeout-method=thread -o addopts='' -q
+uv pip install --python .venv/Scripts/python.exe --target local/qualification-1a9/hacs-test-deps --no-deps aiogithubapi==26.0.0 backoff==2.2.1
+$env:PYTHONPATH = (Resolve-Path local/qualification-1a9/hacs-test-deps).Path
+.venv/Scripts/python.exe -m pytest tests/native/qualification_hacs --timeout-method=thread -o addopts='' -q
 ```
 
-Observed: **3 passed**. The first attempts correctly failed on an obsolete
-aiogithubapi minimum (missing transitive async_timeout) and an unmodelled
-`/branches/main` request. Pinning Core's actual client dependency and implementing
-that endpoint fixed these failures. No live-owner claim follows from this result.
+Observed after repair: **7 passed**. Ruff check/format and compilation passed for
+this directory. No workflow, owner implementation, update service or provenance
+check was changed; no dispatch, index, commit or push was performed by this repair.
 
-The existing candidate boundary tests were also run locally with the ready
+Before the first runner attempt, the candidate boundary tests were run with the ready
 Windows `.venv`, `pytest --timeout-method=thread`: **106 passed** across
 `test_native_hacs.py`, `test_native_marketplace.py`, `test_native_self_update.py`,
 `test_self_update_provenance.py`, and `test_hacs_cache_bridge.py`. They use their
-existing stand-ins and are strictly unit evidence. Ruff, Python compilation and
-the manual workflow YAML structure were checked for the newly added files.
+existing stand-ins and are strictly historical unit evidence, not a revalidation
+of concurrent parent changes.
 
 ## Remaining qualification and publication requirements
 

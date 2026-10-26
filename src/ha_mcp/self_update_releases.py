@@ -26,10 +26,11 @@ def _declares_breaking(notes: str) -> bool:
     return bool(
         re.search(
             r"\bbreaking[\s_:-]+changes?\b|\bbackwards? incompatible\b|"
+            r"\bbreaking[ \t]*:|^[ \t]*#{1,6}[ \t]+breaking[ \t]*(?:#+[ \t]*)?\r?$|"
             r"\b(?:connection URL|authentication|runtime|distribution|data format)\b[^\n.]{0,80}\b(?:changed|required migration|must migrate|removed)\b|"
             r"\b(?:must migrate|migration required)\b",
             notes,
-            re.I,
+            re.I | re.M,
         )
     )
 

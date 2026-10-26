@@ -1,6 +1,6 @@
 """Run with python -m tests.native.minimal_qualification inside a Linux Core image.
 
-This installs only the Core distribution in a fresh isolated venv. It does not
+This installs Core and its exact frontend in a fresh isolated venv. It does not
 inherit the image's requirements_all environment or claim public-URL proof.
 """
 
@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tomllib
@@ -71,6 +72,20 @@ def run_logged(command: list[str], *, env: dict[str, str], log: Path) -> None:
         raise RuntimeError(f"Minimal qualification command failed; see {log.name}")
 
 
+def core_frontend_requirement(core_directory: Path) -> str:
+    """Keep the UI shipped with the selected Core in the Core bootstrap phase."""
+    manifest = core_directory / "components/frontend/manifest.json"
+    requirements = json.loads(manifest.read_bytes()).get("requirements")
+    if (
+        not isinstance(requirements, list)
+        or len(requirements) != 1
+        or not isinstance(requirements[0], str)
+        or not re.fullmatch(r"home-assistant-frontend==\d+(?:\.\d+)+", requirements[0])
+    ):
+        raise ValueError("Core frontend must declare its single exact distribution")
+    return requirements[0]
+
+
 def qualify(
     assets: Path,
     work: Path,
@@ -125,6 +140,7 @@ def qualify(
         raise RuntimeError("Bootstrap constraints do not belong to the installed Core")
     core_version = distribution.version
     uv_version = importlib.metadata.distribution("uv").version
+    frontend_requirement = core_frontend_requirement(constraints.parent)
     work.mkdir(parents=True, exist_ok=False)
     output.parent.mkdir(parents=True, exist_ok=True)
     log = output.with_suffix(".log")
@@ -133,6 +149,7 @@ def qualify(
     proof.update(
         {
             "core_version": core_version,
+            "bootstrap_frontend": frontend_requirement,
             "uv_version": uv_version,
             "interpreter": {
                 "executable": sys.executable,
@@ -145,7 +162,7 @@ def qualify(
                 constraints.read_bytes()
             ).hexdigest(),
             "old_certifi_seed": CERTIFI_BASELINE,
-            "bootstrap_policy": "pip_Core_baseline_under_image_constraints_then_old_certifi_seed; uv_cutoff_applies_to_native_install",
+            "bootstrap_policy": "pip_Core_and_exact_Core_frontend_under_image_constraints_then_old_certifi_seed; uv_cutoff_applies_to_native_install",
         }
     )
     save(output, proof)
@@ -163,6 +180,7 @@ def qualify(
                 "--constraint",
                 str(constraints),
                 f"homeassistant=={core_version}",
+                frontend_requirement,
                 f"uv=={uv_version}",
             ],
             env=env,

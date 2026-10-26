@@ -270,3 +270,67 @@ async def test_shared_result_filter_redacts_after_visibility_without_changing_ou
         and result.status == "unknown"
         and result.operation_id == "operation"
     )
+
+
+def test_native_prewarm_routes_sdk_logs_without_legacy_state_or_core_handler_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging
+
+    from ha_mcp import config, log_filters
+
+    class WarmupReachedSettings(Exception):
+        pass
+
+    logger = logging.getLogger("fastmcp")
+    root = logging.getLogger()
+    original = logger.handlers[:], logger.propagate, logger.level, logger.filters[:]
+    root_handlers = root.handlers[:]
+    root_filters = [handler.filters[:] for handler in root_handlers]
+    embedded = config._EMBEDDED_CONNECTION
+    marker = logging.Filter()
+    sdk_loggers = [
+        logging.getLogger(name)
+        for name in ("mcp.server.streamable_http", "mcp.server.streamable_http_manager")
+    ]
+    old_filters = [item.filters[:] for item in sdk_loggers]
+
+    def imports(name: str) -> object:
+        if name == "ha_mcp.settings_ui":
+            raise WarmupReachedSettings
+        if name == "ha_mcp.log_filters":
+            return log_filters
+        return SimpleNamespace()
+
+    monkeypatch.setattr(native_server, "bind_native_generation", lambda: None)
+    monkeypatch.setattr(native_server.importlib, "import_module", imports)
+    try:
+        logger.handlers[:] = [logging.NullHandler()]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        logger.filters[:] = [marker]
+        with pytest.raises(WarmupReachedSettings):
+            native_server._prewarm()
+        assert logger.propagate and not logger.handlers
+        assert logger.level == logging.NOTSET
+        assert logger.filters == [marker]
+        assert config._EMBEDDED_CONNECTION is embedded
+        logger.setLevel(logging.DEBUG)  # Core's logger integration now owns it.
+        with pytest.raises(WarmupReachedSettings):
+            native_server._prewarm()
+        assert logger.level == logging.DEBUG
+        assert root.handlers == root_handlers
+        assert [handler.filters for handler in root_handlers] == root_filters
+        for item, kind in zip(
+            sdk_loggers,
+            (
+                log_filters.StatelessSessionLogFilter,
+                log_filters.SessionDisconnectLogFilter,
+            ),
+            strict=True,
+        ):
+            assert sum(isinstance(value, kind) for value in item.filters) == 1
+    finally:
+        logger.handlers[:], logger.propagate, logger.level, logger.filters[:] = original
+        for item, filters in zip(sdk_loggers, old_filters, strict=True):
+            item.filters[:] = filters

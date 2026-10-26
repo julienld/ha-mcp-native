@@ -58,6 +58,10 @@ def _prewarm() -> bool:
     importlib.import_module(f"{__package__}.native_backend")
     importlib.import_module(f"{__package__}.native_catalog")
     importlib.import_module("ha_mcp._vendor.fastmcp")
+    # FastMCP installs its private handler during import. Route it once, before
+    # the host starts, without setting legacy connection state. Core keeps the
+    # process logging after unload; restoring a private handler would bypass it.
+    importlib.import_module("ha_mcp.log_filters").install_sdk_log_filters(embedded=True)
     importlib.import_module("ha_mcp.settings_ui")
     importlib.import_module("ha_mcp.policy.handlers")
     importlib.import_module(f"{__package__}.native_visibility")

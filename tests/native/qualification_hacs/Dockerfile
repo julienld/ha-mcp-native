@@ -13,6 +13,19 @@ with zipfile.ZipFile(io.BytesIO(data)) as bundle:
     bundle.extractall('/opt/native/custom_components/hacs')
 assert install_package('aiogithubapi==26.0.0', constraints='/usr/src/homeassistant/homeassistant/package_constraints.txt')
 PY
+COPY tests/native/qualification_hacs/image_dependencies.py /opt/qualification/image_dependencies.py
+RUN python - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, '/opt/qualification')
+from image_dependencies import install_manifest_requirements
+# The candidate stage installs only the wheel. Resolve the unchanged HACS
+# and candidate component manifests now, before the runtime loses networking.
+install_manifest_requirements(
+    Path('/opt/native/custom_components'),
+    Path('/usr/src/homeassistant/homeassistant/package_constraints.txt'),
+)
+PY
 COPY tests/native/*.py /opt/qualification/native/
 COPY tests/native/qualification_hacs/fixture /opt/native/custom_components/qualification_hacs_fixture
 COPY tests/native/qualification_hacs/bootstrap.py tests/native/qualification_hacs/driver.py tests/native/qualification_hacs/checks.py /opt/qualification/

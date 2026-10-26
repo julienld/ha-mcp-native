@@ -8,7 +8,6 @@ import logging
 import os
 import ssl
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
@@ -29,6 +28,13 @@ from ..errors import HomeAssistantConnectionError as HomeAssistantConnectionErro
 from ..errors import HomeAssistantError as HomeAssistantError
 from ..runtime.automation_identity import automation_write_body
 from .admin_routes import is_admin_only_route
+from .error_log_journald import (
+    JournaldPage,
+    container_page,
+    first_cursor,
+    journald_page,
+    range_header,
+)
 from .models import ErrorLogPage
 from .supervisor_client import make_supervisor_httpx_client
 
@@ -804,33 +810,26 @@ class HomeAssistantClient:
         logger.debug("Checking configuration")
         return await self._request("POST", "/config/core/check_config")
 
-    _journald_range_header = staticmethod(_log_window._journald_range_header)
+    async def _supervisor_core_logs(self, range_header: str) -> JournaldPage:
+        """Fetch one journald window straight from Supervisor, with its cursor."""
+        response = await self._supervisor_logs_response(
+            "core",
+            headers={"Accept": "text/plain", "Range": range_header},
+            params={"no_colors": "true"},
+        )
+        return JournaldPage(response.text, first_cursor(response))
 
-    _container_error_log_page = staticmethod(_log_window._container_error_log_page)
-
-    async def _supervisor_core_logs(self, lines: int, offset: int) -> str:
-        """Fetch a journald window of HA Core's log straight from Supervisor."""
-        return await self._supervisor_logs_get("core", lines=lines, offset=offset)
-
-    async def _proxied_core_logs(self, lines: int, offset: int) -> str:
-        """Fetch the same window through HA Core's hassio proxy with the LLA."""
+    async def _proxied_core_logs(self, range_header: str) -> JournaldPage:
+        """The same window through HA Core's hassio proxy."""
         response = await self._raw_request(
             "GET",
             "/hassio/core/logs",
-            headers={
-                "Accept": "text/plain",
-                "Range": self._journald_range_header(lines, offset),
-            },
+            headers={"Accept": "text/plain", "Range": range_header},
             params={"no_colors": "true"},
         )
-        return response.text
+        return JournaldPage(response.text, first_cursor(response))
 
-    async def _journald_error_log_page(
-        self, lines: int, offset: int, fetch: Callable[[int, int], Awaitable[str]]
-    ) -> ErrorLogPage:
-        return await _log_window._journald_error_log_page(lines, offset, fetch)
-
-    async def get_error_log(self, lines: int, offset: int = 0) -> ErrorLogPage:
+    async def get_error_log(self, lines: int, offset: int | str = 0) -> ErrorLogPage:
         """Get a bounded window of the Home Assistant error log.
 
         ``lines`` is the number of log lines to fetch and ``offset`` how many
@@ -867,15 +866,14 @@ class HomeAssistantClient:
           keep the historical ``/api/error_log`` proxy path.
 
         The two Supervisor-backed branches express the window as a journald
-        ``Range`` header (see ``_journald_range_header``) and settle
-        ``has_more`` with a one-entry probe (see ``_journald_error_log_page``).
-        HA Core's hassio proxy forwards that header for its log paths
-        (``PATHS_LOGS`` in ``homeassistant/components/hassio/http.py``); an
-        intermediary that stripped it would degrade to Supervisor's 100-line
-        default, never to an unbounded fetch, and the probe still terminates
-        paging. ``/api/error_log`` is a whole-file plain-text endpoint with no
-        window support, so the container branch reads the file and applies the
-        same window client-side, where paging is exact.
+        ``Range`` header, either anchored on the newest entry (integer
+        ``offset``) or on an opaque cursor token from an earlier page; see
+        :mod:`ha_mcp.client.error_log_journald`. Working from Supervisor's
+        ``X-First-Cursor`` keeps a page stable while Home Assistant logs more
+        lines between two calls. ``/api/error_log`` is a whole-file plain-text
+        endpoint with no window support, so the container branch reads the file
+        and applies the same window client-side, where paging is exact and
+        integer offsets stay the contract.
 
         The middle branch was discovered by the HAOS E2E tier (#1326): the
         test harness runs ha-mcp externally against a booted HAOS, hits
@@ -898,7 +896,7 @@ class HomeAssistantClient:
                     logger.debug(
                         "Fetching error log via Supervisor direct (core service)"
                     )
-                    return await self._journald_error_log_page(
+                    return await journald_page(
                         window, offset, self._supervisor_core_logs
                     )
 
@@ -907,15 +905,18 @@ class HomeAssistantClient:
                         "Fetching error log via HA Core /hassio/core/logs proxy "
                         "(supervised)"
                     )
-                    return await self._journald_error_log_page(
-                        window, offset, self._proxied_core_logs
-                    )
+                    return await journald_page(window, offset, self._proxied_core_logs)
 
+                if isinstance(offset, str):
+                    raise HomeAssistantAPIError(
+                        "Cursor-token paging needs a Supervisor-backed install; "
+                        "the container /api/error_log endpoint has no cursor"
+                    )
                 logger.debug("Fetching error log via HA Core proxy (Container/pip)")
                 raw_response = await self._raw_request(
                     "GET", "/error_log", headers={"Accept": "text/plain"}
                 )
-                return self._container_error_log_page(raw_response.text, window, offset)
+                return container_page(raw_response.text, window, offset)
         except TimeoutError as e:
             raise HomeAssistantConnectionError(
                 f"Timeout fetching the error log after {self.timeout}s: "
@@ -1122,6 +1123,34 @@ class HomeAssistantClient:
             HomeAssistantConnectionError: Timeout or transport error, with
                 distinct messages so callers can tell them apart.
         """
+        headers = {"Accept": "text/plain"}
+        # Presence-triggered flag: journald output carries ANSI escapes otherwise.
+        params: dict[str, Any] = {"no_colors": "true"}
+        if lines is not None:
+            params["lines"] = lines
+        if offset is not None:
+            # An offset window with no size asked for falls back to the
+            # smallest one the Range syntax can express.
+            size = lines if lines is not None else MIN_LOG_WINDOW_LINES
+            headers["Range"] = range_header(size, offset)
+            params.pop("lines", None)
+        logger.debug(
+            "Fetching %s/%s/logs via Supervisor direct (%s)",
+            get_supervisor_base_url(),
+            path,
+            f"range={headers['Range']}" if offset is not None else f"lines={lines}",
+        )
+        response = await self._supervisor_logs_response(path, headers, params)
+        return response.text
+
+    async def _supervisor_logs_response(
+        self, path: str, headers: dict[str, str], params: dict[str, Any]
+    ) -> httpx.Response:
+        """Send one Supervisor ``/logs`` request and map its failures.
+
+        Split from ``_supervisor_logs_get`` so the error-log route can read
+        Supervisor's ``X-First-Cursor`` while plain-text callers keep the body.
+        """
         token = os.environ.get("SUPERVISOR_TOKEN", "")
         if not token:
             # The is_running_in_addon() gate already keys off SUPERVISOR_TOKEN
@@ -1132,25 +1161,7 @@ class HomeAssistantClient:
                 f"Supervisor token absent at call time for /{path}/logs "
                 "(addon-mode gate fired but SUPERVISOR_TOKEN env var not set)"
             )
-
         relative_path = f"/{path}/logs"
-        headers = {"Accept": "text/plain"}
-        # Presence-triggered flag: journald output carries ANSI escapes otherwise.
-        params: dict[str, Any] = {"no_colors": "true"}
-        if lines is not None:
-            params["lines"] = lines
-        if offset is not None:
-            # An offset window with no size asked for falls back to the
-            # smallest one the Range syntax can express.
-            size = lines if lines is not None else MIN_LOG_WINDOW_LINES
-            headers["Range"] = self._journald_range_header(size, offset)
-            params.pop("lines", None)
-        logger.debug(
-            "Fetching %s%s via Supervisor direct (%s)",
-            get_supervisor_base_url(),
-            relative_path,
-            f"range={headers['Range']}" if offset is not None else f"lines={lines}",
-        )
 
         try:
             async with asyncio.timeout(self.timeout):
@@ -1206,7 +1217,7 @@ class HomeAssistantClient:
                 status_code=response.status_code,
                 response_data={"message": text_body, "path": path},
             )
-        return response.text
+        return response
 
     async def _get_addon_logs_via_supervisor(
         self, slug: str, lines: int | None = None

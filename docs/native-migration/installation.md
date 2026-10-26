@@ -63,8 +63,10 @@ ordinary PyPI distribution.
 
 Qualification uses Core's normal installer and constraints, with dependency
 observations before installation, after setup and after a complete Core restart.
-The minimal Core lane also observes each manifest root and declared integration
-dependency. Check every installed distribution, compare each observation to the
+The minimal Core lane starts with Core and the exact frontend declared by that
+Core image, then seeds an older permitted certifi. It does not inherit the image's
+complete integration dependencies. It observes each manifest root and declared
+integration dependency. Check every installed distribution, compare each observation to the
 baseline and its predecessor, and retain existing conflicts separately from new
 ones.
 

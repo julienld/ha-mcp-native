@@ -7,11 +7,19 @@ from .error_log_parsing import (
     _EMPTY_FETCH_WARNING,
     _attach_error_log_pagination,
     _ErrorLogWindow,
+    _filter_log_records,
+    _LogRecord,
     _next_page_step,
     _parse_error_log_structured,
+    _RecordPage,
+    _reopen_at_record_end,
+    _select_error_log_page,
+    _split_log_records,
+    _strip_ansi,
+    _TruncatedRecord,
 )
 from .integration_logs import normalize_log_level
-from .log_common import _LOG_LEVEL_RE, DEFAULT_LOG_LIMIT, _coerce_limit
+from .log_common import DEFAULT_LOG_LIMIT, MAX_LIMIT, _coerce_limit
 from .log_window import ErrorLogPage
 
 # system_log keeps a message verbatim, so one warning that reprs a binary
@@ -70,6 +78,104 @@ def _cap_system_log_messages(entries: list[Any]) -> int:
                     parts.append(part)
             entry["message"] = parts
     return capped
+
+
+def _leading_tail_policy(
+    *,
+    window: _ErrorLogWindow,
+    leading_record: _LogRecord | None,
+    page: _RecordPage,
+    matches: list[_LogRecord],
+    search: str | None,
+    refetch_failed: bool,
+) -> tuple[bool, bool]:
+    """Decide what to do with a window that opens inside a record.
+
+    Returns ``(held_back, header_out_of_reach)``.
+
+    Holding the tail back only pays off when the next window can reach its
+    header, so a record longer than a whole fetch window is returned as a
+    partial instead. The tail is only a candidate when the filters could
+    select it: ``search`` has to hit one of its lines, while a ``level`` read
+    cannot tell because the level lives in the missing header.
+    """
+    if leading_record is None or not window.has_more or refetch_failed:
+        return False, False
+    search_hits_tail = search is None or any(
+        search.lower() in _strip_ansi(line).lower() for line in leading_record.lines
+    )
+    header_reachable = leading_record.line_count < window.fetch_lines
+    if not header_reachable:
+        return False, page.leading_partial
+    held_back = search_hits_tail and len(page.records) == len(matches)
+    return held_back, False
+
+
+def _raw_error_log_warnings(
+    *,
+    held_back: bool,
+    header_out_of_reach: bool,
+    level: str | None,
+    refetch_failed: bool,
+    leading_partial: bool,
+    truncated: _TruncatedRecord | None,
+    effective_limit: int,
+) -> list[str]:
+    """Warnings that explain what one raw error-log page did and did not include."""
+    warnings: list[str] = []
+    if held_back:
+        subject = (
+            "The oldest record at this window's edge"
+            if level
+            else "The oldest matching record"
+        )
+        warnings.append(
+            f"{subject} opens before this window; it is "
+            "held back so the next page can return it whole with its header."
+        )
+    if refetch_failed:
+        warnings.append(
+            "The wider read that would have brought the oldest record's "
+            "header failed; this page is the first window only."
+        )
+    if leading_partial:
+        if header_out_of_reach:
+            gate = "the record is longer than one fetch window"
+        elif refetch_failed:
+            gate = "a wider read failed before reaching it"
+        else:
+            gate = "it lies outside the fetched history"
+        subject = (
+            "The oldest lines at this window's edge are"
+            if level
+            else "The oldest matched lines are"
+        )
+        warnings.append(
+            f"{subject} the tail of a record whose "
+            f"header could not be included because {gate}; they are "
+            "returned as a partial record."
+        )
+    if truncated is not None:
+        cut = truncated.total_lines - truncated.returned_lines
+        kept = (
+            "only its header"
+            if truncated.returned_lines <= 1
+            else f"its header and last {truncated.returned_lines - 1} lines"
+        )
+        if truncated.total_lines <= MAX_LIMIT:
+            warnings.append(
+                f"The newest record is {truncated.total_lines} lines; "
+                f"'limit'={effective_limit} returned {kept} and cut {cut} "
+                f"from the middle. Repeat with "
+                f"limit={truncated.total_lines} to return it whole."
+            )
+        else:
+            warnings.append(
+                f"The newest record is {truncated.total_lines} lines, "
+                f"longer than the per-call maximum ({MAX_LIMIT}); {cut} "
+                "lines were cut."
+            )
+    return warnings
 
 
 class LogResults:
@@ -139,35 +245,6 @@ class LogResults:
             )
         return result
 
-    @staticmethod
-    def _filter_error_log_lines(
-        lines: list[str], search: str | None, level: str | None
-    ) -> tuple[list[tuple[int, str]], dict[str, str]]:
-        """Filter window lines, keeping each survivor's index in the window.
-
-        The index is what makes paging exact: the next page has to resume where
-        the returned block starts, not a whole window further back, or a filter
-        that drops most of a window silently skips everything it dropped.
-        """
-        indexed = list(enumerate(lines))
-        filters_applied: dict[str, str] = {}
-
-        if level:
-
-            def _line_has_level(ln: str, target: str) -> bool:
-                m = _LOG_LEVEL_RE.search(ln)
-                return m is not None and m.group(1).upper() == target
-
-            indexed = [(i, ln) for i, ln in indexed if _line_has_level(ln, level)]
-            filters_applied["level"] = level
-
-        if search:
-            search_lower = search.lower()
-            indexed = [(i, ln) for i, ln in indexed if search_lower in ln.lower()]
-            filters_applied["search"] = search
-
-        return indexed, filters_applied
-
     def _build_raw_error_log(
         self,
         raw_log: str,
@@ -176,50 +253,110 @@ class LogResults:
         effective_limit: int,
         order: Literal["newest", "oldest"],
         window: _ErrorLogWindow,
-    ) -> tuple[dict[str, Any], int]:
-        """Return the most recent matching lines, plus the next page's step.
+        refetch_failed: bool = False,
+    ) -> tuple[dict[str, Any], int, int, bool]:
+        """Return the most recent matching records, plus both next-page anchors.
 
-        The step is how far back ``offset`` must move to resume just before the
-        oldest line returned here. ``effective_limit`` arrives already coerced:
-        the caller needs the same value for the pagination hint, and the
-        summary path must not coerce it at all.
+        Records are the unit: ``search`` matches any line of a record and
+        ``level`` matches its header, then whole records are selected within
+        the caller's line budget. ``order`` controls display direction only
+        (the selected window is always the most recent one); a record's own
+        lines never reverse.
+
+        Two anchors come back, because the two install classes page
+        differently. The integer step resumes just before the oldest returned
+        record counted from the newest line, which is what ``offset`` means on
+        container installs. The cursor skip counts entries forward from the
+        fetched window's first cursor, which is what a journald token means:
+        nothing fetched behind the page is lost and nothing returned is
+        repeated, since the next block ends exactly one entry behind the
+        resume point. Core's journald stream carries one entry per output line
+        (even a split long line arrives as one line per entry), so a line index
+        in the fetched window is the entry index the skip counts.
+
+        A filtered window can open inside a record, and there the same fixed
+        width keeps it opening inside that record every page. When history
+        remains and nothing behind the page went unreturned, the tail is held
+        back and both anchors re-open the next page at the record's last line,
+        so the record arrives whole with its header instead of split in two.
         """
-        matches, filters_applied = self._filter_error_log_lines(
-            raw_log.splitlines(), search, level
-        )
+        records = _split_log_records(raw_log.splitlines())
+        leading_record = records[0] if records and records[0].header is None else None
+        matches, filters_applied = _filter_log_records(records, search, level)
+        page = _select_error_log_page(matches, effective_limit, order)
+        step = _next_page_step(window, page.oldest_index)
 
-        total_lines = len(matches)
-        # Always take the most-recent window (the tail of the chronological
-        # file); 'order' controls only the display direction of that window.
-        shown = matches[-effective_limit:]
-        step = _next_page_step(window, shown)
-        lines = [ln for _, ln in shown]
-        if order == "newest":
-            lines = list(reversed(lines))
+        held_back, header_out_of_reach = _leading_tail_policy(
+            window=window,
+            leading_record=leading_record,
+            page=page,
+            matches=matches,
+            search=search,
+            refetch_failed=refetch_failed,
+        )
+        if held_back and leading_record is not None:
+            # Filter the leading tail out BEFORE selecting, so a record the
+            # page had to cut cannot survive in a copy: the response would
+            # then report a returned record while its counts exclude it.
+            matches = [record for record in matches if record is not leading_record]
+            page = _select_error_log_page(matches, effective_limit, order)
+            step = _reopen_at_record_end(window, leading_record)
+            cursor_skip = leading_record.start_index + leading_record.line_count
+        else:
+            # Zero when nothing was shown: the whole fetched window is consumed.
+            cursor_skip = page.oldest_index or 0
+
+        total_lines = sum(record.line_count for record in matches)
+        # Matches older than the oldest returned record are reachable by paging
+        # again from a token; the ones this page cut out of a single over-long
+        # record are not, they need a larger limit.
+        older_matches_remain = (
+            any(record.start_index < page.oldest_index for record in matches)
+            if page.oldest_index is not None
+            else bool(matches)
+        )
 
         data: dict[str, Any] = {
             "success": True,
             "source": "error_log",
-            "log": "\n".join(lines),
+            "log": "\n".join(page.lines),
             "total_lines": total_lines,
-            "returned_lines": len(lines),
+            "returned_lines": len(page.lines),
+            "total_records": len(matches),
+            "returned_records": len(page.records),
             "limit": effective_limit,
             "window_lines": window.fetch_lines,
             "order": order,
             "note": (
-                "Returned the most recent log lines matching filters, from a "
-                "bounded window of the log. 'offset' counts raw log lines back "
-                "from the newest entry; filters apply within each fetched "
-                "window, so 'total_lines' counts matches in this window only"
+                "Returned the most recent log records matching filters, from a "
+                "bounded window of the log. 'offset' is either an integer count "
+                "back from the newest entry (raw lines on container/pip "
+                "installs, journald entries on Supervisor-backed ones) or the "
+                "opaque 'next_offset' token a previous page returned; filters "
+                "apply within each fetched window, so 'total_lines' counts the "
+                "lines of matching records in this window only. 'order' "
+                "controls display direction; a record's lines always stay in "
+                "their original order."
             ),
         }
+        warnings = _raw_error_log_warnings(
+            held_back=held_back,
+            header_out_of_reach=header_out_of_reach,
+            level=level,
+            refetch_failed=refetch_failed,
+            leading_partial=page.leading_partial,
+            truncated=page.truncated,
+            effective_limit=effective_limit,
+        )
+        if warnings:
+            data["warnings"] = warnings
         if filters_applied:
             data["filters_applied"] = filters_applied
-        return data, step
+        return data, step, cursor_skip, older_matches_remain
 
     @staticmethod
     def _apply_empty_window_warning(
-        data: dict[str, Any], raw_text: str, offset: int, structured: bool
+        data: dict[str, Any], raw_text: str, offset: int | str, structured: bool
     ) -> None:
         """Tell an empty terminal page apart from an empty fetch.
 
@@ -301,6 +438,7 @@ class LogResults:
                 and (
                     search_lower in str(e.get("message", "")).lower()
                     or search_lower in str(e.get("name", "")).lower()
+                    or search_lower in str(e.get("exception", "")).lower()
                 )
             ]
             filters_applied["search"] = search
@@ -382,9 +520,10 @@ class LogResults:
         search: str | None,
         level: str | None,
         order: Literal["newest", "oldest"],
-        offset: int,
+        offset: int | str,
         structured: bool,
         top_n: int | None,
+        refetch_failed: bool = False,
     ) -> dict[str, Any]:
         raw_text = page.text or ""
         window = _ErrorLogWindow(
@@ -392,8 +531,16 @@ class LogResults:
             fetch_lines=fetch_lines,
             raw_line_count=len(raw_text.splitlines()),
             has_more=page.has_more,
+            first_cursor=page.first_cursor,
         )
 
+        data: dict[str, Any]
+        # The structured summary consumes its whole window, so its token
+        # resumes strictly behind the window's oldest entry; the raw path
+        # sets the skip from the records it returned. Container installs
+        # have no cursor, so both fall back to the integer line step.
+        cursor_skip: int | None = None
+        older_matches_remain = False
         if structured:
             data = self._build_structured_error_log(
                 raw_text,
@@ -408,19 +555,31 @@ class LogResults:
             # starts a whole window further back.
             step = fetch_lines
             effective_limit = None
+            cursor_skip = 0
         else:
             effective_limit = _coerce_limit(
                 limit, default=DEFAULT_LOG_LIMIT, suggestion_example="100"
             )
-            data, step = self._build_raw_error_log(
+            data, step, cursor_skip, older_matches_remain = self._build_raw_error_log(
                 raw_text,
                 search=search,
                 level=level,
                 effective_limit=effective_limit,
                 order=order,
                 window=window,
+                refetch_failed=refetch_failed,
+            )
+        if not page.pagination_complete:
+            data["pagination_complete"] = False
+            data.setdefault("warnings", []).append(
+                "Supervisor returned no cursor for this log window. Older history "
+                "and exact pagination could not be determined; has_more=False "
+                "does not establish that the history is exhausted."
             )
         self._apply_empty_window_warning(data, raw_text, offset, structured)
+        if not page.pagination_complete:
+            data.update(offset=offset, has_more=False)
+            return data
         _attach_error_log_pagination(
             data,
             window,
@@ -436,6 +595,8 @@ class LogResults:
             unreturned_matches=(
                 0 if structured else data["total_lines"] - data["returned_lines"]
             ),
+            cursor_skip=cursor_skip,
+            older_matches_remain=(False if structured else older_matches_remain),
         )
         return data
 

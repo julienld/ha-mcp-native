@@ -2,6 +2,4 @@
 
 from ha_mcp.runtime.log_window import ErrorLogPage
 
-__all__ = [
-    "ErrorLogPage",
-]
+__all__ = ["ErrorLogPage"]

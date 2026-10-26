@@ -18,6 +18,20 @@ def prepare(config: Path) -> None:
     storage.mkdir(exist_ok=True)
     entries = storage / "core.config_entries"
     if not entries.exists():
+        # Core's automatic selection excludes loopback. In --network none that
+        # leaves no adapter, and its DNS resolver tries a nonexistent default
+        # multicast interface. Select the real lo through Core's own store.
+        (storage / "core.network").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "minor_version": 1,
+                    "key": "core.network",
+                    "data": {"configured_adapters": ["lo"]},
+                }
+            ),
+            encoding="utf-8",
+        )
         shutil.copytree("/opt/native/custom_components", config / "custom_components")
         sys.path.insert(
             0, str(config / "custom_components" / "qualification_hacs_fixture")

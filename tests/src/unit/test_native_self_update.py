@@ -21,6 +21,11 @@ from .test_native_updates import updates as updates
 from .test_self_update import releases
 
 
+class HacsEntity(Entity):
+    repository: SimpleNamespace
+    hacs: SimpleNamespace
+
+
 @pytest.fixture
 def self_update(updates: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     module = importlib.import_module(
@@ -42,7 +47,7 @@ def self_update(updates: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     (source / "__init__.py").write_text("old code", encoding="utf-8")
     monkeypatch.setattr(module, "component_source", lambda expected: source)
     updates.entities.clear()
-    entity = Entity("update.renamed_by_user")
+    entity = HacsEntity("update.renamed_by_user")
     entity.unique_id = "123"
     entity.installed_version, entity.latest_version = "7.0.0", "7.1.0"
     owner = SimpleNamespace(version="2.0.5")
@@ -70,7 +75,7 @@ def self_update(updates: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setitem(
         sys.modules,
         "custom_components.hacs.update",
-        SimpleNamespace(HacsRepositoryUpdateEntity=Entity),
+        SimpleNamespace(HacsRepositoryUpdateEntity=HacsEntity),
     )
     entry = SimpleNamespace(
         entry_id="hacs-entry",
@@ -241,14 +246,28 @@ async def test_visibility_enforcement_stops_self_update_before_next_write(
         snapshot.assert_called_once()
 
 
-@pytest.mark.parametrize("notes", ["BREAKING CHANGES: new authentication", ""])
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "BREAKING CHANGES: new authentication",
+        "",
+        "BREAKING: Authentication is now OAuth.",
+        "## Breaking\nThe legacy connection endpoint no longer exists.",
+        "No breaking changes to tools. BREAKING: Authentication is now OAuth.",
+    ],
+)
 async def test_breaking_or_unreviewed_release_is_rejected_before_files_change(
-    self_update: Any, notes: str
+    self_update: Any, notes: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     self_update.repo.releases.objects[0].body = notes
+    capture = Mock(wraps=self_update.module.capture_code)
+    monkeypatch.setattr(self_update.module, "capture_code", capture)
     result = await call(self_update, "update")
+    capture.assert_not_called()
+    assert not self_update.calls
+    assert self_update.entity.installed_version == "7.0.0"
+    assert not self_update.service.directory.exists()
     assert result.is_error and result.status == "not_started"
-    assert not self_update.calls and not self_update.service.directory.exists()
 
 
 async def test_normal_update_captures_old_files_uses_actor_and_preserves_runtime(

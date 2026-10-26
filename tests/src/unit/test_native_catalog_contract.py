@@ -51,7 +51,24 @@ def _structural_schema(value: Any) -> Any:
     return result
 
 
-def _changed_inputs(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+def _adds_error_log_cursor(before: Any, after: Any) -> bool:
+    """The upstream log cursor extends exactly the existing bounded offset."""
+    return _structural_schema(before) == {
+        "default": 0,
+        "type": "integer",
+        "minimum": 0,
+    } and _structural_schema(after) == {
+        "default": 0,
+        "anyOf": [{"type": "integer", "minimum": 0}, {"type": "string"}],
+    }
+
+
+def _changed_inputs(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    tool_name: str | None = None,
+) -> list[str]:
     changes = []
     old_properties = before.get("properties", {})
     new_properties = after.get("properties", {})
@@ -59,7 +76,12 @@ def _changed_inputs(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
         if name not in new_properties:
             changes.append(f"removed parameter {name}")
         elif _structural_schema(schema) != _structural_schema(new_properties[name]):
-            changes.append(f"changed parameter {name}")
+            if not (
+                tool_name == "ha_get_logs"
+                and name == "offset"
+                and _adds_error_log_cursor(schema, new_properties[name])
+            ):
+                changes.append(f"changed parameter {name}")
     if set(after.get("required", [])) - set(before.get("required", [])):
         changes.append("newly required parameters")
     changes.extend(
@@ -112,7 +134,9 @@ def test_native_migration_keeps_preexisting_mcp_call_contracts(
             .to_mcp_tool()
             .model_dump(mode="json", by_alias=True, exclude_none=True)
         )
-        differences = _changed_inputs(old["inputSchema"], current["inputSchema"])
+        differences = _changed_inputs(
+            old["inputSchema"], current["inputSchema"], tool_name=name
+        )
         for hint in _ANNOTATIONS:
             if old["annotations"].get(hint) != current.get("annotations", {}).get(hint):
                 differences.append(f"changed safety annotation {hint}")
@@ -206,7 +230,9 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         old = baseline.get(definition.name)
         if old is None:
             continue
-        differences = _changed_inputs(old["inputSchema"], definition.input_schema)
+        differences = _changed_inputs(
+            old["inputSchema"], definition.input_schema, tool_name=definition.name
+        )
         expected_annotations = {
             **old["annotations"],
             **overrides.get(definition.name, {}).get("annotations", {}),
@@ -225,3 +251,43 @@ def test_native_engine_advertises_the_existing_contract_of_each_migrated_tool() 
         if differences:
             changes[definition.name] = differences
     assert not changes, f"Native tool definitions broke baseline contracts: {changes}"
+
+
+@pytest.mark.parametrize(
+    "replacement, compatible",
+    [
+        (
+            {
+                "default": 0,
+                "anyOf": [{"type": "integer", "minimum": 0}, {"type": "string"}],
+            },
+            True,
+        ),
+        (
+            {
+                "default": 0,
+                "anyOf": [{"type": "integer", "minimum": 1}, {"type": "string"}],
+            },
+            False,
+        ),
+        ({"default": 0, "anyOf": [{"type": "integer"}, {"type": "string"}]}, False),
+        (
+            {
+                "default": 1,
+                "anyOf": [{"type": "integer", "minimum": 0}, {"type": "string"}],
+            },
+            False,
+        ),
+    ],
+)
+def test_added_cursor_alternative_must_retain_integer_bounds_and_default(
+    replacement: dict[str, Any],
+    compatible: bool,
+) -> None:
+    baseline = {"default": 0, "type": "integer", "minimum": 0}
+    before = {"properties": {"offset": baseline}}
+    after = {"properties": {"offset": replacement}}
+    assert (not _changed_inputs(before, after, tool_name="ha_get_logs")) is compatible
+    assert _changed_inputs(before, after, tool_name="ha_other_tool") == [
+        "changed parameter offset"
+    ]
