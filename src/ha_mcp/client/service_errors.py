@@ -10,10 +10,10 @@ class HomeAssistantWebSocketServiceError(HomeAssistantAPIError):
     so write-outcome consumers must use the native code instead of that status.
     """
 
-    def __init__(self, message: str, *, code: str | None) -> None:
+    def __init__(self, message: str, *, code: object) -> None:
         super().__init__(
             f"API error: 400 - {message}",
             status_code=400,
             response_data={"message": message},
         )
-        self.code = code
+        self.code = code if isinstance(code, str) else None
