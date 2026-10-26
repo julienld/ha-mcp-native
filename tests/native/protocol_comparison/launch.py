@@ -30,6 +30,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from protocol_comparison.evidence import PROTECTED, build_receipt, git, write_json
+from protocol_comparison.launcher_support import (
+    exception_diagnostic,
+    failure_type,
+    import_worker_helpers,
+    sanitize_status,
+)
 from protocol_comparison.protocol_fixture.provenance import file_digest
 
 BASELINE = "3690af6e0f62ccec6c7fa70f748494ba2605f419"
@@ -242,7 +248,7 @@ def stage_role(
 ) -> tuple[Path, list[dict[str, str]], str]:
     # The modules' __file__ resolves inside that role's source checkout, so the
     # legacy wheel builder cannot accidentally build the harness/candidate tree.
-    sys.path[:0] = [str(source / "tests/src"), str(source / "tests")]
+    import_worker_helpers(source)
     from e2e._conftest_embedded import (
         _build_embedded_server_wheel,
         _install_embedded_server,
@@ -352,6 +358,7 @@ def worker(args: argparse.Namespace) -> int:
     source, directory = args.source, args.directory
     write_json(directory / "status.json", {"phase": "building_artifacts"})
     wheel, actors, webhook = stage_role(source, directory / "config", ROLES[args.role])
+    write_json(directory / "status.json", {"phase": "verifying_artifacts"})
     expected = build_receipt(
         source,
         args.revision,
@@ -366,6 +373,7 @@ def worker(args: argparse.Namespace) -> int:
 
     name = f"ha-mcp-protocol-{args.nonce}-{args.role}"
     network = name + "-net"
+    write_json(directory / "status.json", {"phase": "creating_network"})
     command("docker", "network", "create", "--label", f"{LABEL}={args.nonce}", network)
     container = _build_ha_testcontainer(directory / "config", True, wheel.name)
     constrain_container(container, network, name, args.nonce)
@@ -424,7 +432,14 @@ def run_worker(args: argparse.Namespace) -> int:
             else {"phase": "worker_start"}
         )
         write_json(
-            path, {"phase": status["phase"], "failure_type": type(error).__name__}
+            path,
+            {
+                "phase": sanitize_status(status)["phase"],
+                "failure_type": failure_type(type(error).__name__),
+                "diagnostic": exception_diagnostic(
+                    error, args.source.resolve(), Path(__file__).resolve().parents[3]
+                ),
+            },
         )
         return 1
 
@@ -664,9 +679,7 @@ def finish_run(
                 path = private / role / "status.json"
                 if path.exists():
                     status = json.loads(path.read_bytes())
-                    report["worker_status"][role] = {
-                        k: status[k] for k in ("phase", "failure_type") if k in status
-                    }
+                    report["worker_status"][role] = sanitize_status(status)
     except (OSError, ValueError, KeyError):
         report["worker_diagnostics_incomplete"] = True
     try:
@@ -741,8 +754,9 @@ def launch(args: argparse.Namespace) -> int:
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 -- redact all CLI failures
         # Arbitrary exceptions can contain tokens, URLs and entire HTTP bodies.
         report["failure"] = {
-            "type": type(error).__name__,
+            "type": failure_type(type(error).__name__),
             "category": "launch_or_runtime_failed",
+            "diagnostic": exception_diagnostic(error, harness),
         }
     finally:
         finish_run(workers, args.state, report)
@@ -773,6 +787,10 @@ def main() -> int:
     run.add_argument("--core-image", default=DEFAULT_IMAGE)
     clean = commands.add_parser("cleanup")
     clean.add_argument("--state", type=Path, required=True)
+    preflight = commands.add_parser(
+        "preflight", help="import worker helpers without Docker or builds"
+    )
+    preflight.add_argument("--source", type=Path, required=True)
     child = commands.add_parser("worker", help="internal disposable worker")
     child.add_argument("--role", choices=list(ROLES), required=True)
     for name in ("source", "directory"):
@@ -780,6 +798,27 @@ def main() -> int:
     for name in ("revision", "image", "nonce"):
         child.add_argument("--" + name, required=True)
     args = parser.parse_args()
+    if args.command == "preflight":
+        try:
+            import_worker_helpers(args.source)
+        except (ImportError, OSError) as error:
+            print(
+                json.dumps(
+                    {
+                        "complete": False,
+                        "phase": "host_imports",
+                        "failure_type": failure_type(type(error).__name__),
+                        "diagnostic": exception_diagnostic(
+                            error,
+                            args.source.resolve(),
+                            Path(__file__).resolve().parents[3],
+                        ),
+                    }
+                )
+            )
+            return 1
+        print(json.dumps({"complete": True, "phase": "host_imports"}))
+        return 0
     if args.command == "worker":
         return run_worker(args)
     if args.command == "cleanup":

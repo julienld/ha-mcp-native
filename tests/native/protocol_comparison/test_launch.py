@@ -375,19 +375,235 @@ def test_one_failed_container_removal_does_not_abandon_the_other_resources(
     assert state.exists() and private.exists()
 
 
+@pytest.mark.parametrize("status_text", ['{"phase":', "[]"])
 def test_partial_worker_diagnostic_never_prevents_cleanup(
     launcher_world: tuple[argparse.Namespace, list[tuple[str, ...]]],
     monkeypatch: pytest.MonkeyPatch,
+    status_text: str,
 ) -> None:
     args, _ = launcher_world
 
     def interrupted_status(*values: Any) -> None:
         private = values[3]
         (private / "baseline").mkdir()
-        (private / "baseline/status.json").write_text('{"phase":')
+        (private / "baseline/status.json").write_text(status_text)
         raise RuntimeError("worker stopped during a diagnostic write")
 
     monkeypatch.setattr(launch, "run_pair", interrupted_status)
     assert launch.launch(args) == 1
     assert json.loads((args.output / "launch.json").read_bytes())["cleanup_complete"]
     assert not args.state.exists()
+
+
+def test_missing_host_module_is_diagnosable_without_exception_text_or_locals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = argparse.Namespace(
+        directory=tmp_path, source=Path(__file__).resolve().parents[3]
+    )
+
+    def missing(_args: Any) -> int:
+        secret = "private-token https://private.invalid/config"
+        launch.write_json(tmp_path / "status.json", {"phase": "building_artifacts"})
+        raise ModuleNotFoundError(secret, name="ha_mcp")
+
+    monkeypatch.setattr(launch, "worker", missing)
+    assert launch.run_worker(args) == 1
+    raw = (tmp_path / "status.json").read_text()
+    status = json.loads(raw)
+    assert status["failure_type"] == "ModuleNotFoundError"
+    assert status["diagnostic"]["missing_module"] == "ha_mcp"
+    frames = status["diagnostic"]["frames"]
+    assert any(
+        f["file"] == "tests/native/protocol_comparison/test_launch.py" for f in frames
+    )
+    assert all(set(f) == {"file", "line"} and f["line"] > 0 for f in frames)
+    assert "private-token" not in raw and "https://" not in raw
+    assert str(args.source) not in raw
+
+
+def test_locked_cli_imports_real_worker_helpers_without_the_candidate_installed() -> (
+    None
+):
+    """The project venv must not hide undeclared dependencies of the PEP 723 CLI."""
+    repository = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--locked",
+            "-s",
+            str(Path(launch.__file__).resolve()),
+            "preflight",
+            "--source",
+            str(repository),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=launch.private_environment(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"complete": True, "phase": "host_imports"}
+
+
+@pytest.mark.parametrize(
+    "name", [None, "https://private.invalid/token", "secret/token", "a" * 300]
+)
+def test_untrusted_missing_module_names_are_not_exported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str | None,
+) -> None:
+    args = argparse.Namespace(directory=tmp_path, source=tmp_path)
+
+    def missing(_args: Any) -> int:
+        raise ModuleNotFoundError("private-token", name=name)
+
+    monkeypatch.setattr(launch, "worker", missing)
+    assert launch.run_worker(args) == 1
+    status = json.loads((tmp_path / "status.json").read_bytes())
+    assert "missing_module" not in status["diagnostic"]
+    assert "private-token" not in json.dumps(status)
+
+
+def test_worker_diagnostic_export_is_allowlisted_and_cleanup_still_runs(
+    launcher_world: tuple[argparse.Namespace, list[tuple[str, ...]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args, _ = launcher_world
+
+    def failed_pair(*values: Any) -> None:
+        private = values[3]
+        launch.write_json(
+            private / "baseline/status.json",
+            {
+                "phase": "building_artifacts",
+                "failure_type": "ModuleNotFoundError",
+                "diagnostic": {
+                    "missing_module": "ha_mcp",
+                    "message": "private-token",
+                    "frames": [
+                        {
+                            "file": "tests/src/e2e/utilities/assertions.py",
+                            "line": 12,
+                            "locals": "private-token",
+                        },
+                        {"file": "https://private.invalid/token", "line": 1},
+                        {"file": "../private-token.py", "line": 1},
+                    ],
+                },
+                "stderr": "https://private.invalid/token",
+            },
+        )
+        raise RuntimeError("private-token")
+
+    monkeypatch.setattr(launch, "run_pair", failed_pair)
+    assert launch.launch(args) == 1
+    raw = (args.output / "launch.json").read_text()
+    report = json.loads(raw)
+    assert report["cleanup_complete"] and not args.state.exists()
+    assert report["worker_status"]["baseline"]["diagnostic"] == {
+        "missing_module": "ha_mcp",
+        "frames": [{"file": "tests/src/e2e/utilities/assertions.py", "line": 12}],
+    }
+    assert "private-token" not in raw and "https://" not in raw
+
+
+def test_import_seam_preserves_real_submodules_and_defers_package_exports(
+    tmp_path: Path,
+) -> None:
+    utilities = tmp_path / "tests/src/e2e/utilities"
+    utilities.mkdir(parents=True)
+    (utilities / "__init__.py").write_text(
+        "raise ModuleNotFoundError('unused SDK export', name='unused_sdk')\n"
+    )
+    (utilities / "streamable_http.py").write_text("marker = 'real source parser'\n")
+    for name in ("embedded", "native_runtime", "seed", "testcontainer"):
+        (utilities.parent / f"_conftest_{name}.py").write_text(
+            "from .utilities.streamable_http import marker\n"
+        )
+    (tmp_path / "tests/qualification_artifacts.py").write_text("")
+    program = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from protocol_comparison.launcher_support import import_worker_helpers
+import_worker_helpers(Path(sys.argv[2]))
+from e2e._conftest_embedded import marker
+assert marker == 'real source parser'
+try:
+    import_worker_helpers(Path(sys.argv[2]) / 'other-role')
+except ImportError as error:
+    assert str(error) == 'worker_helpers_from_another_source'
+else:
+    raise AssertionError('cached helpers must not cross role checkouts')
+import e2e.utilities
+try:
+    e2e.utilities.MCPAssertions
+except ModuleNotFoundError as error:
+    assert error.name == 'unused_sdk'
+else:
+    raise AssertionError('the original initializer must still run for exports')
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            program,
+            str(Path(launch.__file__).resolve().parent.parent),
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=launch.private_environment(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_diagnostic_caps_deep_stacks_and_drops_external_frames(tmp_path: Path) -> None:
+    from .launcher_support import exception_diagnostic
+
+    def recurse(depth: int) -> None:
+        if depth:
+            recurse(depth - 1)
+        else:
+            raise ValueError("private-token https://private.invalid/config")
+
+    try:
+        recurse(100)
+    except ValueError as error:
+        diagnostic = exception_diagnostic(error, Path(__file__).resolve().parents[3])
+        assert 0 < len(diagnostic["frames"]) <= 12
+        assert exception_diagnostic(error, tmp_path) == {"frames": []}
+    assert "private-token" not in json.dumps(diagnostic)
+
+
+def test_worker_status_rejects_secrets_in_metadata_and_frame_fields() -> None:
+    from .launcher_support import sanitize_status
+
+    result = sanitize_status(
+        {
+            "phase": "private-token",
+            "failure_type": "https://private.invalid/token",
+            "diagnostic": {
+                "missing_module": "private-token",
+                "frames": [
+                    {"file": "tests/../private-token.py", "line": 4},
+                    {"file": "C:/private-token.py", "line": 4},
+                    {"file": "tests/private.py", "line": "private-token"},
+                    {"file": "tests/private.py", "line": True},
+                ],
+            },
+        }
+    )
+    assert result == {
+        "phase": "worker_start",
+        "failure_type": "Exception",
+        "diagnostic": {"frames": []},
+    }

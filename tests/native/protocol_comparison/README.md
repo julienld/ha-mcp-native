@@ -7,9 +7,14 @@ Core image, read arguments, and measurement schedule. It is not the old
 8.7.0-versus-native benchmark and does not attribute a performance difference to
 either the SSE EOF fix or the derived-text cache in isolation.
 
-Local status on 2026-10-26: **50 harness/launcher tests pass on Windows**;
-**no live paired Core run has been performed by this implementation agent**.
-Docker is absent locally. The parent owns the checkpoint and fork execution.
+Status on 2026-10-26: the [first fork run](https://github.com/julienld/ha-mcp-native/actions/runs/40269969974)
+failed before either Core started (`building_artifacts`, `ModuleNotFoundError`
+in both workers); its receipt confirms complete cleanup. The import correction
+below passes **29 focused launcher tests on Windows**, including a subprocess
+using the locked PEP 723 CLI rather than the project's fully installed venv.
+Both real worker builds reach Docker network creation locally; Docker is absent,
+so **no paired runtime or 600-read result is established**. The parent owns the
+checkpoint and the required fork rerun.
 This does not qualify authentication, owner coverage or installation beyond the
 specific checks that actually pass in the resulting report.
 
@@ -28,7 +33,7 @@ the launcher overlays only test helpers, never `src`, `custom_components`,
 after building, and after comparison. It neither commits nor changes branches.
 
 ```powershell
-uv run -s tests/native/protocol_comparison/launch.py run --baseline-source <U2-checkout> --candidate-source <candidate-checkout> --candidate-revision <full-sha> --output <new-report-directory> --state <private-cleanup-state.json>
+uv run --locked -s tests/native/protocol_comparison/launch.py run --baseline-source <U2-checkout> --candidate-source <candidate-checkout> --candidate-revision <full-sha> --output <new-report-directory> --state <private-cleanup-state.json>
 ```
 
 `--candidate-revision` defaults to `GITHUB_SHA` in Actions and is required outside
@@ -48,6 +53,19 @@ legacy builds U2's own wheel/component, and native builds the candidate's own
 paired release-profile artifacts. It seeds a minimal fresh config for these
 contracts, rather than copying the broad suite's recorder, HACS or known tokens.
 No shared continuity source file needs modification.
+
+The host import seam in `launcher_support.py` defers only the unchanged
+`e2e.utilities.__init__` exports. The failing chain was
+`_conftest_embedded -> utilities.streamable_http -> utilities.__init__ ->
+assertions -> ha_mcp._vendor.fastmcp.exceptions`; Python executed the broad
+package initializer before loading the stdlib parser. The isolated launcher has
+no `ha_mcp` installation, so both roles failed on that module. Parser/topology
+and all continuity helpers still load from their role's own checkout. Requesting
+a package export executes its original initializer normally. This process-local
+lazy seam changes neither source files nor artifacts and supplies no SDK shim
+or fallback. Preflight rejects helpers from another checkout and any host import
+of HA-MCP, FastMCP, MCP or Core. The existing five host dependencies and their lock
+are sufficient and unchanged; installing the candidate on the host is not a fix.
 
 Each container has its own Docker bridge, the same two-CPU/two-GiB limit, no
 privileged mode, and only Core port 8123 published on `127.0.0.1` with a distinct
@@ -76,7 +94,13 @@ and remains in a mode-0700 private temporary directory until cleanup. Source
 builds, worker errors, tokens, URLs, identities and raw logs are never uploaded.
 Only `comparison.json` (the existing sanitized CLI report) and `launch.json`
 (source/helper hashes, immutable image ID, completion/cleanup and bounded failure
-phase/type) are deliverable artifacts. `launch.json.complete` also requires clean
+diagnostics) are deliverable artifacts. Diagnostics include an allowlisted phase,
+a bounded exception type, a syntactically valid `ModuleNotFoundError.name` of at
+most 128 characters, and at most 12 relative repository file/line frames. There
+are no exception messages, source lines, locals, arguments, absolute paths or
+external-library frames. The controller reapplies the allowlist before exporting
+worker status. `verifying_artifacts` and `creating_network` distinguish completed
+staging from the Docker boundary. `launch.json.complete` also requires clean
 worker exits and successful cleanup; a green comparison alone is insufficient.
 
 The controller cleans up on success, exceptions, timeouts and SIGTERM. Worker
@@ -87,7 +111,7 @@ of the private mount, and deletes its configs/logs. It never runs Docker prune.
 If cleanup failed or the controller was killed, retry using its private state:
 
 ```powershell
-uv run -s tests/native/protocol_comparison/launch.py cleanup --state <private-cleanup-state.json>
+uv run --locked -s tests/native/protocol_comparison/launch.py cleanup --state <private-cleanup-state.json>
 ```
 
 The new [`native-protocol-comparison.yml`](../../../.github/workflows/native-protocol-comparison.yml)
@@ -198,13 +222,36 @@ evidence of an incomplete/failed qualification, even if some timings look good.
 
 ## Local harness verification
 
-From the worktree, using its existing Windows venv:
+Run the launcher regressions in the existing Windows venv; the isolated CLI
+preflight checks the actual worker imports without Docker, builds or credentials:
 
 ```powershell
-.venv/Scripts/python.exe -m pytest tests/native/protocol_comparison/ --timeout-method=thread -q
-.venv/Scripts/ruff.exe check tests/native/protocol_comparison
+.venv/Scripts/python.exe -m pytest tests/native/protocol_comparison/test_launch.py --timeout-method=thread -q
+.venv/Scripts/ruff.exe check tests/native/protocol_comparison/launch.py tests/native/protocol_comparison/launcher_support.py tests/native/protocol_comparison/test_launch.py
 uv run --locked -s tests/native/protocol_comparison/launch.py --help
+uv run --locked -s tests/native/protocol_comparison/launch.py preflight --source <source-with-continuity-test-overlays>
 ```
+
+For the current harness checkout, `--source .` is sufficient. For U2, first apply
+the same test-only continuity overlay as the paired launcher. `preflight` prints
+bounded JSON and succeeds only after importing the real embedded/native/seed/
+testcontainer helpers in the script environment. It does not attest Core or SDK
+runtime versions. The CLI regression was observed failing with `missing_module:
+ha_mcp` when the lazy seam was disabled, then passing when restored.
+
+On 2026-10-26 the actual locked `worker` command built U2 at
+`3690af6e0f62ccec6c7fa70f748494ba2605f419` and the native release-profile pair at
+`d20915eb14bfcc2f33d2fc5a48c843a75a94f2e7`. Both produced source-clean build
+receipts and reached `creating_network` / `FileNotFoundError` at the absent
+Docker executable. The native boundary replay reused only its already-built,
+hash-verified qualification assets. Protected application trees stayed clean.
+The image ID supplied to these offline workers was the earlier fork's ID;
+it is an input, **not a fresh local image observation**. These direct-worker
+probes do not exercise controller cleanup; its scoped lifecycle is covered
+separately by the launcher regression tests.
+The fork must still prove same-image Core 2026.10.4, private SDK 4.1.2/2.3.0,
+runtime byte identity, Native execution without HA loopback, cleanup and the
+full protocol workload. No dispatch was performed by this correction.
 
 The socket test starts only a loopback fixture HTTP server. It validates the
 client's emitted envelope and parser over a real socket; it does **not** qualify
