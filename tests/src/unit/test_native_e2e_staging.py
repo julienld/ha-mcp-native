@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,7 @@ from tests.src.e2e import _conftest_testcontainer as container_harness
 from tests.src.e2e._conftest_native_runtime import (
     attest_native_runtime,
     configure_native_entry,
+    native_dependency_command,
 )
 
 
@@ -76,6 +78,15 @@ def test_explicit_test_image_override_still_wins_over_the_workflow_image(
     )
     container_build.build()
     container_build.constructor.assert_called_once_with(image)
+
+
+def test_native_entrypoint_brackets_the_wheel_before_core_starts(container_build):
+    container = container_build.build()
+    entrypoint = container.with_kwargs.call_args.kwargs["entrypoint"]
+    assert entrypoint[:2] == ["sh", "-c"]
+    preparation, startup = entrypoint[2].split(" && ")
+    assert shlex.split(preparation) == native_dependency_command("prepare")
+    assert startup == "exec /init"
 
 
 def _seed(config: Path, user: dict) -> Path:

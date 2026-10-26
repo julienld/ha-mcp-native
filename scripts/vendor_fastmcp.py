@@ -78,7 +78,7 @@ _METADATA_VERSION_RE = re.compile(
 # patching fail the sync.
 _UNPATCHED_LOOKUP_RE = re.compile(
     r"""\b(?:version|distribution|metadata|find_spec)\(\s*["']"""
-    r"""(fastmcp|fastmcp-slim|mcp|mcp-types|mcp_types)["']"""
+    r"""(fastmcp|fastmcp-slim|mcp|mcp-types|mcp_types|rich)["']"""
 )
 _TRACEBACK_SUPPRESS = 'for package in ("fastmcp", "mcp", "pydantic")'
 

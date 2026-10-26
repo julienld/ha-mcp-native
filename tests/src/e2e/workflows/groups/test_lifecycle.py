@@ -18,7 +18,10 @@ import uuid
 
 import pytest
 
+from ha_mcp._vendor.fastmcp import Client
+
 from ...utilities.assertions import MCPAssertions, safe_call_tool
+from ...utilities.wait_helpers import wait_for_entity_state, wait_for_tool_result
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -343,68 +346,126 @@ class TestGroupLifecycle:
             )
             logger.info("Modifiable group cleaned up")
 
-    async def test_group_with_all_mode(self, mcp_client, cleanup_tracker):
-        """
-        Test: Create group with all_on mode enabled
+    async def test_group_with_all_mode(self, mcp_client: Client) -> None:
+        """all_on controls aggregation; a discoverable mode must report the truth.
 
-        When all_on is True, all entities must be on for group to be on.
-
-        NOTE: Home Assistant keeps the all/any mode internal and exposes no
-        state attribute for it, so the list cannot report it.
+        Remote Core state may omit the mode; native can read its Core owner.
+        Both must apply it, and neither may invent False for an unknown mode.
         """
-        logger.info("Testing group with all_on mode...")
+        suffix = uuid.uuid4().hex[:8]
+        object_id = f"test_e2e_all_on_{suffix}"
+        members: list[str] = []
+        group_removed = False
+
+        async def assert_group_state(expected: str, *, all_on: bool) -> None:
+            listed = await wait_for_tool_result(
+                mcp_client,
+                "ha_config_list_groups",
+                {"limit": 500},
+                predicate=lambda data: any(
+                    group["object_id"] == object_id and group["state"] == expected
+                    for group in data["groups"]
+                ),
+                description=f"group.{object_id} is {expected} with all_on={all_on}",
+            )
+            group = next(g for g in listed["groups"] if g["object_id"] == object_id)
+            assert set(group["entity_ids"]) == set(members), group
+            # Missing discovery is not evidence of any-mode (#2824 / #2632).
+            if "all" in group:
+                assert group["all"] is all_on, group
 
         async with MCPAssertions(mcp_client) as mcp:
-            object_id = "test_e2e_all_on"
-            result = await mcp.call_tool_success(
-                "ha_config_set_group",
-                {
-                    "object_id": object_id,
-                    "name": "All On Group",
-                    "entities": ["light.bed_light", "light.ceiling_lights"],
-                    "all_on": True,
-                },
-            )
-            cleanup_tracker.track("group", object_id)
-            logger.info(f"Created group with all_on mode: group.{object_id}")
 
-            # Verify 'all' is in the updated_fields (service parameter was passed)
-            assert "all" in result.get("updated_fields", []), (
-                f"'all' parameter not in updated_fields: {result}"
-            )
-            logger.info("all_on parameter was sent to service")
+            async def set_member(index: int, state: str) -> None:
+                await mcp.call_tool_success(
+                    "ha_call_service",
+                    {
+                        "domain": "input_boolean",
+                        "service": f"turn_{state}",
+                        "entity_id": members[index],
+                    },
+                )
+                assert await wait_for_entity_state(mcp_client, members[index], state)
 
-            # Verify group appears in list
-            list_data = await mcp.call_tool_success("ha_config_list_groups", {})
+            try:
+                for index in range(2):
+                    created = await mcp.call_tool_success(
+                        "ha_config_set_helper",
+                        {
+                            "helper_type": "input_boolean",
+                            "name": f"E2E Group Member {index} {suffix}",
+                            "config": {"initial": False},
+                        },
+                    )
+                    members.append(created["entity_id"])
+                    assert await wait_for_entity_state(mcp_client, members[-1], "off")
 
-            group_found = False
-            for group in list_data.get("groups", []):
-                if group.get("object_id") == object_id:
-                    group_found = True
-                    assert "all" not in group, group
-                    break
-            assert group_found, f"Group {object_id} not found in list"
-            logger.info("Group with all_on created successfully")
+                result = await mcp.call_tool_success(
+                    "ha_config_set_group",
+                    {
+                        "object_id": object_id,
+                        "name": f"All On Group {suffix}",
+                        "entities": members,
+                        "all_on": True,
+                    },
+                )
+                assert "all" in result["updated_fields"], result
 
-            # Update all_on mode to False - verify service call succeeds
-            result = await mcp.call_tool_success(
-                "ha_config_set_group",
-                {
-                    "object_id": object_id,
-                    "all_on": False,
-                },
-            )
-            assert "all" in result.get("updated_fields", []), (
-                f"'all' parameter not in updated_fields: {result}"
-            )
-            logger.info("all_on mode update service call succeeded")
+                # Start on, then force both transitions: the one-member check
+                # cannot pass by reading the group's initial off state.
+                await set_member(0, "on")
+                await set_member(1, "on")
+                await assert_group_state("on", all_on=True)
+                await set_member(1, "off")
+                await assert_group_state("off", all_on=True)
+                await set_member(1, "on")
+                await assert_group_state("on", all_on=True)
 
-            # Cleanup
-            await mcp.call_tool_success(
-                "ha_config_remove_group",
-                {"object_id": object_id},
-            )
-            logger.info("All-on group cleaned up")
+                result = await mcp.call_tool_success(
+                    "ha_config_set_group",
+                    {"object_id": object_id, "all_on": False},
+                )
+                assert "all" in result["updated_fields"], result
+
+                # Member events exercise the new mode on both transports.
+                # First establish off so a stale all-mode on cannot pass.
+                await set_member(0, "off")
+                await set_member(1, "off")
+                await assert_group_state("off", all_on=False)
+                await set_member(0, "on")
+                await assert_group_state("on", all_on=False)
+                await set_member(1, "on")
+                await assert_group_state("on", all_on=False)
+
+                await mcp.call_tool_success(
+                    "ha_config_remove_group", {"object_id": object_id}
+                )
+                group_removed = True
+                while members:
+                    await mcp.call_tool_success(
+                        "ha_remove_helpers_integrations",
+                        {
+                            "helper_type": "input_boolean",
+                            "target": members[-1],
+                            "confirm": True,
+                        },
+                    )
+                    members.pop()
+            finally:
+                if not group_removed:
+                    await safe_call_tool(
+                        mcp_client, "ha_config_remove_group", {"object_id": object_id}
+                    )
+                for entity_id in reversed(members):
+                    await safe_call_tool(
+                        mcp_client,
+                        "ha_remove_helpers_integrations",
+                        {
+                            "helper_type": "input_boolean",
+                            "target": entity_id,
+                            "confirm": True,
+                        },
+                    )
 
     async def test_group_input_validation(self, mcp_client):
         """

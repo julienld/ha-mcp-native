@@ -1,10 +1,12 @@
 """Installation contracts and optional full E2E consume the same Core window."""
 
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.specifiers import SpecifierSet
 
 from .test_core_window import workflow
 
@@ -15,7 +17,7 @@ def _run_preflight(step: dict[str, Any]) -> None:
     exec(compile(script, "<workflow-preflight>", "exec"), {})
 
 
-def test_full_e2e_uses_the_installation_matrix_and_each_core_python():
+def test_full_e2e_uses_the_core_matrix_and_an_independent_supported_test_python():
     definition = workflow("native-e2e.yml")
     assert (
         definition["jobs"]["core-window"]["uses"]
@@ -33,7 +35,12 @@ def test_full_e2e_uses_the_installation_matrix_and_each_core_python():
         setup = next(
             step for step in job["steps"] if "setup-uv@" in step.get("uses", "")
         )
-        assert setup["with"]["python-version"] == "${{ matrix.python_source }}"
+        host_python = setup["with"]["python-version"]
+        assert "matrix.python_source" not in host_python
+        project = tomllib.loads(
+            (Path(__file__).resolve().parents[3] / "pyproject.toml").read_text()
+        )
+        assert host_python in SpecifierSet(project["project"]["requires-python"])
 
 
 def test_http_bench_and_units_are_not_multiplied_by_the_core_matrix():

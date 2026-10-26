@@ -46,8 +46,9 @@ jobs:
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
           version: "0.13.4"
-          # Host test runner only; Core runs the interpreter inside its image.
-          python-version: '${{ matrix.python_source }}'
+          # The test client is independent; Core's own interpreter is attested
+          # inside its image, even when its patch is not available from uv.
+          python-version: '3.13'
       - &install_dependencies
         name: Install locked test dependencies
         run: uv sync --frozen --all-extras --dev

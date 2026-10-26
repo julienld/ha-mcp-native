@@ -35,6 +35,8 @@ from ._conftest_embedded import (
 )
 from ._conftest_native_runtime import (
     attest_native_runtime,
+    capture_native_dependencies,
+    native_dependency_command,
     native_runtime_selected,
     stage_native_runtime,
 )
@@ -346,12 +348,7 @@ def _build_ha_testcontainer(
         )
 
     if native:
-        preinit_cmds.append(
-            f"pip list --format=freeze > /config/{EMBEDDED_FREEZE_BEFORE} && "
-            "python3 -c 'import homeassistant, pathlib, shutil; "
-            'source = pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt"; '
-            f'shutil.copyfile(source, "/config/{EMBEDDED_HA_CONSTRAINTS_COPY}")\''
-        )
+        preinit_cmds.append(shlex.join(native_dependency_command("prepare")))
     elif embedded_wheel_name is not None:
         # Preinstall the ha-mcp wheel + its whole dependency tree (fastmcp etc.)
         # BEFORE HA's /init, so the in-process MCP server bring-up is fast and
@@ -585,16 +582,6 @@ def _wait_for_testcontainer_ready(
             )
         if native_runtime_selected():
             observed = attest_native_runtime(base_url, headers)
-            result = container.get_wrapped_container().exec_run(
-                [
-                    "sh",
-                    "-c",
-                    f"pip list --format=freeze > /config/{EMBEDDED_FREEZE_AFTER}",
-                ]
-            )
-            if result.exit_code:
-                pytest.fail(
-                    "Native lane could not capture the post-install package inventory"
-                )
+            capture_native_dependencies(container, "after_core_setup")
             logger.info("Native runtime attested: %s", observed)
     return embedded_webhook_url
