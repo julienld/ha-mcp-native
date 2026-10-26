@@ -26,6 +26,9 @@ on:
       server:
         type: string
         default: embedded
+      embedded_runtime:
+        type: string
+        default: legacy
       no_component:
         type: boolean
         default: false
@@ -59,6 +62,11 @@ on:
         type: choice
         options: [standalone, embedded, app, oauth]
         default: embedded
+      embedded_runtime:
+        description: "Embedded implementation; native requires server=embedded"
+        type: choice
+        options: [legacy, native]
+        default: legacy
       no_component:
         description: Without the ha_mcp_tools File & YAML Tools entry (like the no-tools E2E lanes)
         type: boolean
@@ -81,12 +89,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-ha-env-${{ inputs.track_ref }}-${{ inputs.platform }}-${{ inputs.server }}-${{ inputs.no_component }}
+  group: dev-ha-env-${{ inputs.track_ref }}-${{ inputs.platform }}-${{ inputs.server }}-${{ inputs.no_component }}-${{ inputs.embedded_runtime || 'legacy' }}
   cancel-in-progress: true
 
 env:
   TRACK_REF: ${{ inputs.track_ref }}
   E2E_NO_TOOLS_ENTRY: ${{ inputs.no_component && '1' || '' }}
+  E2E_EMBEDDED_RUNTIME: ${{ inputs.embedded_runtime || 'legacy' }}
   DEVENV_STRICT_BPS: ${{ inputs.strict_bps }}
   HAMCP_ENV_FILE: tests/.env.test
   # A fixed host port survives container restarts, so the tunnel target holds.
@@ -119,6 +128,11 @@ jobs:
               raise SystemExit("Unknown platform or server")
           if (platform, server) in {("docker", "app"), ("haos", "oauth")}:
               raise SystemExit("app requires haos; oauth requires docker")
+          runtime = os.environ.get("E2E_EMBEDDED_RUNTIME", "legacy")
+          if runtime not in {"legacy", "native"}:
+              raise SystemExit("Unknown embedded runtime")
+          if runtime == "native" and server != "embedded":
+              raise SystemExit("native requires server=embedded")
           minutes = os.environ["DEVENV_MINUTES"]
           if not minutes.isascii() or not minutes.isdecimal() or not 1 <= int(minutes) <= 330:
               raise SystemExit("minutes must be an integer from 1 to 330")
@@ -148,6 +162,22 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
+
+      - name: Require the real Native host and staging fixture
+        if: inputs.embedded_runtime == 'native'
+        working-directory: src
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          required = (
+              "custom_components/ha_mcp_tools/native_server.py",
+              "tests/src/e2e/_conftest_native_runtime.py",
+              "tests/qualification_artifacts.py",
+          )
+          missing = [name for name in required if not Path(name).is_file()]
+          if missing:
+              raise SystemExit(f"Native live requires the host and staging fixture: {missing}")
+          PY
 
       - name: Compute HAOS image cache keys
         if: inputs.platform == 'haos'

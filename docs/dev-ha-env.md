@@ -21,6 +21,15 @@ only for the run.
 | `haos` | `app` | HAOS VM; the server runs as the app (add-on) |
 | `docker` | `oauth` | HA container; your branch's server runs on the runner as `ha-mcp-oauth`, with the `MCP:` URL's origin as its public URL |
 
+Embedded runs default to `embedded_runtime=legacy`. Select
+`embedded_runtime=native` with `server=embedded` to stage the paired Native
+artifacts and configure the entry before HA starts, using the existing
+`E2E_EMBEDDED_RUNTIME` fixture contract. A source revision without the real
+Native host and staging fixture is refused before boot. Confirm the effective
+runtime through MCP after startup; a requested mode or `ready` flag alone is
+not runtime evidence. This avoids reconfiguring the MCP server's own entry,
+which `ha_set_integration` intentionally refuses.
+
 Test on `server=embedded` with the File & YAML Tools entry in place first (the
 defaults): the server running in-process inside the component, with the
 filesystem tools beside it, is ha-mcp's main install. Use `standalone` or `app`
@@ -165,14 +174,14 @@ $installRef = '<SHA-or-branch-present-in-your-fork>'
 $publicKey = (Get-Content -Raw devenv-public-key.b64).Trim()
 gh workflow run native-migration.yml -R julienld/ha-mcp-native --ref $workflowBranch `
   -f target=live -f "track_ref=$installRef" -f "public_key=$publicKey" `
-  -f minutes=60 -f platform=docker -f server=embedded
+  -f minutes=60 -f platform=docker -f server=embedded -f embedded_runtime=native
 ```
 
 `--ref` selects the workflow and trusted holder/tunnel helpers; `track_ref`
 selects the server, component and fixture code installed from that same fork.
 Prefer an exact SHA for reproducible PR qualification. These are independent
-revisions. The caller exposes seven inputs including `target` and `published_tag`;
-live defaults are Docker, embedded server and 60 minutes. Other dev-environment
+revisions. The caller exposes `embedded_runtime` alongside `target` and `published_tag`;
+live defaults are Docker, embedded Legacy server and 60 minutes. Other dev-environment
 settings use the reusable workflow defaults: File & YAML Tools present, strict
 best practices enabled, current stable HA, no HAOS CPU cap.
 

@@ -184,10 +184,11 @@ def test_live_verification_of_other_heads_or_modes_cannot_cancel_the_running_one
 ):
     template = workflow("native-migration.yml")["concurrency"]["group"]
     groups = set()
-    for revision, server in (
-        ("a" * 40, "embedded"),
-        ("b" * 40, "embedded"),
-        ("a" * 40, "standalone"),
+    for revision, server, runtime in (
+        ("a" * 40, "embedded", "legacy"),
+        ("b" * 40, "embedded", "legacy"),
+        ("a" * 40, "standalone", "legacy"),
+        ("a" * 40, "embedded", "native"),
     ):
         inputs = {
             "target": "live",
@@ -195,6 +196,7 @@ def test_live_verification_of_other_heads_or_modes_cannot_cancel_the_running_one
             "track_ref": revision,
             "platform": "docker",
             "server": server,
+            "embedded_runtime": runtime,
         }
         groups.add(
             re.sub(
@@ -203,7 +205,7 @@ def test_live_verification_of_other_heads_or_modes_cannot_cancel_the_running_one
                 template,
             )
         )
-    assert len(groups) == 3
+    assert len(groups) == 4
 
 
 def test_live_call_maps_install_revision_and_keeps_dev_defaults() -> None:
@@ -335,6 +337,94 @@ def test_live_preflight_wiring_and_encrypted_artifacts_preserve_the_boundary() -
     )
     assert "dev-ha-env-" in called["concurrency"]["group"]
     assert called["concurrency"]["group"] != caller["concurrency"]["group"]
+
+
+@pytest.mark.parametrize("workflow_name", ["native-migration.yml", "dev-ha-env.yml"])
+@pytest.mark.parametrize(
+    "runtime,server,valid",
+    [
+        ("native", "standalone", False),
+        ("typo", "embedded", False),
+        ("native", "embedded", True),
+    ],
+)
+def test_live_runtime_selection_is_validated_before_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_name: str,
+    runtime: str,
+    server: str,
+    valid: bool,
+) -> None:
+    jobs = workflow(workflow_name)["jobs"]
+    step = jobs[
+        "select-qualification" if workflow_name == "native-migration.yml" else "env"
+    ]["steps"][0]
+    for key, value in {
+        "TARGET": "live",
+        "PUBLISHED_TAG": "",
+        "TRACK_REF": "candidate",
+        "PUBLIC_KEY": "PUBLIC_KEY_SENTINEL",
+        "MINUTES": "60",
+        "DEVENV_MINUTES": "60",
+        "PLATFORM": "docker",
+        "SERVER": server,
+        "E2E_EMBEDDED_RUNTIME": runtime,
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "GITHUB_REPOSITORY": "example/fork",
+        "GITHUB_OUTPUT": str(tmp_path / "outputs"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    if valid:
+        _run_preflight(step)
+    else:
+        with pytest.raises(SystemExit):
+            _run_preflight(step)
+
+
+def test_native_live_runtime_is_forwarded_to_the_existing_fixture_contract() -> None:
+    caller = workflow("native-migration.yml")
+    called = workflow("dev-ha-env.yml")
+    assert (
+        caller["jobs"]["live"]["with"]["embedded_runtime"]
+        == "${{ inputs.embedded_runtime }}"
+    )
+    assert (
+        called["env"]["E2E_EMBEDDED_RUNTIME"]
+        == "${{ inputs.embedded_runtime || 'legacy' }}"
+    )
+    for trigger in ("workflow_call", "workflow_dispatch"):
+        assert (
+            called[True][trigger]["inputs"]["embedded_runtime"]["default"] == "legacy"
+        )
+
+
+def test_native_live_refuses_a_source_without_the_host_or_staging_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    steps = workflow("dev-ha-env.yml")["jobs"]["env"]["steps"]
+    guard = next(
+        step
+        for step in steps
+        if step.get("name") == "Require the real Native host and staging fixture"
+    )
+    assert guard["if"] == "inputs.embedded_runtime == 'native'"
+    checkout = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("with", {}).get("path") == "src"
+    )
+    boot = next(
+        index for index, step in enumerate(steps) if "hold.pid" in step.get("run", "")
+    )
+    assert checkout < steps.index(guard) < boot
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(
+        SystemExit, match="Native live requires the host and staging fixture"
+    ):
+        _run_preflight(guard)
+    monkeypatch.chdir(Path(__file__).resolve().parents[3])
+    _run_preflight(guard)
 
 
 def test_hacs_owner_workflow_is_callable_without_publishing_authority() -> None:
