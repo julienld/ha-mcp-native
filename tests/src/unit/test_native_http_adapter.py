@@ -11,24 +11,59 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("probe", "case"),
     [
-        "streaming",
-        "oversized",
-        "buffered",
-        "fastmcp",
-        "peer_eof",
-        "peer_payload",
-        "eof_race",
+        ("_native_http_probe", case)
+        for case in (
+            "streaming",
+            "oversized",
+            "buffered",
+            "fastmcp",
+            "peer_eof",
+            "peer_payload",
+            "eof_race",
+        )
+    ]
+    + [
+        ("_native_http_contract_probe", case)
+        for case in (
+            "independent_import",
+            "scope_direct",
+            "scope_proxy",
+            "body_declared_oversized",
+            "body_exact",
+            "body_empty",
+            "framing_head",
+            "framing_no_content",
+            "framing_error",
+            "disconnect_before_receive",
+            "disconnect_after_receive",
+            "eof_receive_and_late_send",
+            "cancellation",
+            "incomplete_response",
+            "write_backpressure",
+            "buffered_cleanup",
+        )
+    ]
+    + [
+        ("_native_http_wire_probe", case)
+        for case in (
+            "head_wire",
+            "no_content_wire",
+            "not_modified_wire",
+            "fastmcp_head_wire",
+        )
     ],
 )
-def test_native_http_adapter(case: str, tmp_path: Path) -> None:
+def test_native_http_adapter(probe: str, case: str, tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[3]
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import asyncio,sys; from tests.src.unit._native_http_probe import run; asyncio.run(run(sys.argv[1]))",
+            "import asyncio,sys; from importlib import import_module; "
+            "asyncio.run(import_module('tests.src.unit.' + sys.argv[1]).run(sys.argv[2]))",
+            probe,
             case,
         ],
         cwd=root,

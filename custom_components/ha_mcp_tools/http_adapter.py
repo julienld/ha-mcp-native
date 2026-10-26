@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiohttp import web
+from aiohttp.helpers import must_be_empty_body
 from multidict import CIMultiDict
 
 ASGIMessage = dict[str, Any]
@@ -99,6 +100,7 @@ class _Invocation:
         self.complete = False
         self.closed = asyncio.Event()
         self.response: web.StreamResponse | None = None
+        self.suppress_body = False
 
     def disconnected(self) -> bool:
         transport = self.request.transport
@@ -152,12 +154,16 @@ class _Invocation:
         self.response = web.StreamResponse(
             status=message["status"], headers=_headers(message)
         )
+        self.suppress_body = must_be_empty_body(
+            self.request.method, self.response.status
+        )
         await self.response.prepare(self.request)
 
     async def write(self, message: ASGIMessage) -> None:
         if self.response is None:
             raise RuntimeError("ASGI response body precedes response start")
-        if payload := message.get("body", b""):
+        # StreamResponse strips forbidden framing, but write() still sends bytes.
+        if (payload := message.get("body", b"")) and not self.suppress_body:
             await self.response.write(payload)
         if not message.get("more_body", False):
             await self.response.write_eof()

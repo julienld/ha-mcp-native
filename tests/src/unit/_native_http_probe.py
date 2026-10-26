@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -54,11 +55,14 @@ async def streaming() -> None:
         await send({"type": "http.response.body", "body": b"data: last\n\n"})
 
     async def handle(request: web.Request) -> web.StreamResponse:
-        return await module.serve_asgi(
-            asgi,
-            request,
-            lifespan_state={"live": 1},
-            request_state={"identity": "trusted"},
+        return cast(
+            web.StreamResponse,
+            await module.serve_asgi(
+                asgi,
+                request,
+                lifespan_state={"live": 1},
+                request_state={"identity": "trusted"},
+            ),
         )
 
     app = web.Application()
@@ -71,6 +75,9 @@ async def streaming() -> None:
         )
         assert await response.content.readline() == b"data: first\n"
         assert response.headers.getall("Set-Cookie") == ["a=1", "b=2"]
+        assert response.headers["Cache-Control"] == "no-cache, no-transform"
+        assert response.headers["Content-Encoding"] == "identity"
+        assert response.headers["X-Accel-Buffering"] == "no"
         assert observed["state"] == {"live": 1, "identity": "trusted"}
         assert observed["query_string"] == b"q=a/b"
         assert observed["body"]["body"] == b"input"
@@ -87,9 +94,12 @@ async def oversized() -> None:
         called = True
 
     async def handle(request: web.Request) -> web.StreamResponse:
-        return await module.serve_asgi(asgi, request, max_body_bytes=4)
+        return cast(
+            web.StreamResponse,
+            await module.serve_asgi(asgi, request, max_body_bytes=4),
+        )
 
-    async def chunks():
+    async def chunks() -> AsyncIterator[bytes]:
         yield b"123"
         yield b"456"
 
@@ -148,7 +158,10 @@ async def fastmcp() -> None:
     async with app.lifespan(app) as state:
 
         async def handle(request: web.Request) -> web.StreamResponse:
-            return await module.serve_asgi(app, request, lifespan_state=state)
+            return cast(
+                web.StreamResponse,
+                await module.serve_asgi(app, request, lifespan_state=state),
+            )
 
         aiohttp_app = web.Application()
         aiohttp_app.router.add_post("/api/webhook/test", handle)
@@ -177,7 +190,7 @@ async def peer_closes_after_result(payload: bytes) -> None:
     release = asyncio.Event()
     finished = asyncio.Event()
     errors = []
-    requests = []
+    requests: list[web.Request] = []
 
     async def asgi(scope: dict, receive: Any, send: Any) -> None:
         await receive()
@@ -205,7 +218,7 @@ async def peer_closes_after_result(payload: bytes) -> None:
     async def handle(request: web.Request) -> web.StreamResponse:
         requests.append(request)
         try:
-            return await module.serve_asgi(asgi, request)
+            return cast(web.StreamResponse, await module.serve_asgi(asgi, request))
         except OSError as error:
             errors.append(type(error).__name__)
             raise
