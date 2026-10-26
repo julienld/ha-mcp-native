@@ -55,6 +55,19 @@ def system(lifecycle: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     world.entry = entry
     world.entries = entries
     world.config = config
+    world.migration = False
+    world.backup = SimpleNamespace(state="idle")
+    world.manager.hass.data = {"backup_manager": world.backup}
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.helpers.recorder",
+        SimpleNamespace(async_migration_in_progress=lambda hass: world.migration),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.backup",
+        SimpleNamespace(async_get_manager=lambda hass: world.backup),
+    )
     return world
 
 
@@ -216,3 +229,58 @@ async def test_repeated_cancellation_drains_the_owned_reload(system: Any) -> Non
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 1)
     owner.async_reload.assert_awaited_once()
+
+
+@pytest.mark.parametrize("busy", ["database", "backup"])
+async def test_restart_refuses_core_busy_state_before_scheduling(system, busy):
+    if busy == "database":
+        system.migration = True
+    else:
+        system.backup.state = "create_backup"
+    try:
+        result = await _call(system, "ha_restart", confirm=True)
+        assert result.is_error and result.status == "not_started", result.data
+        assert result.data["error"]["code"] == "RESOURCE_LOCKED"
+        assert not system.owner.pending and not system.calls
+    finally:
+        await system.owner.stop()
+
+
+async def test_safe_restart_retains_actor_and_warns_server_stays_down(system):
+    system.owner.reply_delay = 0
+    result = await _call(system, "ha_restart", confirm=True, safe_mode=True)
+    assert not result.is_error, result.data
+    assert result.data["scheduled"] and "Safe mode" in str(result.data["warnings"])
+    await asyncio.gather(*tuple(system.owner.pending))
+    await asyncio.gather(*system.tasks)
+    args, kwargs, *_ = system.calls[0]
+    assert args == ("homeassistant", "restart", {"safe_mode": True})
+    assert kwargs["context"].user_id == "actor"
+
+
+async def test_restart_rechecks_backup_after_reply_before_handoff(system):
+    system.owner.reply_delay = 0
+    result = await _call(system, "ha_restart", confirm=True)
+    assert not result.is_error and result.data["scheduled"]
+    system.backup.state = "restore_backup"
+    await asyncio.gather(*tuple(system.owner.pending))
+    assert not system.calls and not system.owner.pending
+
+
+async def test_unavailable_backup_manager_is_disclosed_in_restart_warning(
+    system, monkeypatch
+):
+    from homeassistant.exceptions import HomeAssistantError
+
+    def unavailable(hass):
+        raise HomeAssistantError("Backup integration is not available")
+
+    monkeypatch.setattr(
+        sys.modules["homeassistant.components.backup"], "async_get_manager", unavailable
+    )
+    try:
+        result = await _call(system, "ha_restart", confirm=True)
+        assert not result.is_error and result.data["scheduled"]
+        assert "Could not read the backup status" in str(result.data["warnings"])
+    finally:
+        await system.owner.stop()

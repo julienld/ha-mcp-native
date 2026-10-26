@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from ._embedded_stubs import install
 
@@ -151,3 +154,99 @@ async def test_best_practices_change_during_wait_blocks_before_execution() -> No
     result = await operation
     assert result.status == "not_started"
     handler.assert_not_awaited()
+
+
+async def test_dynamic_timeout_expires_request_without_offering_a_dead_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ha_mcp.policy.approval_queue import PendingApproval
+
+    manager, engine, handler, announced = runtime()
+    name = "ha_bulk_control"
+    engine.register(ToolDefinition(name, name, {}, handler))
+    manager.policy.security_policy = Policy(rules=[Rule(tool_name=name)])
+    monkeypatch.setattr(PendingApproval, "wait", AsyncMock(side_effect=TimeoutError))
+    result = await engine.call(
+        name, {"selector": {"domain": "light"}}, CallContext("alice", "assist")
+    )
+    token = (await announced.get())["token"]
+    assert result.is_error and result.status == "not_started"
+    assert result.data["error"]["code"] == "USER_APPROVAL_REQUIRED"
+    assert "expired" in result.data["error"]["message"]
+    assert "approval_token" not in result.data
+    assert "approval_continuation" not in result.data
+    assert manager.approval_gate.queue.get(token) is None
+    assert not manager.approval_gate.queue.approve(token)
+    handler.assert_not_awaited()
+
+
+async def test_static_timeout_keeps_an_approvable_request_for_the_same_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ha_mcp.policy.approval_queue import PendingApproval
+
+    manager, engine, handler, _announced = runtime()
+    actor = CallContext("alice", "client")
+    with monkeypatch.context() as timeout:
+        timeout.setattr(PendingApproval, "wait", AsyncMock(side_effect=TimeoutError))
+        result = await engine.call("write", {"value": 1}, actor)
+    assert result.is_error and result.status == "pending"
+    token = result.data["approval_token"]
+    assert manager.approval_gate.queue.approve(token)
+    handler.assert_not_awaited()
+    resumed = await engine.call("write", {"value": 1}, actor)
+    assert resumed.status == "confirmed" and not resumed.is_error
+    handler.assert_awaited_once()
+
+
+async def test_nested_dynamic_timeout_does_not_replay_prior_script_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from custom_components.ha_mcp_tools.native_approvals import MCP_APPROVAL_CONTEXT
+    from ha_mcp.policy.approval_queue import PendingApproval
+
+    from .test_native_code import runtime as code_runtime
+
+    manager, _code = await code_runtime(tmp_path, monkeypatch)
+    manager.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=MagicMock()))
+    manager.policy = replace(
+        manager.policy,
+        security_policy=Policy(rules=[Rule(tool_name="ha_bulk_control")]),
+    )
+    gate = NativeApprovalGate(manager)
+    manager.engine.policy_guard = gate
+    prior = AsyncMock(return_value={"changed": True})
+    blocked = AsyncMock()
+    manager.engine.register(ToolDefinition("write", "Write", {}, prior))
+    manager.engine.register(ToolDefinition("ha_bulk_control", "Bulk", {}, blocked))
+    monkeypatch.setattr(PendingApproval, "wait", AsyncMock(side_effect=TimeoutError))
+    # A wire context must never turn the enclosing script into an MRTR retry.
+    from .policy.test_mrtr import context
+
+    token = MCP_APPROVAL_CONTEXT.set(context(name="ha_manage_custom_tool"))
+    try:
+        result = await manager.engine.call(
+            "ha_manage_custom_tool",
+            {
+                "code": "await call_tool('write', {})\nawait call_tool('ha_bulk_control', {'selector': {'domain': 'light'}})",
+                "justification": "Compose native writes",
+            },
+            CallContext("alice", "client"),
+        )
+    finally:
+        MCP_APPROVAL_CONTEXT.reset(token)
+    prior.assert_awaited_once()
+    blocked.assert_not_awaited()
+    assert not gate.queue.list_pending()
+    data = result.data["data"]
+    assert [operation["status"] for operation in data["operations"]] == [
+        "confirmed",
+        "not_started",
+    ]
+    assert "expired" in data["result"]["error"]["message"]
+    assert "enclosing tool or script" in data["result"]["error"]["message"]
+    assert "approval_token" not in data["result"]
+    assert "approval_continuation" not in data["result"]

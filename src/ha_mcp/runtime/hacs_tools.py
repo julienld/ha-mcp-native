@@ -74,7 +74,7 @@ class HacsFacade:
         ] = None,
         ctx: Any = None,
     ) -> dict[str, Any]:
-        """Get HACS (Home Assistant Community Store) data — search the store or fetch repository details.
+        """Get cached HACS or Home Assistant Marketplace data — search the store or read repository details.
 
         Use ``action="search"`` to search/browse/list store repositories, or
         ``action="info"`` for one repository's full details (README, versions, GitHub
@@ -89,13 +89,13 @@ class HacsFacade:
         - List installed: ha_get_hacs_info(action="search", installed_only=True)
         - Repository details: ha_get_hacs_info(action="info", repository_id="441028036")
 
-        **Caveats:** Native ``info`` reads only the already-loaded HACS cache,
+        **Caveats:** ``info`` reads only the already-loaded store cache,
         including cached README/additional information when available, and reports
         freshness. It never refreshes GitHub or clears HACS's new flag. Use
         ha_manage_hacs(action="update_information") to refresh explicitly. The
-        legacy remote info endpoint may fetch GitHub and update HACS metadata;
-        GitHub rate limits and HACS's configured credentials apply there.
-        ``search`` reads HACS's locally cached repository index.
+        remote path needs the component cache capability for full details; without
+        it, cached catalog fields are returned with an explicit completeness note.
+        Marketplace no longer supports appdaemon or python_script repositories.
         """
         if action == "search":
             return await self.hacs._hacs_search(
@@ -152,7 +152,7 @@ class HacsFacade:
             Field(description="Repository category (action='add_repository')"),
         ] = None,
     ) -> dict[str, Any]:
-        """Manage HACS (Home Assistant Community Store) — install/update, remove, add custom repositories, or refresh repository information.
+        """Manage HACS or Home Assistant Marketplace — install/update, remove, add repositories, or refresh metadata.
 
         This tool performs writes; to search the store or read repository details use
         ``ha_get_hacs_info``. Use ``action="update_information"`` to run the HACS UI's
@@ -177,6 +177,9 @@ class HacsFacade:
         files while the existing runtime remains loaded; the response reports
         pending_restart and never claims that a new runtime is active. No automatic
         restart or config-entry removal is performed by these tools.
+        Marketplace requires this caller's warning acceptance in its UI before
+        installation, and a connected GitHub account to add custom repositories.
+        The tool never accepts the warning on the caller's behalf.
         """
         # Reject parameters that don't belong to the chosen action rather
         # than silently discarding them — ha_manage_hacs(action="remove",

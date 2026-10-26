@@ -1,4 +1,4 @@
-"""Native old-style groups use actual Core entity owners and their callbacks."""
+"""Native old-style groups use Core services with pinned safety images."""
 
 import asyncio
 import json
@@ -9,10 +9,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import json_bytes
 
 from ha_mcp.runtime.group_values import (
-    group_action_word,
     group_list_result,
     group_remove_result,
+    group_remove_warnings,
     group_set_result,
+    group_set_warnings,
 )
 from ha_mcp.runtime.mutation_guard import check_mutation_admission
 from ha_mcp.tool_api import CallContext, ToolFailure, UnsupportedOperation
@@ -97,18 +98,25 @@ class NativeGroups:
                 warnings = await self._capture(
                     fields["object_id"], before, "ha_config_set_group"
                 )
+                warnings.extend(
+                    group_set_warnings(
+                        fields,
+                        existed=owner is not None,
+                        auto=bool(before and before["created_by_service"]),
+                    )
+                )
                 await self._admit(component, entity_id, owner, before)
                 await await_owned_io(
                     self._set_owned(component, entity_id, owner, before, fields)
                 )
-                if wait and not await wait_registered(
-                    self.hass, {"entity_id": entity_id}
-                ):
+                if wait and not await self._verify_presence("set", entity_id):
                     warnings.append(
-                        f"Group {group_action_word(fields)} but {entity_id} not yet queryable. It may take a moment to become available."
+                        f"Group {'updated' if before is not None else 'created'} but {entity_id} not yet queryable. It may take a moment to become available."
                     )
                 return group_set_result(
-                    fields, {"warnings": warnings} if warnings else {}
+                    fields,
+                    {"warnings": warnings} if warnings else {},
+                    existed=before is not None,
                 )
         except Exception as error:
             raise registry_failure(
@@ -133,8 +141,9 @@ class NativeGroups:
         before: Any,
         fields: dict[str, Any],
     ) -> None:
-        from homeassistant.components.group.entity import Group
         from homeassistant.core import Context
+
+        from .group_writes import expected_values
 
         await self._admit(component, entity_id, owner, before)
         if owner is None and self.hass.states.get(entity_id) is not None:
@@ -143,74 +152,51 @@ class NativeGroups:
                 "The group ID became occupied before creation",
                 status="not_started",
             )
+        expected = expected_values(before, fields)
+        # Only snapshot restoration can request None. Core's service schema
+        # cannot clear an icon, though Group.set_icon supports it.
+        clear_icon = "icon" in fields and fields["icon"] is None
+        payload = {
+            key: value
+            for key, value in fields.items()
+            if key != "icon" or not clear_icon
+        }
         context = Context(user_id=self.actor.user_id)
         try:
-            if owner is None:
-                # Core creates its actual Group, allocates its ID/order, and
-                # installs all membership listeners through EntityComponent.
-                owner = Group.async_create_group_entity(
-                    self.hass,
-                    fields.get("name", fields["object_id"]),
-                    created_by_service=True,
-                    entity_ids=fields.get("entities")
-                    or fields.get("add_entities")
-                    or None,
-                    icon=fields.get("icon"),
-                    mode=fields.get("all"),
-                    object_id=fields["object_id"],
-                    order=None,
-                )
-                # The entity factory exists across supported Core releases;
-                # August's async_create_group cannot accept a context. Set it
-                # before EntityComponent publishes the first state.
-                owner.async_set_context(context)
-                await component.async_add_entities([owner])
-                if owner.entity_id != entity_id:
-                    raise RuntimeError("Core created a different group identity")
-                self._same_owner(component, entity_id, owner)
-                records.assert_group_values(
-                    owner,
-                    {
-                        "object_id": fields["object_id"],
-                        "name": fields.get("name", fields["object_id"]),
-                        "entities": fields.get("entities")
-                        or fields.get("add_entities")
-                        or [],
-                        "icon": fields.get("icon"),
-                        "all": fields.get("all", False),
-                        "created_by_service": True,
-                    },
-                )
-                return
-            self._update(component, entity_id, owner, fields, context)
+            await self.hass.services.async_call(
+                "group",
+                "set",
+                payload,
+                blocking=True,
+                context=context,
+            )
+            actual = records.target(component, entity_id)
+            if actual is None or (owner is not None and actual is not owner):
+                raise RuntimeError("Core did not retain the group identity")
+            self._same_owner(component, entity_id, actual)
+            acknowledged = dict(expected)
+            if clear_icon:
+                acknowledged["icon"] = before["icon"] if before else None
+            records.assert_group_values(actual, acknowledged)
+            if clear_icon and actual.icon is not None:
+                await admit_registry_write(self.actor, self.authorize)
+                self._same_owner(component, entity_id, actual)
+                records.assert_group_values(actual, acknowledged)
+                actual.async_set_context(context)
+                actual.set_icon(None)
+                self._guard_callback(component, entity_id, actual)
+                actual.async_write_ha_state()
+                self._guard_callback(component, entity_id, actual)
+                records.assert_group_values(actual, expected)
         except (Exception, asyncio.CancelledError) as error:
-            raise self._unknown(
-                "set", entity_id, getattr(owner, "entity_id", None)
-            ) from error
+            raise self._unknown("set", entity_id) from error
 
     def _same_owner(self, component: Any, entity_id: str, owner: Any) -> None:
         if (
             records.component(self.hass) is not component
             or records.target(component, entity_id) is not owner
         ):
-            raise RuntimeError("The group owner changed during its callback")
-
-    def _update(
-        self,
-        component: Any,
-        entity_id: str,
-        owner: Any,
-        fields: dict[str, Any],
-        context: Any,
-    ) -> None:
-        from .group_writes import apply_fields
-
-        owner.async_set_context(context)
-        apply_fields(
-            owner,
-            fields,
-            lambda: self._guard_callback(component, entity_id, owner),
-        )
+            raise RuntimeError("The group owner changed during its mutation")
 
     def _guard_callback(self, component: Any, entity_id: str, owner: Any) -> None:
         check_mutation_admission(self.actor)
@@ -227,14 +213,26 @@ class NativeGroups:
                 component = records.component(self.hass)
                 owner = records.target(component, entity_id)
                 before = records.group_snapshot(owner)
+                if owner is None:
+                    raise ToolFailure(
+                        "ENTITY_NOT_FOUND",
+                        f"Group '{entity_id}' not found",
+                        status="not_started",
+                    )
                 warnings = await self._capture(
                     object_id, before, "ha_config_remove_group"
+                )
+                warnings.extend(
+                    group_remove_warnings(
+                        entity_id,
+                        auto=bool(before and before["created_by_service"]),
+                    )
                 )
                 await await_owned_io(
                     self._remove_owned(component, entity_id, owner, before)
                 )
                 result: dict[str, Any] = {"warnings": warnings} if warnings else {}
-                if wait and not await wait_removed(self.hass, {"entity_id": entity_id}):
+                if wait and not await self._verify_presence("remove", entity_id):
                     result.setdefault("warnings", []).append(
                         "Group removal completed but its state is still present; the mutation was not repeated."
                     )
@@ -260,6 +258,13 @@ class NativeGroups:
                 raise RuntimeError("The group identity is still occupied after removal")
         except (Exception, asyncio.CancelledError) as error:
             raise self._unknown("remove", entity_id) from error
+
+    async def _verify_presence(self, action: str, entity_id: str) -> bool:
+        observer = wait_registered if action == "set" else wait_removed
+        try:
+            return await observer(self.hass, {"entity_id": entity_id})
+        except (Exception, asyncio.CancelledError) as error:
+            raise self._unknown(action, entity_id) from error
 
     @staticmethod
     def _unknown(

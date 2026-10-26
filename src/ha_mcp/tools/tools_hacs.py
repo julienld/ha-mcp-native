@@ -22,6 +22,13 @@ from ..client.rest_client import (
 )
 from ..client.websocket_client import HomeAssistantWebSocketClient
 from ..errors import ErrorCode, create_error_response
+from ..runtime.hacs_remote import (
+    MarketplaceRemote,
+    cached_repository,
+    command,
+    try_hacs_update,
+    unknown_command,
+)
 from ..runtime.hacs_results import (
     added_data,
     download_data,
@@ -54,49 +61,33 @@ from .tool_hints import read_only_hints, write_hints
 logger = logging.getLogger(__name__)
 
 
-async def _assert_hacs_available(ws_client: HomeAssistantWebSocketClient) -> None:
-    """Raise ToolError if HACS is not installed or not responding.
-
-    Distinguishes "unknown command" (HACS not installed) from other failures
-    (HACS installed but broken) so the error message is accurate.
-
-    Must be called within a try block that handles API errors via
-    exception_to_structured_error, so connection failures are classified
-    correctly rather than masked as COMPONENT_NOT_INSTALLED.
-    """
-    response = await ws_client.send_command("hacs/info")
-    if response.get("success"):
-        return
-
-    error = response.get("error", {})
-    error_code = error.get("code") if isinstance(error, dict) else None
-    error_message = error.get("message", "") if isinstance(error, dict) else str(error)
-
-    # "unknown_command" means HACS is not installed at all
-    if error_code == "unknown_command" or "unknown command" in error_message.lower():
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.COMPONENT_NOT_INSTALLED,
-                "HACS is not installed.",
-                suggestions=[
-                    "Install HACS from https://hacs.xyz/",
-                    "Restart Home Assistant after HACS installation",
-                ],
-            )
+async def _assert_hacs_available(ws_client: HomeAssistantWebSocketClient) -> str:
+    """Select a loaded store with read-only probes before any mutation."""
+    available = []
+    for domain in ("hacs", "marketplace"):
+        try:
+            await command(ws_client, f"{domain}/info")
+        except HomeAssistantCommandError as error:
+            if unknown_command(error) or (
+                domain == "marketplace" and error.code == "not_loaded"
+            ):
+                continue
+            raise
+        else:
+            available.append(domain)
+    if len(available) > 1:
+        raise ToolFailure(
+            "CONFIG_CONFLICT",
+            "Both HACS and Marketplace are loaded; resolve their ownership before using store tools.",
+            status="not_started",
         )
-
-    # HACS is installed but not responding correctly
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.COMPONENT_NOT_INSTALLED,
-            f"HACS is installed but not responding: {error_message or 'unknown error'}",
-            suggestions=[
-                "Restart Home Assistant",
-                "Check Home Assistant logs for HACS errors",
-                "Verify HACS is up to date",
-            ],
+    if not available:
+        raise ToolFailure(
+            "COMPONENT_NOT_INSTALLED",
+            "Neither HACS nor Marketplace is loaded.",
+            status="not_started",
         )
-    )
+    return available[0]
 
 
 def _hacs_legacy_errors(function: Any) -> Any:
@@ -152,7 +143,9 @@ class HacsTools:
         self._client = client
         self.hacs = self
 
-    async def _get_hacs_client(self) -> HomeAssistantWebSocketClient:
+    async def _get_hacs_client(
+        self,
+    ) -> HomeAssistantWebSocketClient | MarketplaceRemote:
         """Check HACS on the current request's connection, including OAuth users."""
         from ..client.websocket_client import get_websocket_client
 
@@ -161,8 +154,12 @@ class HacsTools:
             token=self._client.token,
             verify_ssl=self._client.verify_ssl,
         )
-        await _assert_hacs_available(ws_client)
+        if await _assert_hacs_available(ws_client) == "marketplace":
+            return MarketplaceRemote(ws_client)
         return ws_client
+
+    async def _store_result(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {"success": True, **await add_timezone_metadata(self._client, data)}
 
     # --- Private action handlers ------------------------------------------
     # The public tools above are thin dispatchers; each handler raises a
@@ -186,6 +183,13 @@ class HacsTools:
         )
 
         ws_client = await self._get_hacs_client()
+
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(
+                await ws_client.search(
+                    query, category, installed_only, max_results, offset
+                )
+            )
 
         # Build command parameters - map user-friendly category to HACS internal name
         kwargs_cmd: dict[str, Any] = {}
@@ -230,45 +234,23 @@ class HacsTools:
 
     async def _hacs_info(self, repository_id: str) -> dict[str, Any]:
         ws_client = await self._get_hacs_client()
-
-        # If repository_id contains a slash, it's a GitHub path - look up numeric ID
-        actual_id, _ = await _resolve_hacs_repo_id(ws_client, repository_id)
-
-        # Get repository info via WebSocket using numeric ID. The WS client
-        # RAISES on a failed result frame, so that — not the dict branch
-        # below, which serves stubbed clients — is where a real HACS failure
-        # lands; keep the command context attached (mirrors ``_hacs_remove``).
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(await ws_client.info(repository_id))
         try:
-            response = await ws_client.send_command(
-                "hacs/repository/info", repository_id=actual_id
-            )
+            result, cache = await cached_repository(ws_client, "hacs", repository_id)
         except HomeAssistantCommandError as cmd_err:
             exception_to_structured_error(
                 cmd_err,
                 context={
-                    "command": "hacs/repository/info",
+                    "command": "ha_mcp_tools/hacs_cache",
                     "repository_id": repository_id,
                 },
                 raise_error=True,
             )
-
-        if not response.get("success"):
-            exception_to_structured_error(
-                Exception(f"HACS repository info request failed: {response}"),
-                context={
-                    "command": "hacs/repository/info",
-                    "repository_id": repository_id,
-                },
-                raise_error=True,
-            )
-
-        # ``or {}`` (not a ``.get`` default) so a present-but-null ``result``
-        # still yields a dict for the ``.get`` calls and note stamping below.
-        result = response.get("result") or {}
 
         wrapped = await add_timezone_metadata(
             self._client,
-            info_data(repository_id, result),
+            {**info_data(repository_id, result), "cache": cache},
         )
         return {"success": True, **wrapped}
 
@@ -292,8 +274,16 @@ class HacsTools:
         )
         ws_client = await self._get_hacs_client()
 
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(
+                await ws_client.write("download", repository_id, version)
+            )
+
         # Resolve GitHub path to numeric ID if needed
         actual_id, repo_name = await _resolve_hacs_repo_id(ws_client, repository_id)
+
+        if updated := await try_hacs_update(ws_client, actual_id, version):
+            return await self._store_result(updated)
 
         # Build download command parameters
         download_kwargs: dict[str, Any] = {"repository": actual_id}
@@ -372,39 +362,18 @@ class HacsTools:
         )
         ws_client = await self._get_hacs_client()
 
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(
+                await ws_client.write("remove", repository_id)
+            )
+
         actual_id, repo_name = await _resolve_hacs_repo_id(ws_client, repository_id)
 
-        # HACS's remove command "succeeds" on a store-only repository (its
-        # uninstall no-ops when no files are downloaded), which would report
-        # "Successfully removed" for something never installed. Check the
-        # installed state first. The WS client RAISES on a failed info frame
-        # (it never returns success=False), so the probe must swallow those
-        # to fall through — otherwise an info hiccup (GitHub rate limit,
-        # transient) would abort the call before the remove is ever sent,
-        # with an error misattributed to the probe. The same probe supplies
-        # the real repository name for numeric IDs, which the resolve
-        # short-circuit echoes back verbatim — without it the response could
-        # not confirm WHICH repository the ID identified.
-        # NOTE: HACS's WS API is asymmetric — info takes ``repository_id``
-        # while remove takes ``repository`` (caught by the e2e contract
-        # tests; the unit mocks cannot see the real schema).
-        try:
-            info = await ws_client.send_command(
-                "hacs/repository/info", repository_id=actual_id
-            )
-        except (HomeAssistantCommandError, HomeAssistantCommandTimeout) as probe_err:
-            logger.debug(
-                "Installed-state probe failed for %s; proceeding to remove: %s",
-                actual_id,
-                probe_err,
-            )
-            info = {}
-        info_result = info.get("result") or {}
-        if info.get("success"):
-            repo_name = (
-                info_result.get("full_name") or info_result.get("name") or repo_name
-            )
-        if info.get("success") and not info_result.get("installed"):
+        # The info handler itself refreshes and clears metadata; use only the
+        # cache bridge/catalog before deciding whether files can be removed.
+        info_result, _cache = await cached_repository(ws_client, "hacs", actual_id)
+        repo_name = info_result.get("full_name") or info_result.get("name") or repo_name
+        if not info_result.get("installed"):
             raise_tool_error(
                 create_error_response(
                     ErrorCode.RESOURCE_NOT_FOUND,
@@ -488,6 +457,11 @@ class HacsTools:
         )
         ws_client = await self._get_hacs_client()
 
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(
+                await ws_client.write("update_information", repository_id)
+            )
+
         actual_id, repo_name = await _resolve_hacs_repo_id(ws_client, repository_id)
 
         # Without the explicit timeout context, the generic classifier reports
@@ -546,6 +520,13 @@ class HacsTools:
         self, repository: str, category: str
     ) -> dict[str, Any]:
         ws_client = await self._get_hacs_client()
+
+        if isinstance(ws_client, MarketplaceRemote):
+            return await self._store_result(
+                await ws_client.write(
+                    "add_repository", repository=repository, category=category
+                )
+            )
 
         # Validate repository format
         if "/" not in repository:

@@ -375,7 +375,7 @@ class HaMcpTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> Any:
+    ) -> llm.ToolResult:
         """Call the tool on the in-process server and return its result."""
         dumped = await _forward_tool_call(
             hass,
@@ -465,7 +465,7 @@ class HaMcpCallTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> JsonObjectType:
+    ) -> llm.ToolResult:
         """Forward the call when the target is exposed; unknown-tool otherwise."""
         name = str(tool_input.tool_args.get("name", ""))
         arguments = tool_input.tool_args.get("arguments") or {}

@@ -83,6 +83,11 @@ from .dependency_diagnostics import (
     requirement_forces_conflict,
     root_import_failure,
 )
+from .embedded_worker_teardown import (
+    shutdown_server_resources_bounded,
+    teardown_worker_loop,
+)
+from .loopback_url import derive_loopback_url
 from .paired_wheel import paired_wheel_matches
 from .pip_compat import pip_kwargs
 from .runtime_generation import RESTART_REQUIRED, native_bound_version
@@ -121,16 +126,6 @@ _READY_POLL_INTERVAL_SECONDS = 0.5
 # leaking it rather than blocking HA shutdown.
 _STOP_JOIN_TIMEOUT_SECONDS = 10.0
 
-# Budget for each teardown phase (the _serve resource cleanup and the
-# worker-loop pending-task sweep). Mirrors the CLI runner's
-# SHUTDOWN_TIMEOUT_SECONDS: both phases together must finish inside
-# _STOP_JOIN_TIMEOUT_SECONDS, or async_stop declares the worker orphaned
-# while the old thread is still executing shared ha_mcp modules. The budget
-# bounds only the phases that accept one — asyncgen finalization and
-# uvicorn's post-drain lifespan shutdown remain unbounded — so it buys
-# headroom, not a hard ceiling on the join.
-_TEARDOWN_TIMEOUT_SECONDS = 2.0
-
 # Per-download HTTP timeout for a forced reinstall. The first install pulls the
 # whole fastmcp tree, well beyond HA's 60s requirements default.
 _PIP_INSTALL_TIMEOUT_SECONDS = 300
@@ -158,50 +153,6 @@ _PENDING_INSTALL_WAIT_SECONDS = 600.0
 # Older distributions can be left behind by an unsupported Core version's
 # constraints and must never enter the worker thread.
 MIN_EMBEDDED_SERVER_VERSION = "7.10.0"
-
-
-def _derive_loopback_url(hass: HomeAssistant) -> tuple[str, bool | None]:
-    """Resolve the loopback base URL for HA core from the http integration.
-
-    Returns ``(url, verify_ssl)`` where ``verify_ssl`` is ``False`` when the
-    URL is ``https`` (HA's certificate is issued for its hostname, never for
-    127.0.0.1, so verification on the loopback hop can only fail) and ``None``
-    when no override of the server's default is needed.
-
-    The hardcoded ``http://127.0.0.1:8123`` default this replaces broke every
-    instance with ``http.ssl_certificate`` configured (issue #1890): port 8123
-    speaks TLS there, so the server's plaintext REST/WS calls died with
-    "Server disconnected without sending a response" / "did not receive a
-    valid HTTP response" on every tool call — while the MCP handshake and
-    tools/list (no HA round-trip) kept working. A custom ``server_port``
-    similarly broke the hardcoded port. Both live in ``hass.config.api``,
-    set by the ``http`` integration this component depends on; the constant
-    remains the fallback if it is ever absent.
-    """
-    api = getattr(hass.config, "api", None)
-    if api is None:
-        # Leave a trail: if this ever fires on a real instance, the resulting
-        # failure looks exactly like issue #1890 (TLS loopback broken, MCP
-        # handshake fine) and took a live reproduction to diagnose last time.
-        _LOGGER.debug(
-            "hass.config.api unavailable; using hardcoded loopback default %s",
-            DEFAULT_LOOPBACK_URL,
-        )
-        return DEFAULT_LOOPBACK_URL, None
-    # Strict type checks (not coercion / truthiness): a malformed api object
-    # must resolve to the plaintext default on port 8123, never to a surprise
-    # port or https flip. bool is excluded because it is an int subclass.
-    port_raw = getattr(api, "port", None)
-    port = (
-        port_raw
-        if isinstance(port_raw, int)
-        and not isinstance(port_raw, bool)
-        and 0 < port_raw <= 65535
-        else 8123
-    )
-    if getattr(api, "use_ssl", False) is True:
-        return f"https://127.0.0.1:{port}", False
-    return f"http://127.0.0.1:{port}", None
 
 
 class EmbeddedServerError(Exception):
@@ -304,7 +255,7 @@ class EmbeddedServerManager:
         if _url_override and _url_override != DEFAULT_LOOPBACK_URL:
             self._server_url: str = _url_override
         else:
-            self._server_url, self._loopback_verify_ssl = _derive_loopback_url(hass)
+            self._server_url, self._loopback_verify_ssl = derive_loopback_url(hass)
         # An explicit pip-spec override (PR / pre-release testing) wins over the
         # server requirement this component release pins in its manifest.
         # DEFAULT_PIP_SPEC in the field means "no override" (the options flow
@@ -331,10 +282,14 @@ class EmbeddedServerManager:
         self._hass_config_dir: str = hass.config.config_dir
 
         # Worker-thread state. ``_loop`` and ``_stop_event`` are created in the
-        # thread before its loop runs, so a stop request can always reach them.
+        # thread, so a stop can come before they exist; ``_stop_requested`` is
+        # replaced by each async_start before Thread.start() and covers that gap
+        # (#2801). _serve checks the worker's copy again before the listener,
+        # where the queued stop_event.set may not have run yet.
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
+        self._stop_requested = threading.Event()
         self._thread_exc: BaseException | None = None
         # A worker that refused to die within the stop-join timeout (e.g.
         # wedged in a slow cold import). Tracked so the next start can skip
@@ -416,6 +371,7 @@ class EmbeddedServerManager:
 
         self._thread_exc = None
         self._startup_phase = "waiting for the worker thread"
+        self._stop_requested = threading.Event()
         self._thread = threading.Thread(
             target=self._thread_main,
             args=(access_token,),
@@ -470,6 +426,9 @@ class EmbeddedServerManager:
         if thread is None:
             return
 
+        # Before reading the event: a worker that publishes it after this read
+        # sees the request and stops itself.
+        self._stop_requested.set()
         loop = self._loop
         stop_event = self._stop_event
         if loop is not None and stop_event is not None and not loop.is_closed():
@@ -1427,6 +1386,8 @@ class EmbeddedServerManager:
         detection see them. The loopback URL and the admin token are handed to
         ha_mcp in memory inside :meth:`_serve` — never via ``os.environ``.
         """
+        # Captured once, so a later start's fresh flag never reaches this worker.
+        stop_requested = self._stop_requested
         os.environ["HA_MCP_CONFIG_DIR"] = self._config_dir
         os.environ["HA_MCP_EMBEDDED"] = "1"
 
@@ -1438,12 +1399,17 @@ class EmbeddedServerManager:
         stop_event = asyncio.Event()
         self._loop = loop
         self._stop_event = stop_event
+        # After publishing: a stop that found no event above set the flag first.
+        if stop_requested.is_set():
+            stop_event.set()
         # Registration in _IMPORTING_WORKERS happened on the MAIN thread,
         # before start() — see async_start. This thread only deregisters:
         # in _serve once the import section completes, and in the finally
         # below on exit as the backstop.
         try:
-            loop.run_until_complete(self._serve(access_token, stop_event))
+            loop.run_until_complete(
+                self._serve(access_token, stop_event, stop_requested)
+            )
         except SystemExit as err:
             # uvicorn signals a startup failure (e.g. the port is already in
             # use) with SystemExit(STARTUP_FAILURE), which ``except Exception``
@@ -1474,9 +1440,14 @@ class EmbeddedServerManager:
         finally:
             with _IMPORTING_WORKERS_LOCK:
                 _IMPORTING_WORKERS.discard(threading.current_thread())
-            _teardown_worker_loop(loop)
+            teardown_worker_loop(loop)
 
-    async def _serve(self, access_token: str, stop_event: asyncio.Event) -> None:  # noqa: PLR0915
+    async def _serve(  # noqa: PLR0915
+        self,
+        access_token: str,
+        stop_event: asyncio.Event,
+        stop_requested: threading.Event,
+    ) -> None:
         """Build the ha-mcp server and run it until a stop is signaled.
 
         Mirrors the CLI HTTP runner in ``ha_mcp.__main__`` without importing it
@@ -1645,9 +1616,20 @@ class EmbeddedServerManager:
         uv_server = uvicorn.Server(config)
 
         self._note_startup_phase("starting the HTTP listener")
-        stop_task = asyncio.create_task(stop_event.wait())
         try:
             async with server.mcp._lifespan_manager():
+                # A stop that came during the cold import, the server build or
+                # the lifespan entry may not have set stop_event yet: async_stop
+                # queues that set with call_soon_threadsafe and sets
+                # stop_requested first. Without this check a stopped worker
+                # would still bind the port.
+                if stop_requested.is_set():
+                    _LOGGER.debug(
+                        "HA-MCP in-process server stopped before its HTTP "
+                        "listener started"
+                    )
+                    return
+                stop_task = asyncio.create_task(stop_event.wait())
                 serve_task = asyncio.create_task(uv_server.serve())
                 done, _pending = await asyncio.wait(
                     {serve_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
@@ -1672,7 +1654,7 @@ class EmbeddedServerManager:
             # loop, while it still runs — otherwise the reader tasks are only
             # cancelled by the thread's loop teardown and their sockets are
             # abandoned to garbage collection (issue #2127).
-            await _shutdown_server_resources_bounded(server)
+            await shutdown_server_resources_bounded(server)
 
     def _progress_signature(self) -> tuple[int, str]:
         """Snapshot the observable startup progress of the worker thread.
@@ -1782,149 +1764,6 @@ class EmbeddedServerManager:
 # surface the condition.
 _IMPORTING_WORKERS_LOCK = threading.Lock()
 _IMPORTING_WORKERS: set[threading.Thread] = set()
-
-
-async def _shutdown_server_resources_bounded(server: Any) -> None:
-    """Run :func:`_shutdown_server_resources` inside the teardown budget.
-
-    An unresponsive peer's close handshake (websockets' 10s default
-    close_timeout) must not eat the whole ``_STOP_JOIN_TIMEOUT_SECONDS`` join
-    budget. Cancel-and-abandon, not ``wait_for``: ``wait_for`` awaits the
-    cancelled coroutine before raising, and the cleanup stack swallows
-    ``CancelledError`` at several layers (per-client in
-    ``WebSocketManager.disconnect``, in ``client.disconnect``'s own
-    task-cancel guard), so a straggler must be left to the thread's loop
-    teardown sweep instead of being joined here.
-    """
-    task = asyncio.ensure_future(_shutdown_server_resources(server))
-    _done, pending = await asyncio.wait({task}, timeout=_TEARDOWN_TIMEOUT_SECONDS)
-    if pending:
-        task.cancel()
-        _LOGGER.warning("Embedded resource cleanup timed out")
-
-
-async def _shutdown_server_resources(server: Any) -> None:
-    """Release the served stack's Home Assistant connections on its own loop.
-
-    Mirrors the CLI runner's ``_cleanup_resources`` (``ha_mcp.__main__``)
-    without importing it: stop the WebSocket listener service, disconnect the
-    pooled WebSocket clients, and close the server's HTTP client. Every step
-    guards independently — a failing step must not keep the next one from
-    running, and no failure here may mask the serve outcome.
-    """
-    try:
-        from ha_mcp.client.websocket_listener import stop_websocket_listener
-
-        await stop_websocket_listener()
-    except ImportError:
-        _LOGGER.debug("WebSocket listener module not available")
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("WebSocket listener cleanup failed: %s", err)
-
-    try:
-        from ha_mcp.client.websocket_client import websocket_manager
-
-        await websocket_manager.disconnect()
-    except ImportError:
-        _LOGGER.debug("WebSocket manager module not available")
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("WebSocket manager cleanup failed: %s", err)
-
-    try:
-        await server.close()
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Server cleanup failed: %s", err)
-
-
-def _cancel_pending_tasks(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancel every task still pending on ``loop`` and wait them out.
-
-    Mirrors ``asyncio.runners._cancel_all_tasks`` — the step ``asyncio.run``
-    performs between the main coroutine returning and asyncgen finalization,
-    which this worker's hand-rolled loop lifecycle skipped (issue #2127).
-    Without it, tasks the served stack leaves behind — WebSocket reader tasks
-    parked in ``Connection.__aiter__``, sse_starlette's ``_shutdown_watcher``
-    poll (unreachable by its uvicorn signal hooks on a non-main thread) — are
-    still pending at teardown: ``shutdown_asyncgens()`` then acloses
-    generators mid-``__anext__`` (``RuntimeError: aclose(): asynchronous
-    generator is already running``) and ``loop.close()`` destroys the
-    survivors ("Task was destroyed but it is pending!"), one error pair per
-    entry reload.
-
-    Abandoning is inherently partial: a task that ignores cancellation past
-    the budget and still drives an async generator leaves that generator
-    running, and ``shutdown_asyncgens()`` then reports the same ``aclose()``
-    error this sweep exists to remove. The ignored-cancellation warning
-    below is the tell when that residual fires.
-    """
-    pending = asyncio.all_tasks(loop)
-    if not pending:
-        return
-    for task in pending:
-        task.cancel()
-    # Bounded, unlike asyncio.runners: async_stop joins this worker for only
-    # _STOP_JOIN_TIMEOUT_SECONDS, so a task that ignores cancellation gets
-    # logged and abandoned rather than hanging the join (the CLI's
-    # _cancel_tasks does the same, issue #2027 precedent).
-    done, still_pending = loop.run_until_complete(
-        asyncio.wait(pending, timeout=_TEARDOWN_TIMEOUT_SECONDS)
-    )
-    if still_pending:
-        _LOGGER.warning(
-            "%d task(s) ignored cancellation during worker-loop teardown",
-            len(still_pending),
-        )
-    for task in done:
-        if task.cancelled():
-            continue
-        exc = task.exception()
-        if exc is not None:
-            _LOGGER.warning(
-                "Task %r raised during worker-loop teardown: %r",
-                task.get_name(),
-                exc,
-            )
-
-
-def _teardown_worker_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Drain and close the worker loop with ``asyncio.run`` teardown parity.
-
-    Teardown is best-effort but never SILENT (review finding): a raise here
-    must not mask the primary outcome, yet a recurring cleanup failure
-    (leaking executor threads across reloads) has to be visible in the logs.
-    Each step gets its own guard so one failure cannot skip the others.
-    """
-    try:
-        _cancel_pending_tasks(loop)
-    except Exception:
-        _LOGGER.warning(
-            "Worker-loop task cancellation failed during teardown",
-            exc_info=True,
-        )
-    for _label, _coro_factory in (
-        ("asyncgen", loop.shutdown_asyncgens),
-        # The executor join is bounded too: a stuck executor thread must not
-        # keep the worker alive past the join deadline (abandoning it emits
-        # a RuntimeWarning instead of hanging). The runtime has accepted
-        # timeout= since Python 3.12; typeshed's AbstractEventLoop signature
-        # lags behind, hence the scoped ignore.
-        (
-            "executor",
-            partial(
-                loop.shutdown_default_executor,
-                timeout=_TEARDOWN_TIMEOUT_SECONDS,  # type: ignore[call-arg]
-            ),
-        ),
-    ):
-        try:
-            loop.run_until_complete(_coro_factory())
-        except Exception:
-            _LOGGER.warning(
-                "Worker-loop %s shutdown failed during teardown",
-                _label,
-                exc_info=True,
-            )
-    loop.close()
 
 
 def _prune_and_check_importing_workers() -> bool:

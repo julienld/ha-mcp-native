@@ -15,7 +15,7 @@ from .validation import validate_identifier_not_empty
 class SystemActionsFacade:
     def __init__(
         self,
-        restart: Callable[[], Awaitable[dict[str, Any]]],
+        restart: Callable[[bool], Awaitable[dict[str, Any]]],
         reload: Callable[[str, str | None], Awaitable[dict[str, Any]]],
     ) -> None:
         self._restart_call = restart
@@ -25,6 +25,12 @@ class SystemActionsFacade:
         self,
         confirm: Annotated[
             bool, Field(description="Must be True to confirm the restart.")
+        ] = False,
+        safe_mode: Annotated[
+            bool,
+            Field(
+                description="Restart in safe mode: no custom integrations or custom frontend resources load until the next normal restart."
+            ),
         ] = False,
     ) -> dict[str, Any]:
         """Execute a Home Assistant restart.
@@ -36,7 +42,9 @@ class SystemActionsFacade:
         configuration changes, consider ha_reload_core() instead, which reloads
         specific components without a full restart. When this server runs
         inside Home Assistant (embedded), it replies before the restart starts
-        and is unreachable until Home Assistant is back.
+        and is unreachable until Home Assistant is back; with safe_mode it
+        stays down until Home Assistant is next restarted normally, because it
+        is itself a custom integration.
 
         EXAMPLE: ha_restart(confirm=True)
         """
@@ -57,7 +65,7 @@ class SystemActionsFacade:
                 )
             )
 
-        return await self._restart_call()
+        return await self._restart_call(safe_mode)
 
     async def ha_reload_core(
         self,

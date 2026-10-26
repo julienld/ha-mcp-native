@@ -29,30 +29,56 @@ tool logic; an uncertain mutation must never fall back to another transport.
 
 ## Version cycle
 
-In the regular release channels, the component shares the server's version and
-pins the server build it runs (#2427). `manifest.json`'s `version`, its `ha-mcp==`
-requirement and `COMPONENT_VERSION` in `const.py` always equal `pyproject.toml`'s
-version.
-Never edit them by hand: semantic-release stamps all four in each release
-commit (`version_variables` in `pyproject.toml`), and the PR **Component
-Version Gate** fails a pull request that moves any of them.
+In the source tree, `manifest.json`'s `version`, its `ha-mcp==` requirement,
+`COMPONENT_VERSION` in `const.py` and `pyproject.toml`'s version stay paired.
+Never edit those versions by hand: semantic-release stamps them in each release
+commit, and the PR **Component Version Gate** rejects manual drift.
 
-Releases follow from that:
+HACS installs `ha_mcp_tools.zip` attached to a release. Both `hacs.json` files
+select that asset. The full source tree remains available under the regular
+tags; it is not replaced by a minimal distribution snapshot.
 
-- **Stable:** after **SemVer Release**, the mirror sync snapshots the release
-  tag's component and tags the mirror `vX.Y.Z` once PyPI serves
-  `ha-mcp==X.Y.Z`. A server-only release is therefore also a component
-  release.
-- **Development:** after **Publish Dev Channel**, the mirror sync stamps the
-  snapshot of the commit it built with the next release number (what
-  semantic-release would cut) and pins the exact build it uploaded,
-  `ha-mcp-dev==<next>.dev<N>` (the version `scripts/dev_version.sh` gave
-  that run, handed over as its `dev-version` artifact), and tags it
-  `v<next>-dev.<N>` as a HACS pre-release once PyPI serves that build.
+- **Stable:** SemVer Release builds native assets from the stamped `vX.Y.Z`
+  commit, uploads them to a draft and reads them back before publication.
+  Release Publish keeps building the ordinary PyPI/container distributions
+  from that same tag, with their complete dependency graph.
+- **Development:** Publish Dev Channel uses the exact `scripts/dev_version.sh`
+  result for both the ordinary `ha-mcp-dev` distribution and the native assets.
+  Its `vX.Y.Z.devN` tag identifies a full-source commit with only the component
+  manifest and protocol constant stamped from the archive. The manifest and
+  native `ha-mcp` wheel carry `X.Y.Z.devN`; source declarations on master remain
+  unchanged. `native-build.json` keeps the original code SHA in `revision` and
+  attests the tag's `release_revision` after checking its single parent, exact
+  two-file diff and metadata bytes. Fixed commit identity/date make retries
+  reproduce the same tag commit.
+- **Mirror:** `homeassistant-ai/ha-mcp-integration` fetches and verifies the
+  published ZIP, wheel and `native-build.json` against the original source
+  revision. It extracts the ZIP unchanged, records the build metadata in Git
+  and keeps `vX.Y.Z` / `vX.Y.Z-dev.N` tags. Release on tag fetches the same
+  upstream bytes, compares the recorded provenance, then publishes a draft
+  only after all attached assets verify. The manifest still selects the
+  original upstream wheel URL and SHA-256; the mirror does not rebuild it.
 
-The component never reports a dev suffix: released servers parse the version
-segment by segment as integers, so the suffix lives only in the pre-release tag
-and the pin.
+HACS 2.0.5 reads the selected tag's source manifest in
+[`async_get_integration_manifest`](https://github.com/hacs/integration/blob/2.0.5/custom_components/hacs/repositories/integration.py#L175)
+before its
+[`async_install_repository`](https://github.com/hacs/integration/blob/2.0.5/custom_components/hacs/repositories/base.py#L917)
+selects the ZIP installation path. Keep source discovery and installed metadata
+identical; `zip_release` is not a reason to remove the dev source stamp.
+
+Only the component's protocol metadata `COMPONENT_VERSION` remains numeric
+`X.Y.Z`: released clients parse it segment by segment as integers. The HACS
+manifest and native library identify the exact build, including a dev suffix.
+
+`scripts/native_release_delivery.py` refuses changed tags, asset bytes,
+versions, source revisions, dependency profiles and wheel indexes. Reruns reuse
+complete existing assets and never overwrite them. A partially uploaded draft
+must be recovered with its original `native-release-VERSION-RUN-ATTEMPT` Actions artifact:
+run the helper's `publish` command with that directory, exact tag/revision and
+notes. It verifies every existing asset before filling missing ones. Do not
+rebuild under that identity, use `--clobber`, or delete and recreate the release.
+Historical dev tags and assets remain available for pinned installs and rollback.
+Old tags retain their original HACS metadata and source installation format.
 
 When a change adds a component service or argument that the server depends
 on, raise `MIN_COMPONENT_VERSION` in `src/ha_mcp/tools/tools_filesystem.py`,
@@ -68,11 +94,11 @@ Docker, pip) is affected; the in-process server runs the build its component
 release pins. This gap is accepted: pre-release users update the component
 from HACS.
 
-Native migration candidates use `scripts/native_release.py` to build a paired
+Stable, development and candidate builds use `scripts/native_release.py` to build a paired
 component archive and library wheel from one immutable Git revision, including
 the pinned skills submodule. The script stamps the staged artifacts and their
 exact dependency URL; it does not change the working tree's release versions.
-The HACS candidate wheel has no active dependency edges. Its complete original
+The HACS native wheel has no active dependency edges. Its complete original
 dependency list is available through the optional `standalone` extra; the
 component manifest lists native host requirements individually. Core can then
 skip compatible installed roots instead of re-resolving the wheel's graph with
@@ -159,24 +185,45 @@ not cover every optional integration's dependency combination.
 
 ## Core version window and API changes
 
-The native development line preserves the upstream Core **2026.8.0** minimum.
-Its qualification matrix covers three consecutive monthly Core trains on
-amd64 and aarch64, using each image's own Python rather than an independent
-Python matrix. The exact minimum is exercised, not replaced by its latest patch.
-Creation, selection in options and startup check the native
-floor before loading modern owners, including for an imported entry or a Core
-downgrade. They refuse an unsupported native selection without changing its
-runtime or webhook automatically. The source/legacy channel's HACS installation
-floor remains **2026.8.0**, retained for legacy and shared-component compatibility.
-The generated native distribution snapshot derives its HACS minimum from the
-runtime floor. Historical public dev3 and the earlier qualification remain tied
-to **2026.10.2**; they do not establish this new minimum's runtime support.
-Record the matrix's results before claiming the development candidate qualified.
-Keep the matrix pinned and update it deliberately with the compatibility floor;
-do not silently drop the advertised minimum as the current month advances.
-Native runtime support and the component installation floor are distinct claims. Candidate
-qualification records belong in
-[native migration evidence](../native-migration/README.md).
+New component releases start at Core **2026.10.0**, for both native and legacy
+runtime selection. The compatibility window is the current **released stable
+monthly generation plus its predecessor**, bounded by that initial minimum.
+Until November stable is released, only October is required. November stable
+selects October/November; December stable selects November/December. Calendar
+dates, beta, release-candidate and development tags never advance the window.
+Already-installed old component versions do not acquire an expiry check.
+
+`scripts/core_window.py` resolves `version.home-assistant.io/stable.json`, then
+uses published, non-yanked PyPI Core releases up to that stable version to
+select the exact minimum and the latest patches of the selected generations.
+It reads each tag's Python version. The reusable `core-window.yml` records one
+snapshot per run and uses each Core image's own Python on amd64 and aarch64.
+Every PR and main/master push runs these contracts, including documentation
+changes. Each case exercises the paired installable artifacts through Core's
+normal constrained installer in minimal Core, native Engine reads and the
+private legacy MCP client. This is installation/runtime contract coverage,
+not the complete E2E suite; the existing container/HAOS suites remain, and
+`native-e2e.yml` uses the same window for full native qualification. The separate
+native HTTP bench and full unit suite are not multiplied by this matrix.
+
+The source floor is raised explicitly: both `hacs.json` files and
+`MIN_EMBEDDED_HOME_ASSISTANT_VERSION` / `MIN_NATIVE_HOME_ASSISTANT_VERSION` must
+equal the window's exact minimum. A separate gate blocks the PR and new stable,
+development and mirror releases on drift; qualification still runs to expose
+new-Core failures. Raise the four declarations together and inspect all window
+results before release. Network/metadata failures fail closed, without reusing
+a stale matrix. No recurring task is added. Run
+`uv run -s scripts/core_window.py --check-floor` to inspect the current window.
+
+`native_release.py` also checks the exported revision against a freshly resolved
+window before building a release; generated HACS metadata derives from that
+validated runtime floor. Only non-publishable `native-ci-*` qualification builds
+may bypass source-floor agreement, and cannot prepare a HACS distribution tree.
+Creation, options selection and startup still enforce the fixed version shipped
+in that component before loading modern owners, without automatically changing
+runtime or webhook. Historical evidence remains tied to its measured versions;
+the rollover unit tests do not qualify future Core releases. Record actual
+matrix results in [native migration evidence](../native-migration/README.md).
 
 An API required for baseline operation must exist on the supported minimum.
 An optional capability may require a newer Core version and refuse that feature
@@ -305,8 +352,10 @@ removal. The component never creates an account: entries from older releases
 keep their provisioned pair while it works,
 and a missing or refused credential files the fixable `server_token_needed`
 repair instead. The token is passed in memory, not through the Home Assistant
-process environment; disabling the entry stops the server. Removing the entry
-deletes only an account an older release created, never the user's.
+process environment; disabling the entry stops the server, and so does the
+entry's **Access** switch (disabled by default) while the entry stays loaded.
+Removing the entry deletes only an account an older release created, never the
+user's.
 Retaining those credential fields for rollback does not make them native
 execution credentials. Existing entries and HA-hosted webhook/OAuth URLs are
 preserved; a legacy direct-port URL has no native listener equivalent. Changing

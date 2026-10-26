@@ -6,21 +6,19 @@ is a preservation target, not a statement that every target is implemented.
 
 ## Supported Core capabilities
 
-The development qualification targets Core 2026.8.0, 2026.9.4 and 2026.10.3
-on amd64/aarch64. Results must establish support before a distribution advertises
-that window. A capability introduced by Core later in this window is not
-backported into older installations:
+The component starts at Core 2026.10.0 and supports the current stable monthly
+generation and its predecessor. PR/main qualification resolves the published
+window, includes the exact minimum and current patches on amd64/aarch64, and
+uses each Core image's Python. A separate guard prevents a new release from
+advertising a stale installation floor. Existing releases do not expire by date.
 
-- Child-device relationships require Core 2026.9. Their absence in August does
-  not remove ordinary or composite-device operations.
-- `use_device_name=True` requires Core 2026.10 on both runtimes. Older versions
-  refuse it before any registry mutation; explicit names remain supported.
-- New automatic Home Assistant account OAuth login requires Core 2026.10.0 on
-  both component runtimes. Core 2026.8/9 retain Bearer/LLAT access, refresh/revocation
-  and the other authentication modes; see the
-  [account-login contract](../agents/custom-component.md#automatic-home-assistant-account-login).
-- August's schema descriptions retain the live fields and defaults but are
-  labelled incomplete. Validation always calls the original Core validator.
+Child-device relationships, `use_device_name=True`, PKCE and Core LLM
+`ToolResult`/`ToolAnnotations` exist at this minimum. Optional provider features
+still depend on the integration actually loaded: HACS remains relevant on Core
+10, while Marketplace needs a Core version that supplies it. Schema discovery
+can remain incomplete for third-party validators; validation calls the original
+validator rather than a copied schema. Existing DCR, refresh/revocation and
+authentication identities are preserved.
 
 Calendar and to-do results use Core's own serializers: the public names when
 available and their existing private names on August/September. Missing

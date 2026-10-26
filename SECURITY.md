@@ -263,7 +263,11 @@ settings: selecting **legacy OAuth** does not select the legacy server runtime.
   a 400 page and no redirect, so the Home Assistant origin is not an open
   redirector. The list ships with the common clients' published callbacks. It is stored on the
   server entry and edited on its Configure screen or in the admin-only
-  sidebar panel; dynamic client registration cannot add to it.
+  sidebar panel; dynamic client registration cannot add to it. An
+  administrator can turn the list off with **Allow any OAuth callback URL**,
+  which accepts any `https` or loopback `http` callback without userinfo or a
+  fragment and so makes that endpoint an open redirector again; it is off by
+  default.
   On the native runtime this capability acts as the configured administrator
   owner, who must remain active and authorized. Possession of the URL does not
   supply an independent per-client Home Assistant identity.
@@ -398,11 +402,16 @@ missing, revoked or non-administrator credential stops the server and files a
 repair that asks for a replacement, rather than minting a new administrator.
 The token is stored in the config entry and handed to the server in memory
 (never through the Home Assistant process environment). Disabling the config
-entry stops the server; removing it deletes only an account an older release
-created, never an account the user created, and revokes only a token the
-component issued, never a pasted one. As with
-standard mode, that token's Home Assistant permissions define what the server can
-do.
+entry stops the server, and so does turning off the entry's **Access** switch
+(#2801), which closes the webhook, the direct port and the conversation-agent
+LLM API while the entry stays loaded. The switch is disabled by default, and as
+a configuration entity it is not exposed to Assist by default. It does not
+revoke Home Assistant credentials a `ha_auth` client already holds: those work
+against Home Assistant's own API regardless of the switch, and against the
+server again once access is back on. Removing the entry deletes only an account
+an older release created, never an account the user created, and revokes only a
+token the component issued, never a pasted one. As with standard mode, that
+token's Home Assistant permissions define what the server can do.
 
 Native execution does not use those stored server credentials. Older fields
 can remain for rollback, and the existing ownership rules still govern their

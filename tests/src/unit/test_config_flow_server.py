@@ -151,6 +151,26 @@ class TestServerBranch:
         assert flow.async_set_unique_id.await_args.args == (cf._SERVER_UNIQUE_ID,)
         assert cf._SERVER_UNIQUE_ID != const.DOMAIN
 
+    def test_a_setup_that_lost_the_owner_lookup_race_aborts_without_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class AlreadyConfigured(Exception):
+            pass
+
+        flow = self._flow()
+        flow._abort_if_unique_id_configured.side_effect = [None, AlreadyConfigured()]
+        issue = AsyncMock()
+        release = AsyncMock()
+        monkeypatch.setattr(cf.server_credentials, "async_credential_from_input", issue)
+        monkeypatch.setattr(cf.server_credentials, "async_release_credentials", release)
+
+        with pytest.raises(AlreadyConfigured):
+            asyncio.run(flow.async_step_server(self._defaults(None)))
+
+        flow.async_create_entry.assert_not_called()
+        issue.assert_not_awaited()
+        release.assert_not_awaited()
+
     def test_server_aborts_on_unsupported_home_assistant(self, monkeypatch):
         monkeypatch.setattr(cf, "HA_VERSION", "2025.9.4")
         flow = self._flow()
@@ -246,6 +266,21 @@ class TestOAuthCallbackAllowlistOption:
             )
         )["data"]
         assert second != first
+        assert entry_mod._reload_relevant(second) == entry_mod._reload_relevant(first)
+
+    def test_the_allow_any_switch_saves_without_a_reload(self) -> None:
+        # Read per request like the list, so turning it on needs no reload.
+        import custom_components.ha_mcp_tools.embedded_entry as entry_mod
+
+        flow = _make_options_flow(data={const.DATA_WEBHOOK_ID: "mcp_abc"})
+        first = asyncio.run(flow.async_step_init({}))["data"]
+        flow = _make_options_flow(
+            options=first, data={const.DATA_WEBHOOK_ID: "mcp_abc"}
+        )
+        second = asyncio.run(
+            flow.async_step_init({**first, const.OPT_OAUTH_ALLOW_ANY_CALLBACK: True})
+        )["data"]
+        assert second[const.OPT_OAUTH_ALLOW_ANY_CALLBACK] is True
         assert entry_mod._reload_relevant(second) == entry_mod._reload_relevant(first)
 
     def test_removing_every_callback_sticks(self):
@@ -460,3 +495,36 @@ class TestOAuthCredsHint:
         assert "Client Secret: new-secret" in hint
         assert "not serving these yet" in hint
         assert "restart" in hint
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, "ha-mcp-dev==9.0.0.dev3"),
+        ({const.OPT_PIP_SPEC: "acme-ha-mcp==1.0"}, "acme-ha-mcp==1.0"),
+        (
+            {
+                const.OPT_RUNTIME_MODE: const.RUNTIME_NATIVE,
+                const.OPT_PIP_SPEC: "acme-ha-mcp==1.0",
+            },
+            "ha-mcp-dev==9.0.0.dev3",
+        ),
+    ],
+    ids=["pre-release-pin", "override", "native-ignores-legacy-override"],
+)
+def test_the_version_line_reads_what_the_server_runs(monkeypatch, options, expected):
+    # #2787: the form reads the version as bring-up does, so an ha-mcp left
+    # beside the pre-release pin or an override cannot mask it.
+    from unittest.mock import MagicMock
+
+    flow = _make_options_flow(options=options, data={const.DATA_WEBHOOK_ID: "mcp_abc"})
+    flow.hass = MagicMock()
+    flow.hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
+    integration = SimpleNamespace(requirements=["ha-mcp-dev==9.0.0.dev3"], version="9")
+    monkeypatch.setattr(
+        cf, "async_get_integration", AsyncMock(return_value=integration)
+    )
+    read: list[str] = []
+    monkeypatch.setattr(cf, "_installed_server_version", read.append)
+    asyncio.run(flow.async_step_init(None))
+    assert read == [expected]

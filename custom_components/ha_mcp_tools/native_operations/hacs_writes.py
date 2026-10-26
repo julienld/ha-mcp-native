@@ -20,14 +20,9 @@ from ha_mcp.utils.owned_executor import await_owned_io
 from ha_mcp.utils.registry_update_lock import registry_update_lock
 
 from .hacs_access import HacsAccess, check_self_files, repository_image
-from .hacs_projection import repository_data
 from .hacs_reads import HacsReads
+from .hacs_updates import call_install_service, install_service, pin_install_service
 
-_COMMANDS = {
-    "download": "hacs/repository/download",
-    "remove": "hacs/repository/remove",
-    "update_information": "hacs/repository/refresh",
-}
 _METHODS = {
     "download": "async_download_repository",
     "remove": "uninstall",
@@ -60,6 +55,7 @@ class NativeHacs(HacsReads):
         async with registry_update_lock("hacs", "repositories"):
             access = await self.access(writes=True)
             repo = access.find(identifier)
+            access.guard(action, repo)
             if action == "remove" and not repo.data.installed:
                 raise ToolFailure(
                     "RESOURCE_NOT_FOUND",
@@ -67,22 +63,28 @@ class NativeHacs(HacsReads):
                     status="not_started",
                 )
             self_affecting = (
-                check_self_files(access.owner, repo, "ha_mcp_tools")
-                if action in {"download", "remove"}
-                else False
+                action in {"download", "remove"}
+                and repo.data.category == "integration"
+                and repo.data.domain in {"ha_mcp_tools", "hacs"}
             )
-            command = _COMMANDS[action]
+            prepared = (
+                install_service(access, repo, version) if action == "download" else None
+            )
+            command = access.command(action)
             proposal = {"repository": str(repo.data.id)}
             if action == "download" and version:
                 proposal["version"] = version
-            payload, registration = access.validate(command, proposal)
-            method = getattr(repo, _METHODS[action], None)
-            if not callable(method):
-                raise ToolFailure(
-                    "UNSUPPORTED_OPERATION",
-                    "Installed HACS lacks the required repository operation",
-                    status="not_started",
-                )
+            payload, registration = (
+                access.validate(command, proposal)
+                if prepared is None
+                else (proposal, None)
+            )
+            method_name = (
+                "async_install_repository"
+                if action == "download" and access.domain == "marketplace"
+                else _METHODS[action]
+            )
+            method = getattr(repo, method_name, None)
             parameters = (
                 {"ref": payload.get("version")}
                 if action == "download"
@@ -92,7 +94,21 @@ class NativeHacs(HacsReads):
                     else {}
                 )
             )
-            inspect.signature(method).bind(**parameters)
+            if prepared is None:
+                if not callable(method):
+                    raise ToolFailure(
+                        "UNSUPPORTED_OPERATION",
+                        "The loaded store lacks the required repository operation",
+                        status="not_started",
+                    )
+                try:
+                    inspect.signature(method).bind(**parameters)
+                except (TypeError, ValueError) as error:
+                    raise ToolFailure(
+                        "UNSUPPORTED_OPERATION",
+                        "The loaded store repository method has an unqualified signature",
+                        status="not_started",
+                    ) from error
             before = repository_image(repo)
             return await await_owned_io(
                 self._commit(
@@ -104,6 +120,7 @@ class NativeHacs(HacsReads):
                     parameters,
                     registration,
                     self_affecting,
+                    prepared,
                 )
             )
 
@@ -117,7 +134,14 @@ class NativeHacs(HacsReads):
         parameters: dict[str, Any],
         registration: Any,
         self_affecting: bool,
+        prepared: Any = None,
     ) -> dict[str, Any]:
+        if (
+            prepared is None
+            and access.domain == "hacs"
+            and action in {"download", "remove"}
+        ):
+            check_self_files(access.owner, repo, "ha_mcp_tools")
         await self.manager.visibility.before(
             "ha_manage_hacs",
             {
@@ -130,36 +154,44 @@ class NativeHacs(HacsReads):
         # Visibility can await file/policy reads. Recheck every live actor,
         # owner, image, schema and method only after that final await.
         await access.admit(repo, before)
-        access.pin_validator(_COMMANDS[action], registration)
-        if getattr(repo, _METHODS[action]) != method:
+        access.guard(action, repo)
+        if registration is not None:
+            access.pin_validator(access.command(action), registration)
+        method_name = (
+            "async_install_repository"
+            if action == "download" and access.domain == "marketplace"
+            else _METHODS[action]
+        )
+        if prepared is None and getattr(repo, method_name) != method:
             raise ToolFailure(
                 "CONFIG_CONFLICT",
                 "HACS repository operation changed",
                 status="not_started",
             )
+        if prepared is not None:
+            pin_install_service(access, repo, prepared)
         # Everything below this point can mutate HACS metadata, Core registries
         # or files. A provider exception/cancellation never invites replay.
         try:
-            await method(**parameters)
+            if prepared is not None:
+                await call_install_service(access, prepared)
+                pin_install_service(access, repo, prepared)
+            else:
+                await self._direct_dispatch(
+                    access, repo, before, action, method, parameters
+                )
             access.pin(repo, writes=True)
-            if action == "download" and not repo.data.installed:
-                raise RuntimeError("HACS returned without confirming installation")
-            if action == "download":
-                requested = parameters.get("ref")
-                if requested and requested not in (
-                    repo.data.default_branch,
-                    repo.data.installed_version,
-                ):
-                    raise RuntimeError(
-                        "HACS did not confirm the requested installed version"
-                    )
-            if action == "remove" and repo.data.installed:
-                raise RuntimeError("HACS returned without confirming removal")
+            self._verify_action(repo, action, parameters.get("ref"))
             after = repository_image(repo)
-            if action == "download" and not before["data"].get("installed"):
+            if (
+                access.domain == "hacs"
+                and action == "download"
+                and not before["data"].get("installed")
+            ):
                 await self._new_install(access, repo, after)
             await access.admit(repo, after)
-            access.pin_validator(_COMMANDS[action], registration)
+            if registration is not None:
+                access.pin_validator(access.command(action), registration)
             await access.storage.async_write()
             await access.observe(repo, after)
             if action == "update_information":
@@ -168,13 +200,60 @@ class NativeHacs(HacsReads):
         except (Exception, asyncio.CancelledError) as error:
             raise ToolFailure(
                 "OUTCOME_UNKNOWN",
-                "The HACS operation was dispatched and may have changed metadata or files. Inspect HACS before another change; no retry was performed.",
+                f"The store operation was dispatched and may have changed metadata or files. Inspect the store before another change; no retry was performed. Provider: {error}",
                 status="outcome_unknown",
             ) from error
+
+    async def _direct_dispatch(
+        self,
+        access: HacsAccess,
+        repo: Any,
+        before: dict[str, Any],
+        action: str,
+        method: Any,
+        parameters: dict[str, Any],
+    ) -> None:
+        try:
+            await method(**parameters)
+        finally:
+            # Core adds the update entity even when a post-install step fails.
+            if (
+                access.domain == "marketplace"
+                and action == "download"
+                and not before["data"].get("installed")
+                and repo.data.installed
+            ):
+                access.pin(repo, writes=True)
+                await self._new_install(access, repo, repository_image(repo))
+
+    @staticmethod
+    def _verify_action(repo: Any, action: str, version: str | None) -> None:
+        if action == "download" and (
+            not repo.data.installed
+            or (
+                version
+                and version
+                not in (repo.data.default_branch, repo.data.installed_version)
+            )
+        ):
+            raise RuntimeError(
+                "The store did not confirm the requested installed version"
+            )
+        if action == "remove" and repo.data.installed:
+            raise RuntimeError("The store did not confirm removal")
 
     async def _new_install(
         self, access: HacsAccess, repo: Any, after: dict[str, Any]
     ) -> None:
+        if access.domain == "marketplace":
+            from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+            signal = import_module(
+                "homeassistant.components.marketplace.const"
+            ).SIGNAL_REPOSITORY_INSTALLED
+            await access.admit(repo, after)
+            async_dispatcher_send(access.hass, signal, repo)
+            return
         HacsDispatchEvent = import_module(
             "custom_components.hacs.enums"
         ).HacsDispatchEvent
@@ -197,6 +276,7 @@ class NativeHacs(HacsReads):
         if access.owner.coordinators.get(repo.data.category) is not coordinator:
             raise RuntimeError("HACS repository coordinator changed")
         coordinator.async_update_listeners()
+        access.pin(repo, after, writes=True)
 
     def _write_result(
         self,
@@ -220,7 +300,12 @@ class NativeHacs(HacsReads):
             self_affecting=self_affecting,
             restart_requested=False,
             config_entries_removed=False,
-            hacs_version=access.version,
+            store=access.domain,
+            **(
+                {"hacs_version": access.version}
+                if access.domain == "hacs"
+                else {"core_version": access.version}
+            ),
         )
         if self_affecting:
             data.update(
@@ -228,6 +313,9 @@ class NativeHacs(HacsReads):
                 active_version_verified=False,
                 note="HACS changed the on-disk files; the existing runtime remains loaded. No restart or config-entry removal was requested.",
             )
+        if access.domain == "marketplace":
+            data["message"] = data["message"].replace("HACS", "Marketplace")
+            data["note"] = data.get("note", "").replace("HACS", "Marketplace")
         return self.wrapped(data)
 
     async def _hacs_add_repository(
@@ -241,12 +329,14 @@ class NativeHacs(HacsReads):
             )
         async with registry_update_lock("hacs", "repositories"):
             access = await self.access(writes=True)
+            access.category(category)
+            access.guard("add_repository")
             extract_repository_from_url = import_module(
-                "custom_components.hacs.utils.regex"
+                f"{access.module_root}.utils.regex"
             ).extract_repository_from_url
 
             payload, registration = access.validate(
-                "hacs/repositories/add",
+                access.command("add_repository"),
                 {
                     "repository": repository,
                     "category": CATEGORY_MAP.get(category, category),
@@ -262,7 +352,13 @@ class NativeHacs(HacsReads):
                     "Repository or category is not supported by the installed HACS",
                     status="not_started",
                 )
-            name = access.owner.common.renamed_repositories.get(name, name)
+            renamed = access.owner.common.renamed_repositories.get(name, name)
+            if renamed != name:
+                raise ToolFailure(
+                    "CONFIG_CONFLICT",
+                    f"The store redirects {name} to {renamed}; request that repository explicitly to preserve provenance.",
+                    status="not_started",
+                )
             existing = access.repositories.get_by_full_name(name)
             if existing is not None:
                 if existing.data.category != payload["category"]:
@@ -276,7 +372,7 @@ class NativeHacs(HacsReads):
                         **added_data(
                             repository,
                             category,
-                            repository_data(access.owner, existing),
+                            access.project(existing),
                         ),
                         "already_registered": True,
                     }
@@ -318,7 +414,8 @@ class NativeHacs(HacsReads):
             self.actor,
         )
         await access.admit()
-        access.pin_validator("hacs/repositories/add", registration)
+        access.guard("add_repository")
+        access.pin_validator(access.command("add_repository"), registration)
         if access.owner.async_register_repository != registrar:
             raise ToolFailure(
                 "CONFIG_CONFLICT",
@@ -344,8 +441,12 @@ class NativeHacs(HacsReads):
             access.owner.common.skip.discard(name)
             # Await the real registration owner. No detached job, signal waiter,
             # polling, timeout retry or fake success acknowledgment is required.
-            await registrar(repository_full_name=name, category=native_category)
+            errors = await registrar(
+                repository_full_name=name, category=native_category
+            )
             access.pin(writes=True)
+            if errors:
+                raise RuntimeError("; ".join(str(error) for error in errors))
             repo = access.repositories.get_by_full_name(name)
             if repo is None or repo.data.category != native_category:
                 raise RuntimeError("HACS did not register the requested repository")
@@ -355,11 +456,14 @@ class NativeHacs(HacsReads):
             await access.storage.async_write()
             await access.observe(repo, after)
             return self.wrapped(
-                added_data(name, category, repository_data(access.owner, repo))
+                {
+                    **added_data(name, category, access.project(repo)),
+                    "store": access.domain,
+                }
             )
         except (Exception, asyncio.CancelledError) as error:
             raise ToolFailure(
                 "OUTCOME_UNKNOWN",
-                "HACS registration was dispatched but its final state is uncertain. Inspect its repository list before retrying.",
+                f"Store registration was dispatched but its final state is uncertain. Inspect its repository list before retrying. Provider: {error}",
                 status="outcome_unknown",
             ) from error

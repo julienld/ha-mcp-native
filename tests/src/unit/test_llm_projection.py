@@ -12,7 +12,7 @@ import pytest
 from ha_mcp.tool_api import ToolDefinition, ToolResult
 from ha_mcp.tool_api.llm_projection import describe_tool, result_envelope
 
-from ._embedded_stubs import install
+from ._embedded_stubs import LlmToolAnnotations, install
 
 install()
 
@@ -125,7 +125,8 @@ async def test_native_search_keeps_unconvertible_pin_discoverable_without_mcp(
     result = await search.async_call(
         object(), SimpleNamespace(tool_args={"tools": ["unconverted"]}), context
     )
-    data = result if isinstance(result, dict) else result.data
+    assert result.error is False
+    data = result.data
     assert data["results"][0]["input_schema"] == definitions[1].input_schema
     assert "Native owner" in data["results"][0]["description"]
     assert instance.api_prompt.startswith("Owner instructions")
@@ -135,4 +136,6 @@ async def test_native_search_keeps_unconvertible_pin_discoverable_without_mcp(
     full = await api.async_get_api_instance(context)
     assert [tool.name for tool in full.tools] == ["converted"]
     assert full.tools[0].title == "Converted"
+    assert full.tools[0].integration == "ha_mcp_tools"
+    assert full.tools[0].annotations == LlmToolAnnotations(read_only=True)
     assert full.api_prompt == "Owner instructions"

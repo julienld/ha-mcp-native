@@ -1,4 +1,4 @@
-"""The native qualification floor must not silently narrow legacy compatibility."""
+"""Core admission boundaries and preservation of historical runtime selection."""
 
 import builtins
 from types import SimpleNamespace
@@ -18,7 +18,7 @@ def isolate_native_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime_generation, "_NATIVE_VERSION", None)
 
 
-@pytest.mark.parametrize("version", ["2026.7.4", "2026.8.0b0", "unknown"])
+@pytest.mark.parametrize("version", ["2026.9.4", "2026.10.0b0", "unknown"])
 async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -40,7 +40,7 @@ async def test_native_creation_refuses_unqualified_core_before_selecting_owner(
 async def test_options_cannot_switch_an_older_core_to_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cf, "HA_VERSION", "2026.7.4")
+    monkeypatch.setattr(cf, "HA_VERSION", "2026.9.4")
     flow = _make_options_flow(options={const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY})
     result = await flow.async_step_init({const.OPT_RUNTIME_MODE: const.RUNTIME_NATIVE})
     assert result["type"] == "form"
@@ -50,9 +50,10 @@ async def test_options_cannot_switch_an_older_core_to_native(
     assert flow.config_entry.options[const.OPT_RUNTIME_MODE] == const.RUNTIME_LEGACY
 
 
-async def test_older_core_still_accepts_legacy_options(
+async def test_legacy_option_edit_does_not_implicitly_select_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Exercise the option selector directly, not component startup/admission.
     monkeypatch.setattr(cf, "HA_VERSION", "2026.8.0")
     flow = _make_options_flow(options={const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY})
     result = await flow.async_step_init({const.OPT_RUNTIME_MODE: const.RUNTIME_LEGACY})
@@ -60,7 +61,7 @@ async def test_older_core_still_accepts_legacy_options(
     assert result["data"][const.OPT_RUNTIME_MODE] == const.RUNTIME_LEGACY
 
 
-@pytest.mark.parametrize("version", ["2026.7.4", "2026.8.0b0", "unknown"])
+@pytest.mark.parametrize("version", ["2026.9.4", "2026.10.0b0", "unknown"])
 def test_imported_native_entry_is_refused_before_loading_native_host(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -87,7 +88,7 @@ async def test_direct_native_start_after_downgrade_refuses_before_prewarm(
 ) -> None:
     from custom_components.ha_mcp_tools import native_server
 
-    monkeypatch.setattr(native_server, "HA_VERSION", "2026.7.4", raising=False)
+    monkeypatch.setattr(native_server, "HA_VERSION", "2026.9.4", raising=False)
     runtime = native_manager()
     runtime.hass.async_add_executor_job = AsyncMock(
         side_effect=AssertionError("Unsupported Core reached modern owner prewarm")
@@ -98,9 +99,11 @@ async def test_direct_native_start_after_downgrade_refuses_before_prewarm(
 
 
 @pytest.mark.parametrize("options", [{}, {"runtime_mode": "legacy"}])
-def test_older_core_keeps_existing_legacy_runtime(
+def test_legacy_factory_selection_never_implicitly_migrates_an_entry(
     monkeypatch: pytest.MonkeyPatch, options: dict[str, str]
 ) -> None:
+    # Direct factory selection preserves old entries; it is not a declaration
+    # that a new component release installs or starts on this old Core.
     from custom_components.ha_mcp_tools import embedded_setup
 
     monkeypatch.setattr(embedded_setup, "HA_VERSION", "2026.8.0", raising=False)
@@ -112,7 +115,7 @@ def test_older_core_keeps_existing_legacy_runtime(
     ) == (legacy, False)
 
 
-@pytest.mark.parametrize("version", ["2026.8.0", "2026.9.4", "2026.10.3"])
+@pytest.mark.parametrize("version", ["2026.10.0", "2026.10.3"])
 async def test_supported_core_reaches_native_owner_prewarm(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:

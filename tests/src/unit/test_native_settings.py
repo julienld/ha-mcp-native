@@ -111,6 +111,92 @@ def test_read_only_and_approval_master_take_effect_without_reload(
     assert not policy.enabled("write", writes=True)
 
 
+async def test_tools_panel_keeps_native_mixed_reads_available_in_read_only_mode(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from custom_components.ha_mcp_tools.native_server import (
+        NativeServerManager,
+        _project_tool,
+    )
+    from ha_mcp._vendor.fastmcp import FastMCP
+    from ha_mcp.runtime import Engine
+    from ha_mcp.tool_api import CallContext, ToolDefinition, ToolFailure
+    from ha_mcp.tools.tool_hints import write_hints
+
+    ui = settings(tmp_path)
+    manager = NativeServerManager(
+        ui.manager.hass, SimpleNamespace(data={"webhook_id": "fixture"}, options={})
+    )
+    ui.manager = manager
+    manager.hass.async_add_executor_job = asyncio.to_thread
+    manager.refresh_policy = AsyncMock()
+    manager.backend = SimpleNamespace(authorize=AsyncMock())
+    handler = AsyncMock(return_value={"success": True})
+    definitions = [
+        ToolDefinition(
+            name,
+            name,
+            {"type": "object"},
+            handler,
+            annotations=write_hints(
+                name, destructive=True, idempotent=False, open_world=False
+            ),
+            writes=(lambda args: args.get("action") not in {"list", "get"})
+            if name == "native_mixed"
+            else None,
+        )
+        for name in ("native_mixed", "native_write", "ha_manage_app")
+    ]
+    manager.engine = Engine(manager.backend, definitions, read_only=True)
+    manager.mcp = FastMCP("native settings fixture")
+    for definition in definitions:
+        manager.mcp.add_tool(_project_tool(manager, definition))
+    response = await ui._tools(SimpleNamespace(method="GET"))
+    data = response.json_body
+    assert data["read_only_exempt"] == ["native_mixed"]
+    assert {row["name"] for row in data["tools"]} == set(manager.engine.tools)
+    actor = CallContext("alice")
+    for action in ("list", "get"):
+        assert not (
+            await manager.engine.call("native_mixed", {"action": action}, actor)
+        ).is_error
+    for name in manager.engine.tools:
+        with pytest.raises(ToolFailure, match="Writes are disabled"):
+            await manager.engine.call(name, {"action": "write"}, actor)
+    assert handler.await_count == 2
+    from ha_mcp.settings_ui import _SETTINGS_HTML
+
+    from ._js_harness import extract_script_body, run_script
+    from .test_settings_ui_js_behavior import (
+        DEFAULT_FETCHES,
+        MIN_DOM,
+        TestReadOnlyModeToggle,
+        _assert_clean_init,
+    )
+
+    panel = run_script(
+        extract_script_body(_SETTINGS_HTML),
+        initial_html=MIN_DOM,
+        fetch_map={
+            **DEFAULT_FETCHES,
+            "/api/settings/tools": {"status": 200, "json": data},
+            "/api/settings/features": {
+                "status": 200,
+                "json": {"flags": {"read_only_mode": {"value": True}}},
+            },
+        },
+        invoke="await new Promise(r => setTimeout(r, 250));",
+    )
+    _assert_clean_init(panel)
+    mixed = TestReadOnlyModeToggle._input_tag(panel.dom, "native_mixed")
+    assert "checked" in mixed and "disabled" not in mixed
+    for name in ("native_write", "ha_manage_app"):
+        write = TestReadOnlyModeToggle._input_tag(panel.dom, name)
+        assert "checked" not in write and "disabled" in write
+
+
 @pytest.mark.parametrize("surface", ["feature", "renderer"])
 def test_panel_can_configure_native_dashboard_rendering(tmp_path, monkeypatch, surface):
     from custom_components.ha_mcp_tools.native_server_policy import setting_value

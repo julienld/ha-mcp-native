@@ -18,7 +18,6 @@ from .llm_tool_metadata import declare_metadata, tool_result
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from homeassistant.util.json import JsonObjectType
 
 # Names of the meta-tools synthesized for the tool-search mode. ha_search_tools
 # deliberately matches the server's own tool-search terminology (see the
@@ -96,7 +95,7 @@ class HaMcpSearchTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> JsonObjectType:
+    ) -> llm.ToolResult:
         """Return full entries for ``tools``, compact hits for ``query``, or an
         error when neither is given.
 
@@ -151,7 +150,7 @@ class HaMcpSearchTool(llm.Tool):
             hit["params"] = tool["params"]
         return hit
 
-    def _full(self, names: list[str]) -> JsonObjectType:
+    def _full(self, names: list[str]) -> llm.ToolResult:
         """Full entries for *names* in the order given; an error when none
         of them is an exposed tool."""
         by_name = {t["name"]: t for t in self._catalog}
@@ -171,7 +170,7 @@ class HaMcpSearchTool(llm.Tool):
             error=not any(n in by_name for n in names),
         )
 
-    def _search(self, query_words: list[str]) -> JsonObjectType:
+    def _search(self, query_words: list[str]) -> llm.ToolResult:
         """Return the top-scoring exposed tools as compact entries."""
         scored = sorted(
             (

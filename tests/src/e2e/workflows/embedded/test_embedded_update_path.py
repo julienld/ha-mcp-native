@@ -311,6 +311,7 @@ def _seed_config(
             "discovery_keys": {},
             "domain": _DOMAIN,
             "entry_id": _ENTRY_ID,
+            # Working-tree baseline must survive the one-time pip_spec clear.
             "minor_version": 2 if initial_wheel_name is not None else 1,
             "modified_at": "2025-09-07T23:56:28.040747+00:00",
             "options": {

@@ -1,8 +1,27 @@
-"""Fork qualification builds profiles without enabling any publication path."""
+"""Qualification remains available upstream without publication authority."""
 
 from pathlib import Path
 
+import pytest
 import yaml
+
+
+@pytest.mark.parametrize(
+    "filename", ["native-distribution.yml", "native-continuity.yml", "haos-native.yml"]
+)
+def test_qualification_is_manual_or_branch_scoped_without_repository_lock(
+    filename: str,
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows" / filename).read_text(encoding="utf-8")
+    )
+    triggers = workflow[True]
+    assert "workflow_dispatch" in triggers
+    assert "schedule" not in triggers
+    assert workflow["permissions"] == {"contents": "read"}
+    for job in workflow["jobs"].values():
+        assert "github.repository" not in job.get("if", "")
 
 
 def test_profile_workflow_preserves_inputs_without_publish_authority() -> None:
@@ -12,7 +31,6 @@ def test_profile_workflow_preserves_inputs_without_publish_authority() -> None:
     assert set(workflow[True]) == {"workflow_call", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["build"]
-    assert "github.repository == 'julienld/ha-mcp-native'" in job["if"]
     assert "environment" not in job and "secrets" not in job
     steps = job["steps"]
     builder = next(step for step in steps if step.get("id") == "build")

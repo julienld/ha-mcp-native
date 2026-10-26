@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ._embedded_stubs import install
+from ._embedded_stubs import LlmToolResult, install
 
 install()
 
@@ -81,7 +81,8 @@ async def test_export_rechecks_exposure_after_conversation_discovery(
     result = await native_llm.call_exposed(
         manager, "ha_get_state", {}, context("alice")
     )
-    assert "Unknown tool" in result["error"]
+    assert result.error is True
+    assert "Unknown tool" in result.data["error"]
     manager.engine.call.assert_not_called()
 
 
@@ -102,7 +103,8 @@ async def test_export_preserves_legacy_result_envelope_and_operation_outcome(
     result = await native_llm.call_exposed(
         manager, "ha_call_service", {}, context("alice")
     )
-    data = result if isinstance(result, dict) else result.data
+    assert isinstance(result, LlmToolResult)
+    data = result.data
     assert data["structuredContent"] == {"changed": True}
     assert data["meta"]["ha_mcp"] == {
         "status": "confirmed",
@@ -154,9 +156,11 @@ async def test_import_refuses_unselected_and_own_exported_api() -> None:
             await native_llm_import.resolve_api(manager, name, CallContext("alice"))
 
 
-async def test_import_uses_owner_validator_and_preserves_error_result(
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_import_uses_owner_validator_and_preserves_result(
     monkeypatch: pytest.MonkeyPatch,
     schema_libraries,
+    is_error: bool,
 ) -> None:
     vol, _openapi = schema_libraries
     manager = runtime()
@@ -171,13 +175,12 @@ async def test_import_uses_owner_validator_and_preserves_error_result(
         api=SimpleNamespace(id="assist"),
         tools=[tool],
         async_call_tool=AsyncMock(
-            return_value=SimpleNamespace(data={"value": 4}, error=True)
+            return_value=LlmToolResult(data={"value": 4}, error=is_error)
         ),
     )
     monkeypatch.setattr(
         native_llm_import, "resolve_api", AsyncMock(return_value=instance)
     )
-    monkeypatch.setattr(native_llm_import.llm, "ToolInput", SimpleNamespace)
     monkeypatch.setattr(
         native_llm_import.llm,
         "async_get_apis",
@@ -190,7 +193,8 @@ async def test_import_uses_owner_validator_and_preserves_error_result(
     result = await native_llm_import.call_imported(
         manager, "assist/native", {"number": "4"}, CallContext("alice")
     )
-    assert result.data == {"value": 4} and result.is_error
+    assert result.data == {"value": 4}
+    assert result.is_error is is_error
     call = instance.async_call_tool.await_args.args[0]
     assert call.tool_args == {"number": 4} and call.external is True
 
@@ -254,7 +258,6 @@ async def test_import_failure_after_dispatch_preserves_unknown_outcome(
     monkeypatch.setattr(
         native_llm_import, "resolve_api", AsyncMock(return_value=instance)
     )
-    monkeypatch.setattr(native_llm_import.llm, "ToolInput", SimpleNamespace)
     monkeypatch.setattr(
         native_llm_import.llm,
         "async_get_apis",
@@ -310,7 +313,8 @@ async def test_assist_exposure_removed_during_admission_cannot_execute(
     resume.set()
     result = await asyncio.wait_for(task, 1)
     handler.assert_not_awaited()
-    data = result if isinstance(result, dict) else result.data
+    assert isinstance(result, LlmToolResult)
+    data = result.data
     assert data["isError"]
 
 

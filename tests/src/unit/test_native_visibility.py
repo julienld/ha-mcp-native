@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,7 +18,7 @@ from custom_components.ha_mcp_tools.native_approvals import NativeApprovalGate  
 from custom_components.ha_mcp_tools.native_settings import NativeSettings  # noqa: E402
 from ha_mcp.policy.model import Policy, Rule  # noqa: E402
 from ha_mcp.runtime import Engine  # noqa: E402
-from ha_mcp.tool_api import CallContext, ToolDefinition  # noqa: E402
+from ha_mcp.tool_api import CallContext, ToolDefinition, ToolResult  # noqa: E402
 from ha_mcp.visibility.model import VisibilityConfig  # noqa: E402
 
 
@@ -86,6 +87,7 @@ async def test_hidden_argument_is_concealed_before_approval_and_execution(
         ("ha_manage_app", {"slug": "fixture", "action": "start"}),
         ("ha_manage_hacs", {"action": "download", "repository": "fixture/example"}),
         ("ha_manage_hacs", {"action": "remove", "repository": "fixture/example"}),
+        ("ha_manage_ha_mcp_updates", {"action": "update"}),
         (
             "ha_manage_backup",
             {"scope": "snapshot", "action": "restore", "backup_id": "fixture"},
@@ -103,16 +105,47 @@ async def test_opaque_native_app_and_hacs_writes_stop_before_execution(
     assert not manager.approval_gate.queue.list_pending()
 
 
-@pytest.mark.parametrize("action", ["add_repository", "update_information"])
+@pytest.mark.parametrize(
+    ("name", "action"),
+    [
+        ("ha_manage_hacs", "add_repository"),
+        ("ha_manage_hacs", "update_information"),
+        ("ha_manage_ha_mcp_updates", "check"),
+        ("ha_manage_ha_mcp_updates", "guide"),
+    ],
+)
 async def test_native_hacs_metadata_remains_available_under_visibility(
-    tmp_path, monkeypatch, action
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, action: str
 ) -> None:
-    _manager, engine, handler = runtime(tmp_path, monkeypatch, "ha_manage_hacs", {})
-    result = await engine.call(
-        "ha_manage_hacs", {"action": action}, CallContext("alice")
-    )
+    _manager, engine, handler = runtime(tmp_path, monkeypatch, name, {})
+    result = await engine.call(name, {"action": action}, CallContext("alice"))
     assert not result.is_error
     handler.assert_awaited_once()
+
+
+async def test_nested_self_update_cannot_inherit_a_parents_visibility_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _manager, engine, handler = runtime(
+        tmp_path, monkeypatch, "ha_manage_ha_mcp_updates", {}, enforce=False
+    )
+
+    async def parent(_arguments: dict, actor: CallContext) -> ToolResult:
+        (tmp_path / "entity_visibility.json").write_text(
+            json.dumps(
+                {"enabled": True, "enforce": True, "deny_entity_ids": ["sensor.secret"]}
+            )
+        )
+        return await engine.call(
+            "ha_manage_ha_mcp_updates", {"action": "update"}, actor
+        )
+
+    engine.register(ToolDefinition("workflow", "Workflow", {}, parent))
+    result = await engine.call("workflow", {}, CallContext("alice"))
+    assert result.is_error and result.status == "not_started"
+    assert result.data["error"]["code"] == "ENTITY_VISIBILITY_ENFORCED"
+    handler.assert_not_awaited()
 
 
 async def test_visible_state_scrubs_related_hidden_data_with_warning(

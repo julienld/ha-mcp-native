@@ -107,6 +107,14 @@ def _updates_write(args: dict[str, Any]) -> str | None:
     return f"action={action!r}"
 
 
+def _self_update_write(args: dict[str, Any]) -> str | None:
+    """The default installation check and upgrade guide do not install code."""
+    action = args.get("action", "check")
+    if action in ("check", "guide"):
+        return None
+    return f"action={action!r}"
+
+
 def _blueprint_write(args: dict[str, Any]) -> str | None:
     # Reads (allowed): listing installed blueprints and reading one's
     # metadata/inputs/body. ``substitute`` joins them because it is a pure
@@ -224,6 +232,11 @@ READ_ONLY_EXEMPT_TOOLS: dict[str, ReadOnlyExemption] = {
         _updates_write,
         "listing pending updates (action='list', the default) and reading "
         "update details/release notes (action='get')",
+    ),
+    "ha_manage_ha_mcp_updates": ReadOnlyExemption(
+        _self_update_write,
+        "checking this server's installation (action='check', the default) "
+        "and reading its update guide (action='guide')",
     ),
     # Reading the security-policy document has no pure-read duplicate in
     # standard mode: ha_dev_manage_settings('get_policy') is the only other

@@ -423,8 +423,11 @@ def async_register_commands(hass: HomeAssistant) -> None:
     on unload. Admin-gated commands answering from live core state until the
     next restart is the trade this makes.
     """
+    from .hacs_cache import async_register_hacs_cache
+
     for schema, do_fn, prep in _command_specs():
         websocket_api.async_register_command(hass, _build_handler(schema, do_fn, prep))
+    async_register_hacs_cache(hass)
     _LOGGER.debug(
         "Registered ha_mcp_tools WS commands: schema_version=%s capabilities=%s",
         SCHEMA_VERSION,

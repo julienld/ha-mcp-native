@@ -16,12 +16,16 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import core_window
 
 MAX_WHEEL_INDEX_FILES = 10_000
 MAX_WHEEL_PAYLOAD_BYTES = 128 * 1024 * 1024
@@ -278,11 +282,22 @@ def build(
     revision: str = "HEAD",
     with_standalone: bool = False,
     source_github: str | None = None,
+    window: dict | None = None,
+    qualification_only: bool = False,
 ) -> dict:
     """Stage tracked sources, leaving the working tree and user data untouched."""
     validate_options(version, tag, github)
     source_github = source_github or github
     validate_options(version, tag, source_github)
+    if qualification_only and (prepare_hacs or not tag.startswith("native-ci-")):
+        raise ValueError(
+            "Qualification-only builds require a native-ci tag and cannot prepare a HACS release"
+        )
+    if window is not None and not qualification_only:
+        raise ValueError(
+            "Release builds must resolve their own current stable Core window"
+        )
+    window = window or core_window.resolve_window()
     builder_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     # The canonical dev mirror spells vX.Y.Z-dev.N; existing candidates use
     # vX.Y.Z.devN. Both identify the supplied version, never a new calculation.
@@ -308,6 +323,8 @@ def build(
     with tempfile.TemporaryDirectory(prefix="ha-mcp-native-release-") as temporary:
         staging = Path(temporary)
         gitlinks = stage_revision(repository, staging, revision)
+        if not qualification_only:
+            core_window.check_floor(staging, window)
         stamp_library(staging / "pyproject.toml", version)
         standalone = (
             build_standalone(staging, output / "standalone", version)
@@ -353,6 +370,8 @@ def build(
         "source_repository": source_github,
         "revision": revision,
         "builder_sha256": builder_sha256,
+        "core_window": window,
+        "qualification_only": qualification_only,
         "tag": tag,
         "library_version": version,
         "dependency_profile": "native wheel without active dependency edges; individual Core-managed requirements",
@@ -569,7 +588,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--tag", required=True)
-    parser.add_argument("--github", default="julienld/ha-mcp-native")
+    parser.add_argument("--github", default="homeassistant-ai/ha-mcp")
     parser.add_argument(
         "--source-github",
         help="Source repository for provenance links when distribution uses a mirror",
@@ -581,6 +600,16 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, default=Path("dist/native"))
     parser.add_argument(
+        "--core-window",
+        type=Path,
+        help="This run's resolved Core window (qualification builds only)",
+    )
+    parser.add_argument(
+        "--qualification-only",
+        action="store_true",
+        help="Keep testing when source floors need elevation; never prepares a HACS release",
+    )
+    parser.add_argument(
         "--with-standalone",
         action="store_true",
         help="Also build complete canonical PyPI wheel/sdist in standalone/; never publish",
@@ -591,6 +620,10 @@ def main() -> None:
         help="Prepare the separate HACS tag tree without Git or publication actions",
     )
     options = parser.parse_args()
+    if options.core_window and not options.qualification_only:
+        parser.error(
+            "Release builds resolve the current stable window themselves; --core-window is qualification-only"
+        )
     result = build(
         Path(__file__).resolve().parents[1],
         options.output,
@@ -601,6 +634,10 @@ def main() -> None:
         revision=options.revision,
         with_standalone=options.with_standalone,
         source_github=options.source_github,
+        window=core_window.load_window(options.core_window)
+        if options.core_window
+        else None,
+        qualification_only=options.qualification_only,
     )
     print(json.dumps(result, indent=2))
 

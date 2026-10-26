@@ -22,6 +22,16 @@ def lifecycle(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
         "custom_components.ha_mcp_tools.native_operations.system_lifecycle"
     )
     monkeypatch.setattr(sys.modules["homeassistant.core"], "Context", SimpleNamespace)
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.helpers.recorder",
+        SimpleNamespace(async_migration_in_progress=lambda hass: False),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.backup",
+        SimpleNamespace(async_get_manager=lambda hass: SimpleNamespace(state="idle")),
+    )
     tasks = []
     calls = []
     ambient = ContextVar("fixture_request_context", default=None)
@@ -76,7 +86,7 @@ async def test_restart_reply_precedes_core_handoff_and_clears_private_execution_
         lifecycle.ambient.reset(marker)
         current_admission.reset(admission)
     args, kwargs, inherited_admission, inherited_request = lifecycle.calls[0]
-    assert args == ("homeassistant", "restart", {})
+    assert args == ("homeassistant", "restart", {"safe_mode": False})
     assert kwargs["blocking"] is False and kwargs["context"].user_id == "actor"
     assert inherited_admission is None and inherited_request is None
     assert not lifecycle.owner.pending

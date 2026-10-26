@@ -39,6 +39,7 @@ class NativeSystemLifecycle:
         backup: bool = False,
         update_service: Any = None,
         restore_target: Any = None,
+        safe_mode: bool = False,
     ) -> None:
         check_mutation_admission(actor)
         if self.closed:
@@ -68,6 +69,7 @@ class NativeSystemLifecycle:
                 backup,
                 update_service,
                 restore_target,
+                safe_mode,
             ),
             name=f"ha-mcp-deferred-{action}",
         )
@@ -84,6 +86,7 @@ class NativeSystemLifecycle:
         backup: bool = False,
         update_service: Any = None,
         restore_target: Any = None,
+        safe_mode: bool = False,
     ) -> None:
         try:
             # This is a response-flush allowance, not a promise of delivery or
@@ -128,7 +131,9 @@ class NativeSystemLifecycle:
             task = asyncio.current_task()
             if task is not None:
                 self.pending.discard(task)
-            self._handoff(action, actor, entry, update, backup, restore_target)
+            self._handoff(
+                action, actor, entry, update, backup, restore_target, safe_mode
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - the replied caller cannot receive a deferred failure
@@ -141,7 +146,11 @@ class NativeSystemLifecycle:
     async def _verify_deferred_target(
         self, action: str, actor: CallContext, update: Any, restore_target: Any
     ) -> None:
-        if action == "update_install":
+        if action == "restart":
+            from .system_actions import NativeSystemActions
+
+            NativeSystemActions(self.manager, actor).restart_precheck()
+        elif action == "update_install":
             from .updates import NativeUpdates
 
             await NativeUpdates(self.manager, actor)._visible_target(update.entity_id)
@@ -161,6 +170,7 @@ class NativeSystemLifecycle:
         update: Any,
         backup: bool,
         restore_target: Any = None,
+        safe_mode: bool = False,
     ) -> None:
         hass = self.manager.hass
         clean = TaskContext()
@@ -182,7 +192,7 @@ class NativeSystemLifecycle:
                 "install" if action == "update_install" else "restart",
                 {"entity_id": update.entity_id, "backup": backup}
                 if action == "update_install"
-                else {},
+                else {"safe_mode": safe_mode},
                 blocking=False,
                 context=Context(user_id=actor.user_id),
             )

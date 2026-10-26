@@ -8,9 +8,11 @@ on:
       - 'custom_components/**'
       - 'tests/**'
       - 'scripts/native_*.py'
+      - 'scripts/core_window.py*'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/native-migration.yml'
+      - '.github/workflows/core-window.yml'
   workflow_dispatch:
     inputs:
       published_tag:
@@ -26,6 +28,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  core-window:
+    if: ${{ !inputs.published_tag }}
+    uses: ./.github/workflows/core-window.yml
+
   unit:
     if: ${{ !inputs.published_tag }}
     runs-on: ubuntu-24.04
@@ -40,7 +46,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
@@ -62,18 +68,14 @@ jobs:
           retention-days: 14
 
   package:
-    name: Native installation (HA ${{ matrix.core }}, ${{ matrix.os }})
+    name: Native HTTP bench (current stable, amd64)
+    needs: core-window
     if: ${{ !inputs.published_tag }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        core: ['2026.8.0', '2026.9.4', '2026.10.3']
-        os: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
       UV_EXCLUDE_NEWER: '7 days'
-      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ matrix.core }}
+      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ needs.core-window.outputs.latest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,17 +84,12 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
           python-version: '3.14'
-      - name: Build matching integration and library
-        env:
-          NATIVE_VERSION: 9.0.0.dev${{ github.run_number }}
-          NATIVE_TAG: native-ci-${{ github.run_id }}
-        run: uv run -s scripts/native_release.py --version "$NATIVE_VERSION" --tag "$NATIVE_TAG" --github "$GITHUB_REPOSITORY"
-      - name: Qualify dependencies and imports on minimal Core
-        run: |
-          mkdir -p tests/native/out
-          docker run --rm -v "$PWD:/work" -w /work --entrypoint python "$HA_IMAGE_GHCR" -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: core-window-candidate
+          path: dist/native
       - name: Validate library against Home Assistant constraints
         run: docker build --build-arg "HA_IMAGE=$HA_IMAGE_GHCR" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
       - name: Exercise candidate on the real HA HTTP server
@@ -103,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-container-evidence-HA${{ matrix.core }}-${{ runner.arch }}
+          name: native-container-evidence-HA${{ needs.core-window.outputs.latest }}-${{ runner.arch }}
           path: |
             tests/native/out/evidence.json
             tests/native/out/candidate-install.json
@@ -116,7 +113,7 @@ jobs:
       - name: Preserve HACS candidate
         uses: actions/upload-artifact@v4
         with:
-          name: native-hacs-candidate-HA${{ matrix.core }}-${{ runner.arch }}
+          name: native-hacs-candidate-HA${{ needs.core-window.outputs.latest }}-${{ runner.arch }}
           path: dist/native/
           retention-days: 14
       - name: Stop disposable HA
@@ -138,7 +135,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
           python-version: '3.14'
       - name: Verify publicly available assets against this checkout
         run: uv run --locked -s scripts/native_published_assets.py fetch --tag "$PUBLISHED_TAG" --repository "$GITHUB_REPOSITORY"

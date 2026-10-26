@@ -10,7 +10,18 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("case", ["streaming", "oversized", "buffered", "fastmcp"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "streaming",
+        "oversized",
+        "buffered",
+        "fastmcp",
+        "peer_eof",
+        "peer_payload",
+        "eof_race",
+    ],
+)
 def test_native_http_adapter(case: str, tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[3]
     result = subprocess.run(

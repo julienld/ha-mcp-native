@@ -4,13 +4,16 @@ from typing import Annotated, Any, Protocol
 
 from pydantic import Field
 
-from ha_mcp.errors import ErrorCode, create_error_response
 from ha_mcp.tool_api import ToolFailure
 from ha_mcp.tools.coercion import JSON_STRING_COERCION
 
-from .errors import raise_failure
-from .group_values import _build_group_service_data, _validate_group_params
+from .group_values import _build_group_service_data
 from .validation import validate_identifier_not_empty
+
+_OBJECT_ID_DESCRIPTION = (
+    "Group identifier: a lowercase slug without the group. prefix "
+    "(e.g., living_room_lights)"
+)
 
 
 class Groups(Protocol):
@@ -56,8 +59,10 @@ class GroupTools:
         Returns one page of old-style groups created via the group.set service
         or YAML configuration (platform-specific groups such as light or cover
         groups are separate entities); `total_count` and `has_more` report the
-        full set. Each group includes its entity_id, friendly name, state,
-        member entities, icon and all mode.
+        full set. Each group carries Core's state fields and attributes, its
+        members as `entity_ids`, and its object_id. `auto` is true for a group
+        created by ha_config_set_group (group.set) and false for a YAML group.
+        The in-process runtime also reads the all/any mode from its Core owner.
 
         EXAMPLE: ha_config_list_groups(offset=100)
         """
@@ -66,24 +71,20 @@ class GroupTools:
 
     async def ha_config_set_group(
         self,
-        object_id: Annotated[
-            str,
-            Field(
-                description="Group identifier without 'group.' prefix (e.g., 'living_room_lights')"
-            ),
-        ],
+        object_id: Annotated[str, Field(description=_OBJECT_ID_DESCRIPTION)],
         entities: Annotated[
             list[str] | None,
             JSON_STRING_COERCION,
             Field(
-                description="List of entity IDs for the group. When updating, replaces all entities.",
+                description="List of entity IDs for the group. When updating, replaces all entities;"
+                " an empty list empties the group, or creates it without members.",
                 default=None,
             ),
         ] = None,
         name: Annotated[
             str | None,
             Field(
-                description="Friendly display name for the group",
+                description="Friendly display name; a new group without one is named after object_id",
                 default=None,
             ),
         ] = None,
@@ -97,7 +98,8 @@ class GroupTools:
         all_on: Annotated[
             bool | None,
             Field(
-                description="If True, all entities must be on for group to be on",
+                description="If True, all entities must be on for group to be on. Remote Core state does not"
+                " expose this mode; the in-process runtime can read and restore it.",
                 default=None,
             ),
         ] = None,
@@ -105,7 +107,7 @@ class GroupTools:
             list[str] | None,
             JSON_STRING_COERCION,
             Field(
-                description="Add these entities to an existing group",
+                description="Entities to add to the group's members",
                 default=None,
             ),
         ] = None,
@@ -113,7 +115,7 @@ class GroupTools:
             list[str] | None,
             JSON_STRING_COERCION,
             Field(
-                description="Remove these entities from an existing group",
+                description="Entities to remove from the group's members",
                 default=None,
             ),
         ] = None,
@@ -136,11 +138,12 @@ class GroupTools:
         **When to use:** compatibility with existing groups already configured via group.set
         or YAML, or the rare case where entity-registry membership is explicitly unwanted.
         Groups created here are only removable via `ha_config_remove_group` —
-        `ha_remove_helpers_integrations` will not find them.
+        `ha_remove_helpers_integrations` will not find them. They survive group.reload but
+        not a restart.
 
-        **For NEW groups:** Provide object_id and entities (required).
-        **For EXISTING groups:** Provide object_id and any fields to update.
-        entities, add_entities, and remove_entities are mutually exclusive.
+        Core creates group.<object_id> when it does not exist (members from entities or
+        add_entities) and updates it otherwise. entities, add_entities, and remove_entities
+        are mutually exclusive.
 
         EXAMPLES:
         - Create: ha_config_set_group("bedroom_lights", entities=["light.lamp", "light.ceiling"], name="Bedroom Lights")
@@ -157,7 +160,6 @@ class GroupTools:
                 ],
                 context={"operation": "set_group"},
             )
-            _validate_group_params(object_id, entities, add_entities, remove_entities)
 
             service_data = _build_group_service_data(
                 object_id,
@@ -175,12 +177,7 @@ class GroupTools:
 
     async def ha_config_remove_group(
         self,
-        object_id: Annotated[
-            str,
-            Field(
-                description="Group identifier without 'group.' prefix (e.g., 'living_room_lights')"
-            ),
-        ],
+        object_id: Annotated[str, Field(description=_OBJECT_ID_DESCRIPTION)],
         wait: Annotated[
             bool,
             Field(
@@ -206,7 +203,8 @@ class GroupTools:
 
         **WARNING:**
         - Removing a group used in automations may cause those automations to fail.
-        - Groups defined in YAML can be removed at runtime but will reappear after restart.
+        - Groups defined in YAML can be removed at runtime but come back on group.reload
+          or a restart.
         - This only removes old-style groups, not platform-specific groups.
         """
 
@@ -219,18 +217,6 @@ class GroupTools:
                 ],
                 context={"operation": "remove_group"},
             )
-            # Validate object_id format
-            if "." in object_id:
-                raise_failure(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"Invalid object_id: '{object_id}'. Do not include 'group.' prefix.",
-                        context={"object_id": object_id},
-                        suggestions=[
-                            "Provide object_id without 'group.' prefix or dots"
-                        ],
-                    )
-                )
 
         except ToolFailure as error:
             raise _invalid_arguments(error) from error

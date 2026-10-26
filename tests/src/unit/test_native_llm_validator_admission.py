@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from ._embedded_stubs import install
+from ._embedded_stubs import LlmToolResult, install
 
 install()
 
@@ -32,7 +32,7 @@ async def test_imported_arguments_use_the_validator_after_final_authorization(
     instance = SimpleNamespace(
         api=owner,
         tools=[tool],
-        async_call_tool=AsyncMock(return_value={"changed": True}),
+        async_call_tool=AsyncMock(return_value=LlmToolResult({"changed": True})),
     )
 
     async def authorize(_actor):

@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
-REPOSITORY = "julienld/ha-mcp-native"
+REPOSITORY = "homeassistant-ai/ha-mcp"
 MAX_JSON = 1024 * 1024
 MAX_ZIP = 64 * 1024 * 1024
 MAX_WHEEL = 128 * 1024 * 1024

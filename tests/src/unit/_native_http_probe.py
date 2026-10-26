@@ -171,10 +171,86 @@ async def fastmcp() -> None:
             assert result["result"]["structuredContent"] == {"value": "native"}
 
 
+async def peer_closes_after_result(payload: bytes) -> None:
+    """An SDK can close after its SSE result, before the empty HTTP terminator."""
+    module = adapter()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    errors = []
+    requests = []
+
+    async def asgi(scope: dict, receive: Any, send: Any) -> None:
+        await receive()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'data: {"result": "ok"}\n\n',
+                "more_body": True,
+            }
+        )
+        await release.wait()
+        # Establish the observed closing-transport state synchronously: otherwise
+        # aiohttp's handler cancellation can win before the adapter's EOF send.
+        if (transport := requests[0].transport) is not None:
+            transport.close()
+        await send({"type": "http.response.body", "body": payload, "more_body": False})
+
+    async def handle(request: web.Request) -> web.StreamResponse:
+        requests.append(request)
+        try:
+            return await module.serve_asgi(asgi, request)
+        except OSError as error:
+            errors.append(type(error).__name__)
+            raise
+        finally:
+            finished.set()
+
+    app = web.Application()
+    app.router.add_post("/", handle)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/", data=b"input")
+        assert await response.content.readline() == b'data: {"result": "ok"}\n'
+        release.set()
+        await asyncio.wait_for(finished.wait(), 2)
+    if payload:
+        assert errors, "A lost payload must still surface as an incomplete response"
+    else:
+        assert not errors, "A peer closing after its result must not break empty EOF"
+
+
+async def disconnect_during_empty_eof() -> None:
+    """A disconnect during write_eof has the same semantics as before send."""
+    from types import SimpleNamespace
+
+    module = adapter()
+    invocation = module._Invocation(
+        SimpleNamespace(transport=SimpleNamespace(is_closing=lambda: False)), b""
+    )
+
+    async def write_eof() -> None:
+        raise ConnectionResetError("Peer closed while flushing empty EOF")
+
+    invocation.response = SimpleNamespace(write_eof=write_eof)
+    await invocation.send(
+        {"type": "http.response.body", "body": b"", "more_body": False}
+    )
+    assert invocation.complete
+
+
 async def run(case: str) -> None:
     await {
         "streaming": streaming,
         "oversized": oversized,
         "buffered": buffered,
         "fastmcp": fastmcp,
+        "peer_eof": lambda: peer_closes_after_result(b""),
+        "peer_payload": lambda: peer_closes_after_result(b"not delivered"),
+        "eof_race": disconnect_during_empty_eof,
     }[case]()

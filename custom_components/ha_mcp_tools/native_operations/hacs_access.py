@@ -8,7 +8,7 @@ integration; this module never imports or constructs a HACS/client instance.
 import asyncio
 import copy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from homeassistant.config_entries import ConfigEntryState
 
@@ -70,6 +70,8 @@ def hacs_owner(hass: Any, *, writes: bool = False) -> Any:
 
 @dataclass
 class HacsAccess:
+    domain: ClassVar[str] = "hacs"
+    module_root: ClassVar[str] = "custom_components.hacs"
     hass: Any
     actor: CallContext
     authorize: Authorize
@@ -84,6 +86,49 @@ class HacsAccess:
     common: Any
     entry_image: dict[str, Any]
     target_ids: dict[int, str] = field(default_factory=dict)
+    target_names: dict[int, tuple[Any, ...]] = field(default_factory=dict)
+
+    @staticmethod
+    def get_owner(hass: Any, *, writes: bool = False) -> Any:
+        from .marketplace_access import store_domain
+
+        if store_domain(hass) != "hacs":
+            raise ToolFailure(
+                "CONFIG_CONFLICT",
+                "HACS owner changed to Marketplace",
+                status="not_started",
+            )
+        return hacs_owner(hass, writes=writes)
+
+    def guard(self, action: str, repository: Any = None) -> None:
+        """Provider admission in addition to the live administrator check."""
+
+    def category(self, category: str | None) -> None:
+        """HACS retains its own available-category validator."""
+
+    def command(self, action: str) -> str:
+        suffix = {
+            "search": "repositories/list",
+            "info": "repository/info",
+            "download": "repository/download",
+            "remove": "repository/remove",
+            "update_information": "repository/refresh",
+            "add_repository": "repositories/add",
+        }[action]
+        return f"{self.domain}/{suffix}"
+
+    def project(self, repository: Any) -> dict[str, Any]:
+        from .hacs_projection import repository_data
+
+        return repository_data(self.owner, repository)
+
+    def cache(self, repository: Any = None) -> dict[str, Any]:
+        from .hacs_projection import cache_status
+
+        return cache_status(self.owner, repository)
+
+    def listed(self, repository: Any) -> bool:
+        return not repository.ignored_by_country_configuration
 
     @classmethod
     async def open(
@@ -98,7 +143,7 @@ class HacsAccess:
             await admit_registry_write(actor, authorize)
         else:
             await authorize_actor(actor, authorize)
-        owner = hacs_owner(hass, writes=writes)
+        owner = cls.get_owner(hass, writes=writes)
         return cls(
             hass,
             actor,
@@ -107,7 +152,7 @@ class HacsAccess:
             owner.repositories,
             owner.data,
             owner.configuration.config_entry,
-            owner.github,
+            getattr(owner, "github", None),
             owner.githubapi,
             owner.configuration,
             str(owner.version),
@@ -127,14 +172,14 @@ class HacsAccess:
         *,
         writes: bool = False,
     ) -> None:
-        owner = hacs_owner(self.hass, writes=writes)
+        owner = self.get_owner(self.hass, writes=writes)
         if (
             owner is not self.owner
             or owner.repositories is not self.repositories
             or owner.data is not self.storage
             or owner.configuration is not self.configuration
             or owner.configuration.config_entry is not self.entry
-            or owner.github is not self.github
+            or getattr(owner, "github", None) is not self.github
             or owner.githubapi is not self.githubapi
             or str(owner.version) != self.version
             or owner.common is not self.common
@@ -154,7 +199,13 @@ class HacsAccess:
                 identifier is None
                 or str(repository.data.id) != identifier
                 or self.repositories.get_by_id(identifier) is not repository
-                or repository.hacs is not owner
+                or getattr(repository, self.domain) is not owner
+                or self.target_names.get(id(repository))
+                != (
+                    repository.data.full_name,
+                    repository.data.category,
+                    repository.data.domain,
+                )
             ):
                 raise ToolFailure(
                     "CONFIG_CONFLICT",
@@ -212,6 +263,11 @@ class HacsAccess:
 
     def remember(self, repository: Any) -> None:
         self.target_ids[id(repository)] = str(repository.data.id)
+        self.target_names[id(repository)] = (
+            repository.data.full_name,
+            repository.data.category,
+            repository.data.domain,
+        )
 
 
 def check_self_files(owner: Any, repository: Any, manager_domain: str) -> bool:

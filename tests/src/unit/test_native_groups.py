@@ -29,54 +29,6 @@ class _CoreGroup:
         self.extra_state_attributes = {"order": 0}
         self.context = None
 
-    @staticmethod
-    def async_create_group_entity(
-        hass: Any,
-        name: str,
-        *,
-        created_by_service: bool,
-        entity_ids: Any,
-        icon: str | None,
-        mode: bool | None,
-        object_id: str,
-        order: int | None,
-    ) -> Any:
-        world = hass.data["group_fixture_world"]
-        return _CoreGroup(
-            world,
-            object_id,
-            name=name,
-            members=entity_ids or (),
-            icon=icon,
-            mode=mode,
-        )
-
-    @staticmethod
-    async def async_create_group(
-        hass: Any,
-        name: str,
-        *,
-        created_by_service: bool,
-        entity_ids: Any,
-        icon: str | None,
-        mode: bool | None,
-        object_id: str,
-        order: int | None,
-    ) -> Any:
-        """Core August's factory has no context keyword."""
-        owner = _CoreGroup.async_create_group_entity(
-            hass,
-            name,
-            created_by_service=created_by_service,
-            entity_ids=entity_ids,
-            icon=icon,
-            mode=mode,
-            object_id=object_id,
-            order=order,
-        )
-        await hass.data["native-group-component"].async_add_entities([owner])
-        return owner
-
     def async_set_context(self, context):
         self.context = context
 
@@ -145,6 +97,36 @@ class _CoreComponent:
             raise RuntimeError("Core raised after group deletion")
 
 
+async def _call_group_service(
+    world, component, domain, service, payload, *, blocking, context
+):
+    assert domain == "group" and service == "set" and blocking
+    world.service_calls.append((payload.copy(), context))
+    entity_id = "group." + payload["object_id"]
+    owner = world.rows.get(entity_id)
+    if owner is None:
+        owner = _CoreGroup(world, payload["object_id"])
+        owner.async_set_context(context)
+        for key, value in payload.items():
+            if key in ("name", "icon"):
+                setattr(owner, key, value)
+        owner.tracking = tuple(payload.get("entities", payload.get("add_entities", [])))
+        owner.mode = all if payload.get("all") else any
+        await component.async_add_entities([owner])
+    else:
+        owner.async_set_context(context)
+        if "entities" in payload:
+            owner.tracking = tuple(payload["entities"])
+        if "add_entities" in payload:
+            owner.tracking = tuple(set(owner.tracking) | set(payload["add_entities"]))
+        for key in ("name", "icon"):
+            if key in payload:
+                setattr(owner, key, payload[key])
+        if "all" in payload:
+            owner.mode = all if payload["all"] else any
+        owner.async_write_ha_state()
+
+
 @pytest.fixture
 def groups(native, monkeypatch):
     from custom_components.ha_mcp_tools.native_group_tools import build_group_tools
@@ -155,6 +137,7 @@ def groups(native, monkeypatch):
         rows={},
         states={},
         calls=[],
+        service_calls=[],
         initial_contexts=[],
         callback=None,
         fail_create=False,
@@ -199,12 +182,15 @@ def groups(native, monkeypatch):
         data={"native-group-component": component, "group_fixture_world": world},
         states=SimpleNamespace(get=world.states.get, async_all=all_states),
         services=SimpleNamespace(
+            async_call=AsyncMock(
+                side_effect=partial(_call_group_service, world, component)
+            ),
             async_services=lambda: {
                 "group": {
                     action: SimpleNamespace(schema=validate)
                     for action in ("set", "remove")
                 }
-            }
+            },
         ),
         async_add_executor_job=executor,
     )
@@ -217,7 +203,7 @@ def groups(native, monkeypatch):
     return (world, manager, engine, partial(_CoreGroup, world))
 
 
-async def test_native_create_and_list_use_real_owner_values_without_mutating_state(
+async def test_native_create_and_list_use_owner_values_without_mutating_state(
     groups,
 ):
     world, _, engine, _ = groups
@@ -234,7 +220,7 @@ async def test_native_create_and_list_use_real_owner_values_without_mutating_sta
     assert world.calls.count("create") == 1
 
 
-async def test_native_compound_update_uses_core_callbacks_and_readback(groups):
+async def test_native_compound_update_uses_one_service_and_reads_back(groups):
     world, _, engine, Group = groups
     owner = Group("native", members=["light.a"])
     world.rows[owner.entity_id] = owner
@@ -253,17 +239,22 @@ async def test_native_compound_update_uses_core_callbacks_and_readback(groups):
     assert not result.is_error and owner.name == "Updated"
     assert set(owner.tracking) == {"light.a", "light.b"} and owner.mode is all
     assert owner.icon == "mdi:lightbulb-group"
-    assert world.calls == ["entities", "name", "icon", "aggregate", "publish"]
+    assert world.calls == ["publish"]
+    assert (
+        len(world.service_calls) == 1 and world.service_calls[0][1].user_id == "actor"
+    )
 
 
-async def test_group_callback_cannot_replace_owner_then_receive_later_updates(groups):
+async def test_service_replacing_owner_reports_unknown_without_changing_replacement(
+    groups,
+):
     world, _, engine, Group = groups
     owner = Group("native", members=["light.a"])
     world.rows[owner.entity_id] = owner
     replacement = Group("native", name="external")
 
     def replace_owner(changed, field):
-        if field == "entities":
+        if field == "publish":
             world.rows[changed.entity_id] = replacement
 
     world.callback = replace_owner
@@ -278,16 +269,16 @@ async def test_group_callback_cannot_replace_owner_then_receive_later_updates(gr
         CallContext("actor"),
     )
     assert result.is_error and result.status == "outcome_unknown"
-    assert replacement.name == "external" and "name" not in world.calls
+    assert replacement.name == "external" and len(world.service_calls) == 1
 
 
-async def test_callback_changes_unrequested_field_without_later_overwrite(groups):
+async def test_service_readback_divergence_is_unknown_without_a_second_mutation(groups):
     world, _, engine, Group = groups
     owner = Group("native", members=["light.a"])
     world.rows[owner.entity_id] = owner
 
     def changed_name(changed, field):
-        if field == "entities":
+        if field == "publish":
             changed.name = "external"
 
     world.callback = changed_name
@@ -302,7 +293,7 @@ async def test_callback_changes_unrequested_field_without_later_overwrite(groups
         CallContext("actor"),
     )
     assert result.is_error and result.status == "outcome_unknown"
-    assert owner.name == "external" and "name" not in world.calls
+    assert owner.name == "external" and len(world.service_calls) == 1
 
 
 async def test_policy_revocation_during_capture_prevents_all_callbacks(groups):
@@ -400,3 +391,35 @@ async def test_two_cancellations_keep_the_group_lock_until_core_drains(groups):
     assert (
         world.calls.count("create") == 1 and world.rows["group.native"].name == "second"
     )
+
+
+async def test_empty_group_and_existing_replacement_report_actual_action(groups):
+    world, _, engine, _ = groups
+    arguments = {"object_id": "native", "entities": [], "name": "Empty", "wait": False}
+    created = await engine.call("ha_config_set_group", arguments, CallContext("actor"))
+    assert not created.is_error, created.data
+    assert "created group" in created.data["message"]
+    updated = await engine.call("ha_config_set_group", arguments, CallContext("actor"))
+    assert not updated.is_error, updated.data
+    assert "updated group" in updated.data["message"]
+    assert not world.rows["group.native"].tracking
+
+
+@pytest.mark.parametrize("action", ["set", "remove"])
+async def test_verification_failure_after_group_effect_is_not_reported_as_not_started(
+    groups, monkeypatch, action
+):
+    from custom_components.ha_mcp_tools.native_operations import groups as operations
+
+    world, _, engine, Group = groups
+    if action == "remove":
+        world.rows["group.native"] = Group("native")
+    observer = "wait_registered" if action == "set" else "wait_removed"
+    monkeypatch.setattr(
+        operations, observer, AsyncMock(side_effect=OSError("Observer failed"))
+    )
+    result = await engine.call(
+        "ha_config_" + action + "_group", {"object_id": "native"}, CallContext("actor")
+    )
+    assert result.is_error and result.status == "outcome_unknown", result.data
+    assert world.calls.count("create" if action == "set" else "remove") == 1

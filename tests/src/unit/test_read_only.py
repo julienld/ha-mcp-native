@@ -257,6 +257,22 @@ class TestExemptionRules:
     @pytest.mark.parametrize(
         "args,allowed",
         [
+            ({}, True),
+            ({"action": "check"}, True),
+            ({"action": "guide"}, True),
+            ({"action": "update"}, False),
+            ({"action": "future_write"}, False),
+            ({"action": None}, False),
+            ({"action": []}, False),
+        ],
+    )
+    def test_manage_ha_mcp_updates(self, args, allowed):
+        rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_ha_mcp_updates"].blocked_write
+        assert (rule(args) is None) is allowed
+
+    @pytest.mark.parametrize(
+        "args,allowed",
+        [
             ({"action": "list"}, True),
             # No pure-read duplicate exists, and Read Only Mode still surfaces
             # the capture warning naming this value -- so it stays inspectable.
@@ -667,6 +683,7 @@ class TestExemptTableContract:
             "ha_manage_custom_tool",
             "ha_manage_radio",
             "ha_manage_updates",
+            "ha_manage_ha_mcp_updates",
             "ha_manage_security_policy",
             "ha_manage_theme",
             "ha_manage_blueprints",
@@ -692,6 +709,7 @@ _EXEMPT_TOOL_MODULES = {
     "ha_manage_custom_tool": "tools_code.py",
     "ha_manage_radio": "tools_radio.py",
     "ha_manage_updates": "tools_updates.py",
+    "ha_manage_ha_mcp_updates": "tools_self_update.py",
     "ha_manage_security_policy": "tools_security_policy.py",
     "ha_manage_theme": "tools_themes.py",
     "ha_manage_blueprints": "tools_blueprints.py",
@@ -724,6 +742,7 @@ _EXEMPT_INSPECTED_ARGS = {
     "ha_manage_custom_tool": {"list_saved", "code", "run_saved"},
     "ha_manage_radio": {"action"},
     "ha_manage_updates": {"action"},
+    "ha_manage_ha_mcp_updates": {"action"},
     "ha_manage_security_policy": {"action"},
     "ha_manage_blueprints": {"action"},
 }
@@ -750,6 +769,7 @@ _ADDON_CONFIG_WRITE_PARAMS_MANIFEST = (
 # dispatch fields the predicate inspects) would silently classify as a
 # read in Read Only Mode.
 _EXEMPT_GATED_OR_READ_ARGS = {
+    "ha_manage_ha_mcp_updates": set(),
     "ha_manage_theme": {
         # Consumed only under the action dispatch the predicate inspects:
         # the backend-default write payload ('set')...

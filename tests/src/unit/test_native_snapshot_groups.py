@@ -43,6 +43,10 @@ async def test_group_diff_restore_has_one_full_safety_image_and_clears_icon(
         and store.read_snapshot(result["safety_backup"])["config"] == before
     )
     assert owner.name == saved["name"] and owner.icon is None and owner.mode is all
+    assert world.rows[owner.entity_id] is owner and owner.context.user_id == "owner"
+    assert len(world.service_calls) == 1
+    assert "icon" not in world.service_calls[0][0]
+    assert world.service_calls[0][1].user_id == "owner"
     assert (
         list(owner.tracking) == saved["entities"] and world.calls.count("create") == 0
     )
@@ -104,3 +108,19 @@ async def test_group_restore_never_uses_remote_backend_dispatch(group_history):
         snapshots.restore_snapshot(path.name, CallContext("owner")), 2
     )
     assert result["apply_status"] == "applied"
+
+
+async def test_restore_does_not_clear_icon_after_service_replaces_owner(group_history):
+    world, _, snapshots, _, path, owner, _, Group = group_history
+    replacement = Group("native", name="Other", icon="mdi:account")
+
+    def replace(changed, field):
+        if field == "publish":
+            world.rows[changed.entity_id] = replacement
+
+    world.callback = replace
+    with pytest.raises(BackupRestoreError) as error:
+        await snapshots.restore_snapshot(path.name, CallContext("owner"))
+    assert error.value.outcome["apply_status"] == "unknown"
+    assert replacement.icon == "mdi:account" and owner.icon == "mdi:group"
+    assert len(world.service_calls) == 1 and "icon" not in world.calls

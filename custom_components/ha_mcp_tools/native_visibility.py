@@ -102,7 +102,9 @@ def _native_unscannable_reason(name: str, arguments: dict[str, Any]) -> str | No
         return "A full Home Assistant restore can replace hidden entities without naming them. It is unavailable while entity visibility enforcement has active hiding rules."
     if name == "ha_manage_app":
         return "App operations can read or act on hidden entities without inspectable Core targets, including opaque HTTP GET APIs."
-    if name == "ha_manage_hacs" and arguments.get("action") in {"download", "remove"}:
+    if (
+        name == "ha_manage_hacs" and arguments.get("action") in {"download", "remove"}
+    ) or (name == "ha_manage_ha_mcp_updates" and arguments.get("action") == "update"):
         return "Installing or removing integration code cannot be constrained to visible entities."
     if name == "ha_get_camera_image":
         return "Camera pixels cannot be filtered for hidden entities under visibility enforcement."

@@ -13,6 +13,7 @@ from ha_mcp.runtime.system_values import (
     reload_all_result,
     reload_entry_result,
     reload_target_result,
+    restart_precheck_warnings,
     restart_scheduled_result,
 )
 from ha_mcp.tool_api import CallContext, ToolFailure
@@ -26,7 +27,7 @@ class NativeSystemActions:
     manager: Any
     actor: CallContext
 
-    async def restart(self) -> dict[str, Any]:
+    async def restart(self, safe_mode: bool = False) -> dict[str, Any]:
         from homeassistant import config
 
         await admit_registry_write(self.actor, self.manager.backend.authorize)
@@ -44,8 +45,32 @@ class NativeSystemActions:
                 )
             )
         self._require_service("homeassistant", "restart")
-        self.manager.system_lifecycle.schedule("restart", self.actor)
-        return restart_scheduled_result()
+        warnings = self.restart_precheck(safe_mode=safe_mode)
+        self.manager.system_lifecycle.schedule(
+            "restart", self.actor, safe_mode=safe_mode
+        )
+        result = restart_scheduled_result()
+        result["warnings"].extend(warnings)
+        return result
+
+    def restart_precheck(self, *, safe_mode: bool = False) -> list[str]:
+        from homeassistant.components.backup import async_get_manager
+        from homeassistant.exceptions import HomeAssistantError
+        from homeassistant.helpers.recorder import async_migration_in_progress
+
+        hass = self.manager.hass
+        migration = async_migration_in_progress(hass)
+        try:
+            manager = async_get_manager(hass)
+        except HomeAssistantError:
+            backup_info = None
+        else:
+            backup_info = {"state": getattr(manager, "state", None)}
+        return restart_precheck_warnings(
+            {"migration_in_progress": migration},
+            backup_info,
+            safe_mode=safe_mode,
+        )
 
     def _require_service(self, domain: str, service: str) -> None:
         if not self.manager.hass.services.has_service(domain, service):

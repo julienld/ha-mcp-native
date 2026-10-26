@@ -159,3 +159,63 @@ async def test_shutdown_cancels_refresh_owner_and_waiter_without_deadlock() -> N
     await asyncio.wait_for(runtime.async_stop(), 1)
     assert first.cancelled() and following.cancelled()
     assert runtime._stopped and not runtime._http_tasks
+
+
+async def test_unchanged_policy_does_not_rescan_instruction_bundle() -> None:
+    """Repeated admission keeps fresh policy checks without rereading skill files."""
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+
+    runtime = policy_manager()
+    runtime.engine = Engine(runtime.backend)
+    runtime.hass.async_add_executor_job = AsyncMock(
+        side_effect=[
+            NativePolicy(custom_instructions="same"),
+            NativePolicy(custom_instructions="same"),
+            NativePolicy(custom_instructions="same", read_only=True),
+        ]
+    )
+    await runtime.refresh_policy()
+    runtime.settings_ui._io.reset_mock()
+    await runtime.refresh_policy()
+    assert runtime.instructions == "same"
+    runtime.settings_ui._io.assert_not_awaited()
+    await runtime.refresh_policy()
+    assert runtime.engine.read_only
+    assert runtime.hass.async_add_executor_job.await_count == 3
+    runtime.settings_ui._io.assert_awaited_once()
+
+
+@pytest.mark.parametrize("change", ["catalogue", "search_environment"])
+async def test_instruction_reuse_observes_current_inputs(
+    change: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+
+    runtime = policy_manager()
+    runtime.engine = Engine(runtime.backend)
+    runtime.hass.async_add_executor_job = AsyncMock(return_value=NativePolicy())
+    runtime.settings_ui._io.side_effect = lambda _fn, policy, names: (
+        f"{sorted(names)}:{policy.flag('enable_tool_search')}"
+    )
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "false")
+    await runtime.refresh_policy()
+    original = runtime.instructions
+    if change == "catalogue":
+        runtime.engine.register(ToolDefinition("read", "Read", {}, AsyncMock()))
+    else:
+        monkeypatch.setenv("ENABLE_TOOL_SEARCH", "true")
+    await runtime.refresh_policy()
+    assert runtime.instructions != original
+
+
+async def test_instruction_reuse_cannot_hide_an_unreadable_policy() -> None:
+    from custom_components.ha_mcp_tools.native_server_policy import NativePolicy
+
+    runtime = policy_manager()
+    runtime.engine = Engine(runtime.backend)
+    runtime.hass.async_add_executor_job = AsyncMock(
+        side_effect=[NativePolicy(), ValueError("Unreadable policy")]
+    )
+    await runtime.refresh_policy()
+    with pytest.raises(ValueError, match="Unreadable policy"):
+        await runtime.refresh_policy()

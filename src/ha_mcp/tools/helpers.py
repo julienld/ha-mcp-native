@@ -16,6 +16,7 @@ from ha_mcp.runtime.error_text import (
 )
 from ha_mcp.runtime.errors import ws_failure_code
 
+from ..client.rest_client import HomeAssistantAPIError
 from ..client.websocket_client import HomeAssistantWebSocketClient
 from ..errors import (
     ErrorCode,
@@ -303,3 +304,16 @@ __all__ = [
     "validate_identifier_not_empty",
     "ws_failure_code",
 ]
+
+
+async def get_entity_state_or_none(
+    client: Any, entity_id: str
+) -> dict[str, Any] | None:
+    """Return the state or None only when Core confirms absence with 404."""
+    try:
+        state: dict[str, Any] = await client.get_entity_state(entity_id)
+    except HomeAssistantAPIError as error:
+        if error.status_code != 404:
+            raise
+        return None
+    return state

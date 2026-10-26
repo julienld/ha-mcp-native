@@ -6,10 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       core_version:
-        description: 'Pinned Core version to bake and verify inside HAOS'
-        type: choice
-        options: ['2026.8.0', '2026.9.4', '2026.10.3']
-        default: '2026.10.3'
+        description: 'Exact released Core version to bake and verify; must meet the checked-out source floor (initially 2026.10.0)'
+        type: string
+        default: '2026.10.4'
       pytest_args:
         description: 'Additional pytest arguments'
         type: string
@@ -32,8 +31,8 @@ concurrency:
 
 env:
   PYTHON_VERSION: '3.13'
-  HAOS_BUILD_CORE_VERSION: ${{ inputs.core_version || '2026.10.3' }}
-  E2E_EXPECTED_CORE_VERSION: ${{ inputs.core_version || '2026.10.3' }}
+  HAOS_BUILD_CORE_VERSION: ${{ inputs.core_version || '2026.10.4' }}
+  E2E_EXPECTED_CORE_VERSION: ${{ inputs.core_version || '2026.10.4' }}
   UV_CACHE_DIR: /tmp/.uv-cache
   LIBGUESTFS_BACKEND: direct
   E2E_NATIVE_ARTIFACTS: ${{ github.workspace }}/dist/haos-qualification
@@ -41,8 +40,7 @@ env:
 
 jobs:
   haos-native:
-    name: HAOS native runtime (HA ${{ inputs.core_version || '2026.10.3' }})
-    if: ${{ github.repository == 'julienld/ha-mcp-native' }}
+    name: HAOS native runtime (HA ${{ inputs.core_version || '2026.10.4' }})
     runs-on: ubuntu-22.04
     timeout-minutes: 75
 
@@ -129,7 +127,7 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}

@@ -72,7 +72,7 @@ def _schema(instance: Any, tool: Any) -> dict[str, Any]:
 
 
 def _writes(tool: Any) -> bool:
-    return getattr(getattr(tool, "annotations", None), "read_only", False) is not True
+    return tool.annotations.read_only is not True
 
 
 def _validated_arguments(tool: Any, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -97,7 +97,7 @@ async def inspect_api(
         "tools": [
             {
                 "name": f"{api_id}/{tool.name}",
-                "owner": getattr(tool, "integration", None),
+                "owner": tool.integration,
                 "description": tool.description,
                 "inputSchema": _schema(instance, tool),
                 "readOnlyHint": not _writes(tool),
@@ -132,7 +132,7 @@ async def call_imported(
     advertised = next((tool for tool in instance.tools if tool.name == tool_name), None)
     if advertised is None:
         raise ValueError("Unknown LLM tool")
-    owner = getattr(advertised, "integration", None)
+    owner = advertised.integration
     api_owner = instance.api
     writes = _writes(advertised)
 
@@ -143,7 +143,7 @@ async def call_imported(
             if (
                 actual.api is not api_owner
                 or tool is None
-                or getattr(tool, "integration", None) != owner
+                or tool.integration != owner
                 or _writes(tool) != writes
             ):
                 raise PermissionError("LLM tool owner or capabilities changed")
@@ -154,6 +154,8 @@ async def call_imported(
                 api_id not in selected_apis(manager)
                 or api_id in _IMPORT_STACK.get()
                 or actual.api is not api_owner
+                or tool.integration != owner
+                or _writes(tool) != writes
                 or next(
                     (
                         candidate
@@ -163,8 +165,6 @@ async def call_imported(
                     None,
                 )
                 is not tool
-                or getattr(tool, "integration", None) != owner
-                or _writes(tool) != writes
                 or not any(
                     registered is api_owner
                     for registered in llm.async_get_apis(manager.hass)
@@ -189,10 +189,7 @@ async def call_imported(
             )
         finally:
             _IMPORT_STACK.reset(stack)
-        data = getattr(result, "data", result)
-        return ToolResult(
-            json.loads(json_bytes(data)), is_error=bool(getattr(result, "error", False))
-        )
+        return ToolResult(json.loads(json_bytes(result.data)), is_error=result.error)
 
     return await manager.engine.call_owned(
         "ha_native_llm_call",

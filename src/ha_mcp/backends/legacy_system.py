@@ -18,8 +18,10 @@ from ha_mcp.tools.system_restart import restart_home_assistant
 class LegacySystemActions:
     _client: Any
 
-    async def _restart_call(self) -> dict[str, Any]:
-        return await restart_home_assistant(self._client)
+    async def _restart_call(self, safe_mode: bool = False) -> dict[str, Any]:
+        return await restart_home_assistant(
+            self._client, confirm=True, safe_mode=safe_mode
+        )
 
     async def _reload_call(self, target: str, entry_id: str | None) -> dict[str, Any]:
         if entry_id is not None:

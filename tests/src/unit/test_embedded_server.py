@@ -223,26 +223,6 @@ class TestLoopbackDerivation:
     instance with ``http.ssl_certificate`` configured, killing every HA
     round-trip while the MCP handshake kept working."""
 
-    def test_no_api_object_falls_back_to_constant(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = None
-        assert es._derive_loopback_url(hass) == ("http://127.0.0.1:8123", None)
-
-    def test_ssl_enabled_derives_https_with_verify_off(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=8123, use_ssl=True)
-        assert es._derive_loopback_url(hass) == ("https://127.0.0.1:8123", False)
-
-    def test_custom_port_is_honored(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=8444, use_ssl=False)
-        assert es._derive_loopback_url(hass) == ("http://127.0.0.1:8444", None)
-
-    def test_unusable_port_falls_back_to_8123(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=object(), use_ssl=True)
-        assert es._derive_loopback_url(hass) == ("https://127.0.0.1:8123", False)
-
     def test_manager_derives_when_no_override(self, tmp_path):
         hass = _make_hass(tmp_path)
         hass.config.api = SimpleNamespace(port=8443, use_ssl=True)
@@ -1293,7 +1273,7 @@ class TestThreadEnvStaging:
         )
         captured = {}
 
-        async def _fake_serve(_token, _stop_event):
+        async def _fake_serve(_token, _stop_event, _stop_requested):
             for key in (
                 "HOMEASSISTANT_URL",
                 "HOMEASSISTANT_TOKEN",
@@ -1539,7 +1519,7 @@ class TestThreadEnvStaging:
     def test_thread_crash_is_captured_not_raised(self, tmp_path, monkeypatch):
         mgr, _hass, _entry = _manager(tmp_path)
 
-        async def _boom(_token, _stop_event):
+        async def _boom(_token, _stop_event, _stop_requested):
             raise RuntimeError("serve failed")
 
         monkeypatch.setattr(mgr, "_serve", _boom)
@@ -1942,7 +1922,7 @@ class TestReadinessProbe:
 
         mgr, _hass, _entry = _manager(tmp_path)
 
-        async def _exit_now(access_token, stop_event):
+        async def _exit_now(access_token, stop_event, stop_requested):
             raise SystemExit(3)
 
         monkeypatch.setattr(mgr, "_serve", _exit_now)
@@ -2796,7 +2776,7 @@ class TestImportingWorkerRegistry:
         monkeypatch.setattr(es, "_IMPORTING_WORKERS", {threading.current_thread()})
         seen: list[bool] = []
 
-        async def _probe(access_token, stop_event):
+        async def _probe(access_token, stop_event, stop_requested):
             seen.append(threading.current_thread() in es._IMPORTING_WORKERS)
             raise SystemExit(3)
 
@@ -2815,7 +2795,7 @@ class TestImportingWorkerRegistry:
         mgr, _hass, _entry = _manager(tmp_path)
         monkeypatch.setattr(es, "_IMPORTING_WORKERS", {threading.current_thread()})
 
-        async def _boom(access_token, stop_event):
+        async def _boom(access_token, stop_event, stop_requested):
             raise RuntimeError("boom mid-import")
 
         monkeypatch.setattr(mgr, "_serve", _boom)
@@ -2836,7 +2816,7 @@ class TestImportingWorkerRegistry:
 
         mgr_a, _hass_a, _entry_a = _manager(tmp_path)
 
-        async def _hold(access_token, stop_event):
+        async def _hold(access_token, stop_event, stop_requested):
             # threading.Event so the MAIN thread can release a coroutine
             # running on worker A's own loop; run_in_executor keeps the
             # worker loop unblocked while waiting.

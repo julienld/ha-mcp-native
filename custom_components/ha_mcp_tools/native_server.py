@@ -233,6 +233,9 @@ class NativeServerManager:
         self._cleanup_task: asyncio.Task | None = None
         self._http_tasks: set[asyncio.Task] = set()
         self._policy_refresh_lock = asyncio.Lock()
+        self._instruction_inputs: tuple[NativePolicy, frozenset[str], bool] | None = (
+            None
+        )
         self._stopped = False
         self.policy = NativePolicy()
         self.approval_gate: Any = None
@@ -448,10 +451,19 @@ class NativeServerManager:
                     else policy.enabled(name)
                 )
             }
-            self.instructions = await self.settings_ui._io(
-                build_instructions, policy, self.engine.enabled_tools
+            instruction_inputs = (
+                policy,
+                frozenset(self.engine.enabled_tools),
+                policy.flag("enable_tool_search"),
             )
-            self.mcp.instructions = self.instructions
+            if instruction_inputs != self._instruction_inputs:
+                # Bundled skills are fixed for this entry's loaded generation.
+                # Keep policy reads/admission fresh; reuse only the derived text.
+                self.instructions = await self.settings_ui._io(
+                    build_instructions, policy, self.engine.enabled_tools
+                )
+                self.mcp.instructions = self.instructions
+                self._instruction_inputs = instruction_inputs
 
     def service_policy(self, domain: str, service: str) -> None:
         from ha_mcp.runtime.service_policy import check_service_policy

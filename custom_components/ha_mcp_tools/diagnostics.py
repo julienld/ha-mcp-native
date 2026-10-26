@@ -31,10 +31,11 @@ from packaging.version import Version
 from .const import (
     CONF_ENTRY_TYPE,
     DATA_ACCESS_TOKEN,
-    DATA_BRINGUP_TASK,
+    DATA_ADMIN_TOKEN,
     DATA_DCR_SIGNING_KEY,
+    DATA_ISSUED_TOKEN_ID,
     DATA_LAST_PIP_SPEC,
-    DATA_MANAGER,
+    DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
     DATA_OAUTH_CLIENT_SECRET,
     DATA_OAUTH_SIGNING_KEY,
@@ -63,6 +64,7 @@ from .const import (
     RUNTIME_NATIVE,
     WEBHOOK_AUTH_NONE,
 )
+from .embedded_entry import access_enabled, bring_up_in_progress, server_running
 from .spec_dist import version_dist
 from .websocket_api.registry import _enum_value
 
@@ -87,6 +89,9 @@ _SECRET_DATA_KEYS = (
     DATA_SERVER_USER_ID,
     DATA_REFRESH_TOKEN_ID,
     DATA_ACCESS_TOKEN,
+    DATA_ADMIN_TOKEN,
+    DATA_ISSUED_TOKEN_ID,
+    DATA_NATIVE_OWNER_ID,
     DATA_LAST_PIP_SPEC,
 )
 _SECRET_OPTION_KEYS = (
@@ -162,17 +167,15 @@ async def _async_server_summary(
     override = pip_spec if pip_spec != DEFAULT_PIP_SPEC else ""
     # The effective spec, as EmbeddedServerManager._resolve_pip_spec resolves it.
     spec = override or await _async_paired_server_requirement(hass) or DEFAULT_PIP_SPEC
-    domain_data = hass.data.get(DOMAIN, {})
-    manager = domain_data.get(DATA_MANAGER)
-    bringup = domain_data.get(DATA_BRINGUP_TASK)
     return {
         # Blocking dist-info read; the spec's distribution first, as bring-up.
         "installed_server_version": await hass.async_add_executor_job(
             _installed_ha_mcp_version, version_dist(spec)
         ),
         "package_override_set": bool(override),
-        "running": bool(getattr(manager, "is_running", False)),
-        "bring_up_in_progress": bringup is not None and not bringup.done(),
+        "access_enabled": access_enabled(entry),
+        "running": server_running(hass),
+        "bring_up_in_progress": bring_up_in_progress(hass),
         "startup_error": _startup_error(hass, entry),
         "webhook_enabled": bool(options.get(OPT_ENABLE_WEBHOOK, True)),
         "webhook_auth": str(options.get(OPT_WEBHOOK_AUTH, WEBHOOK_AUTH_NONE)),

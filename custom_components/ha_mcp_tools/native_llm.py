@@ -87,7 +87,7 @@ async def call_exposed(
     name: str,
     arguments: dict[str, Any],
     context: llm.LLMContext,
-) -> Any:
+) -> llm.ToolResult:
     """Recompute exposure at execution, including already advertised tools."""
     from ha_mcp.llm_exposure import effective_llm_api_exposed
     from ha_mcp.renamed_tools import adapt_retired_arguments, current_tool_name
@@ -170,7 +170,7 @@ class NativeTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> Any:
+    ) -> llm.ToolResult:
         return await call_exposed(
             self.manager, self.name, tool_input.tool_args, llm_context
         )
@@ -191,7 +191,7 @@ class NativeCallTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> Any:
+    ) -> llm.ToolResult:
         return await call_exposed(
             self.manager,
             str(tool_input.tool_args.get("name", "")),

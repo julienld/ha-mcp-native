@@ -39,9 +39,7 @@ permissions:
 
 jobs:
   build:
-    # Qualification is authorized in this fork only. Adoption by upstream's
-    # existing release jobs is a separate decision; this workflow cannot publish.
-    if: ${{ github.repository == 'julienld/ha-mcp-native' }}
+    # Preparation only; release workflows own publication of reviewed artifacts.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -57,7 +55,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
           python-version: '3.13'
 
       - name: Build both profiles from the supplied release coordinates

@@ -18,16 +18,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  core-window:
+    uses: ./.github/workflows/core-window.yml
+
   native-e2e:
+    needs: core-window
     name: Native E2E (HA ${{ matrix.core }}, ${{ matrix.os }})
-    if: github.repository == 'julienld/ha-mcp-native'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        core: ['2026.8.0', '2026.9.4', '2026.10.3']
-        os: [ubuntu-24.04, ubuntu-24.04-arm]
+      matrix: ${{ fromJSON(needs.core-window.outputs.matrix) }}
     env: &native_test_environment
       E2E_EXPECTED_ARCH: ${{ matrix.os == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}
       E2E_EXPECTED_CORE_VERSION: ${{ matrix.core }}
@@ -44,8 +45,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
-          python-version: '3.13'
+          version: "0.13.4"
+          python-version: '${{ matrix.python }}'
       - &install_dependencies
         name: Install locked test dependencies
         run: uv sync --frozen --all-extras --dev
@@ -74,14 +75,13 @@ jobs:
           retention-days: 14
 
   native-server-only:
+    needs: core-window
     name: Native E2E (server entry only, HA ${{ matrix.core }})
-    if: github.repository == 'julienld/ha-mcp-native'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        core: ['2026.8.0', '2026.10.3']
+      matrix: ${{ fromJSON(needs.core-window.outputs.matrix) }}
     env: *native_test_environment
     steps:
       - *checkout

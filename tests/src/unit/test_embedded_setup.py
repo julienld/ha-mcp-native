@@ -1,10 +1,7 @@
 """Unit tests for the in-process server bring-up orchestration (issue #1527).
 
-``embedded_setup`` is the glue between the server manager and the webhook ingress:
-the background bring-up sequence, repair issues on failure (Home Assistant must
-keep running), connect-URL surfacing, teardown, and credential revocation on
-removal. The integration is always-on — the config entry existing means the
-server runs — so there is no enable/disable gate here.
+Bring-up, repair issues, connection details and cleanup for both runtimes.
+Entry wiring owns Access; this module handles its start and stop.
 
 Home Assistant / aiohttp are stubbed via ``_embedded_stubs`` (which also puts
 the component package on sys.path). The server manager and webhook
@@ -16,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Iterator
 from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -83,8 +81,6 @@ def _make_entry(*, options=None, data=None) -> MagicMock:
 def make_fake_manager(monkeypatch: pytest.MonkeyPatch) -> type:
     """Patch EmbeddedServerManager with a real fake class.
 
-    A real class (not a lambda/MagicMock) is required because
-    ``async_teardown_server`` does ``isinstance(manager, EmbeddedServerManager)``.
     The async methods live on the class as shared AsyncMocks so tests assert on
     ``fake_manager.async_start`` regardless of which instance the code built.
     Returns the class.
@@ -124,6 +120,24 @@ def install_spies(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _spy(monkeypatch: pytest.MonkeyPatch) -> None:
     install_spies(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _restore_network_modules() -> Iterator[None]:
+    """Undo ``_install_network_cloud``'s ``sys.modules`` swaps after each test.
+
+    Left in place, they reach later test modules in the same process: the
+    config flow then builds its connect hint from the stubs instead of falling
+    back to the translated remote-URL prose.
+    """
+    names = ("homeassistant.helpers.network", "homeassistant.components.cloud")
+    saved = {name: sys.modules.get(name) for name in names}
+    yield
+    for name, module in saved.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 class TestBringUp:
@@ -279,28 +293,6 @@ class TestBringUp:
 
         fake_manager.async_stop.assert_awaited_once()  # partial state torn down
         esetup.ir.async_create_issue.assert_not_called()  # cancellation isn't a fault
-
-
-class TestTeardown:
-    async def test_unregisters_and_stops_without_revoking(self, fake_manager):
-        hass = _make_hass()
-        entry = _make_entry()
-        await esetup.async_bring_up_server(hass, entry)
-        fake_manager.async_stop.reset_mock()
-
-        await esetup.async_teardown_server(hass)
-
-        esetup.async_unregister_webhook.assert_awaited()
-        esetup.async_unregister_llm_api.assert_called()
-        fake_manager.async_stop.assert_awaited_once()
-        assert DATA_MANAGER not in hass.data.get(DOMAIN, {})
-        # A reload must keep the provisioned token.
-        fake_manager.async_revoke_credentials.assert_not_awaited()
-
-    async def test_teardown_is_noop_when_not_running(self, fake_manager):
-        hass = _make_hass()
-        await esetup.async_teardown_server(hass)  # must not raise
-        esetup.async_unregister_webhook.assert_awaited_once()
 
 
 class TestRevokeOnRemove:
@@ -654,6 +646,17 @@ class TestSurfaceConnectUrls:
             "To disable this notification, uncheck the startup notification box "
             "on that same configuration screen.\n"
         )
+
+    def test_switching_access_on_raises_no_running_notification(self) -> None:
+        # The user just turned the access switch on (#2801); a notification on
+        # every toggle would only repeat that.
+        _install_network_cloud(cloud_url=None, local_url="http://192.168.1.5:8123")
+        hass = _make_hass()
+        entry = _make_entry(data={DATA_WEBHOOK_ID: "mcp_id", DATA_SECRET_PATH: "/priv"})
+
+        esetup._surface_connect_urls(hass, entry, "none", announce=False)
+
+        self.notif.assert_not_called()
 
     def test_startup_notification_off_dismisses_and_skips_create(
         self, monkeypatch, caplog

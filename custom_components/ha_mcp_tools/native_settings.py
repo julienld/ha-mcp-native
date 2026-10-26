@@ -173,7 +173,11 @@ class NativeSettings:
                     **policy.tool_states,
                 },
                 "env_pinned": await self._io(env_tool_states),
-                "read_only_exempt": [],
+                "read_only_exempt": sorted(
+                    tool.name
+                    for tool in tools
+                    if self.manager._search_has_read_actions(tool.name)
+                ),
                 "llm_api": {
                     tool.name: effective_llm_api_exposed(
                         tool.name, tool.tags, policy.llm_overrides

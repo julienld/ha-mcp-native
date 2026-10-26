@@ -83,23 +83,21 @@ def test_manual_force_requests_a_patch_release() -> None:
     assert semantic["with"]["force"] == "${{ inputs.force && 'patch' || '' }}"
 
 
-def test_release_publish_uses_the_same_releasable_commit_matcher() -> None:
+def test_release_publish_follows_the_triggered_tag_not_a_moving_master() -> None:
     publish = yaml.safe_load(
         (_WORKFLOW_DIR / "release-publish.yml").read_text(encoding="utf-8")
     )
     steps = publish["jobs"]["prepare"]["steps"]
-    matches = [step for step in steps if step.get("id") == "version"]
-    assert len(matches) == 1, (
-        "release-publish.yml must have exactly one 'version' step in job 'prepare'"
-    )
-
-    run = matches[0]["run"]
-    for pattern in (
-        "^(feat|fix|perf|refactor)(\\(.+\\))?!?:",
-        "^[a-z]+(\\(.+\\))?!:",
-        "^BREAKING[ -]CHANGE:",
-    ):
-        assert f"--grep='{pattern}'" in run
+    resolve = next(step for step in steps if step.get("id") == "version")
+    assert "head_sha" in resolve["env"]["TRIGGER_SHA"]
+    assert '--contains "$TRIGGER_SHA"' in resolve["run"]
+    for name in ("publish_pypi", "publish_docker"):
+        checkout = next(
+            step
+            for step in publish["jobs"][name]["steps"]
+            if "actions/checkout@" in step.get("uses", "")
+        )
+        assert checkout["with"]["ref"] == "${{ needs.prepare.outputs.release_tag }}"
 
 
 def test_the_extractor_the_workflow_calls_exists() -> None:
@@ -120,7 +118,7 @@ def test_the_release_step_wires_one_filename_end_to_end() -> None:
         (f"[ ! -s {notes} ]", f"guard {notes} for emptiness"),
         ("::warning::no changelog section extracted", "warn when the extract is empty"),
         (f"> {notes}", f"write its fallback body to {notes}"),
-        (f"--notes-file {notes}", f"publish {notes}"),
+        (f"--notes {notes}", f"publish {notes}"),
     ]
     for needle, what in stages:
         assert needle in run, f"{_WORKFLOW}'s {_STEP!r} step does not {what}"

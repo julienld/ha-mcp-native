@@ -64,6 +64,7 @@ def download_data(
         "message": f"Successfully installed {repo_name}"
         + (f" version {version}" if version else ""),
         "note": "For integrations, restart Home Assistant to activate. For Lovelace cards, clear browser cache.",
+        "active_version_verified": False,
         "data": result,
     }
 

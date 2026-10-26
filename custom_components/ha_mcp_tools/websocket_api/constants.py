@@ -120,6 +120,7 @@ SCHEMA_VERSION = 1
 # without a major bump. (``info`` is always present in 1.1.0+, so it carries no
 # capability key of its own.)
 CAPABILITIES: list[str] = [
+    "hacs_cache",
     "search",
     # Location/state filters precede pagination; search accepts any result window.
     "search_unified",

@@ -117,8 +117,20 @@ class _Invocation:
         return {"type": "http.disconnect"}
 
     async def send(self, message: ASGIMessage) -> None:
+        empty_eof = (
+            message["type"] == "http.response.body"
+            and not message.get("body")
+            and not message.get("more_body", False)
+            and self.response is not None
+            and not self.complete
+        )
         if self.disconnected():
             self.closed.set()
+            if empty_eof:
+                # MCP clients may close as soon as the final SSE result arrives.
+                # No application bytes remain; a lost payload must still fail.
+                self.complete = True
+                return
             raise ConnectionResetError("ASGI response connection is closed")
         try:
             if message["type"] == "http.response.start":
@@ -129,6 +141,9 @@ class _Invocation:
                 raise RuntimeError(f"Unsupported ASGI message: {message['type']}")
         except OSError:
             self.closed.set()
+            if empty_eof:
+                self.complete = True
+                return
             raise
 
     async def start(self, message: ASGIMessage) -> None:

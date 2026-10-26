@@ -72,6 +72,7 @@ def _filter_and_score_repos(
         repo_category = repo.get("category", "")
         display_category = CATEGORY_DISPLAY.get(repo_category, repo_category)
         entry: dict[str, Any] = {
+            **repo,
             "name": repo.get("name"),
             "full_name": repo.get("full_name"),
             "description": repo.get("description"),

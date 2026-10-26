@@ -36,7 +36,6 @@ jobs:
 
   continuity:
     name: Behavioral contracts (${{ matrix.role }})
-    if: github.repository == 'julienld/ha-mcp-native'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -47,6 +46,7 @@ jobs:
       UV_EXCLUDE_NEWER: '7 days'
       TESTCONTAINERS_RYUK_DISABLED: 'true'
       SOURCE_REF: ${{ matrix.role == 'before' && (inputs.baseline_ref || '2dc504fd97d8416f87b6ea7f2fd8ce0332615956') || inputs.candidate_ref || github.sha }}
+      # One common Core for before/after behavior; not the compatibility matrix.
       HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:2026.10.2
       E2E_EMBEDDED_RUNTIME: ${{ matrix.role == 'after' && 'native' || 'legacy' }}
     steps:
@@ -64,7 +64,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
           python-version: '3.13'
       - name: Overlay identical tests and qualification fixtures only
         run: |

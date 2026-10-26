@@ -495,12 +495,15 @@ class TestToolSearchModeInstance:
             llm_api.llm.LLMContext(),
         )
 
-        names = [r["name"] for r in result["results"]]
+        assert result.error is False
+        names = [r["name"] for r in result.data["results"]]
         assert "ha_config_set_automation" in names
         # Hidden tools never appear in search results.
         assert "ha_restart" not in names
         # Hits are compact; the full schema is a second, by-name hop.
-        assert all({*r} == {"name", "description", "params"} for r in result["results"])
+        assert all(
+            {*r} == {"name", "description", "params"} for r in result.data["results"]
+        )
 
     async def test_search_with_no_match_guides_retry(self, monkeypatch):
         instance = await self._instance(monkeypatch)
@@ -512,8 +515,9 @@ class TestToolSearchModeInstance:
             llm_api.llm.LLMContext(),
         )
 
-        assert result["results"] == []
-        assert "message" in result
+        assert result.error is False
+        assert result.data["results"] == []
+        assert "message" in result.data
 
     async def test_call_tool_forwards_exposed_tool(self, monkeypatch):
         instance = await self._instance(monkeypatch)
@@ -538,7 +542,8 @@ class TestToolSearchModeInstance:
             {"entity_id": "sun.sun"},
             check_enabled=instance.api._check_enabled,
         )
-        assert result == {"content": [{"type": "text", "text": "ok"}]}
+        assert result.error is False
+        assert result.data == {"content": [{"type": "text", "text": "ok"}]}
 
     @pytest.mark.parametrize(
         "target", ["ha_restart", "ha_totally_made_up"], ids=["hidden", "nonexistent"]
@@ -562,7 +567,8 @@ class TestToolSearchModeInstance:
         )
 
         forward.assert_not_awaited()
-        assert result["error"] == f"Unknown tool '{target}'."
+        assert result.error is True
+        assert result.data["error"] == f"Unknown tool '{target}'."
 
     async def test_server_side_search_tool_name_is_excluded(self, monkeypatch):
         # A server running its own ENABLE_TOOL_SEARCH registers a real
@@ -578,7 +584,8 @@ class TestToolSearchModeInstance:
             llm_api.llm.ToolInput("ha_search_tools", {"query": "search tools"}),
             llm_api.llm.LLMContext(),
         )
-        assert "ha_search_tools" not in [r["name"] for r in result["results"]]
+        assert result.error is False
+        assert "ha_search_tools" not in [r["name"] for r in result.data["results"]]
 
 
 class TestToolCall:
@@ -607,7 +614,8 @@ class TestToolCall:
         result.model_dump.assert_called_once_with(
             exclude_unset=True, exclude_none=True, by_alias=True
         )
-        assert out == {"content": [{"type": "text", "text": "ok"}]}
+        assert out.error is False
+        assert out.data == {"content": [{"type": "text", "text": "ok"}]}
 
     async def test_transport_error_raises_homeassistanterror(self, monkeypatch):
         fake_session(monkeypatch, raise_on_open=OSError("connection refused"))

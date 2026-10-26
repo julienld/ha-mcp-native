@@ -96,12 +96,14 @@
           "llm_api_exposure": "Exposition des outils pour agents de conversation",
           "enable_startup_notification": "Notification au démarrage",
           "enable_sidebar_panel": "Panneau de configuration dans la barre latérale",
+          "access_off_after_restart": "Désactiver l'accès après un redémarrage",
           "oauth_redirect_allowlist": "URLs de rappel OAuth autorisées",
           "admin_token_replacement": "Remplacer le jeton d'accès administrateur (facultatif)",
           "admin_username": "Ou basculer vers un compte local uniquement créé pour HA-MCP : nom d'utilisateur (facultatif)",
           "admin_password": "Mot de passe de ce compte",
           "enable_native_llm_import": "Proposer les API LLM de Home Assistant aux clients MCP",
-          "native_import_apis": "Identifiants des API LLM à importer"
+          "native_import_apis": "Identifiants des API LLM à importer",
+          "oauth_allow_any_callback": "Autoriser n'importe quelle URL de callback OAuth (désactive la liste ci-dessus)"
         },
         "data_description": {
           "server_port": "Le port sur lequel ce serveur écoute. L'application (add-on) ha-mcp utilise le port 9583, celui-ci utilise donc 9584 par défaut pour permettre aux deux de fonctionner côte à côte – si vous n'exécutez pas l'application (add-on), n'importe quel port libre convient.",
@@ -119,14 +121,16 @@
           "enable_webhook": "Désactivez cette option pour retirer le webhook. Le panneau d’administration reste disponible, ainsi qu’Assist si son export est activé séparément. En mode Legacy, le port du serveur configuré séparément reste également disponible.",
           "enable_llm_api": "Désactivé par défaut. Enregistrez les outils HA-MCP comme API LLM, puis sélectionnez cette API dans les paramètres de votre agent de conversation. Ce choix est indépendant de l’import des API LLM et ne modifie pas les outils Assist intégrés à Home Assistant. Guide : {llm_api_docs_url}",
           "llm_api_exposure": "Forme de l'ensemble d'outils proposé aux agents de conversation. Recherche d'outils (par défaut) garde le contexte de l'agent compact : une API compacte avec des outils épinglés plus des méta-outils de recherche/exécution. Catalogue complet liste directement chaque outil exposé – mieux pour les modèles à grand contexte. Les deux enregistre les deux côte à côte afin que chaque agent choisisse le sien sous Contrôler Home Assistant. L'exposition par outil est gérée dans le panneau de configuration HA-MCP ; détails : {llm_api_docs_url}",
-          "enable_startup_notification": "Afficher une notification à chaque démarrage du serveur, pointant vers les paramètres réservés aux administrateurs. Désactivez pour démarrer silencieusement - les URLs de connexion restent sur cet écran.",
+          "enable_startup_notification": "Afficher une notification chaque fois que Home Assistant démarre le serveur (et non lorsque l'interrupteur d'accès l'active), pointant vers les interfaces de configuration réservées aux administrateurs. Désactivez pour démarrer en silence — les URL de connexion restent sur cet écran.",
           "enable_sidebar_panel": "Affiche le panneau de configuration HA-MCP dans la barre latérale (administrateurs uniquement). Désactivez pour supprimer l'entrée de la barre latérale – les options du serveur restent disponibles sur cet écran.",
-          "oauth_redirect_allowlist": "Utilisé uniquement lorsque le mode d'authentification est l'URL de webhook secrète. lorsqu'un client se connecte avec OAuth, HA-MCP renvoie la connexion uniquement vers une URL de rappel de cette liste ; toute autre est refusée avec une page expliquant comment l'ajouter. Saisissez chaque rappel exactement tel que le client l'envoie. Un rappel de boucle locale http:// (127.0.0.1, [::1] ou localhost) correspond également à n'importe quel port. Les clients qui se connectent uniquement avec l'URL du webhook n'ont besoin d'aucune entrée. Prend effet sans redémarrage.",
+          "access_off_after_restart": "L'interrupteur d'accès du serveur conserve normalement son dernier état après un redémarrage de Home Assistant. Activez cette option pour que l'accès soit désactivé après chaque redémarrage ; il reste désactivé jusqu'à ce qu'il soit activé. Activez d'abord l'interrupteur (il est désactivé par défaut) : tant qu'il est désactivé, rien ne peut réactiver l'accès.",
+          "oauth_redirect_allowlist": "Utilisé uniquement lorsque le mode d'authentification est l'URL de webhook secrète. Lorsqu'un client se connecte via OAuth, HA-MCP renvoie la connexion uniquement vers une URL de callback figurant dans cette liste ; toute autre est refusée avec une page expliquant comment l'ajouter. Entrez chaque callback exactement tel que le client l'envoie. Un callback de bouclage http:// (127.0.0.1, [::1] ou localhost) correspond également à n'importe quel port. Les clients qui se connectent sans connexion OAuth n'ont pas besoin d'entrée. Prend effet sans redémarrage.",
           "admin_token_replacement": "Laissez vide pour conserver l'accès actuel ; le serveur redémarre lorsque vous effectuez le changement. Un jeton d'accès de longue durée d'un compte administrateur. Le vôtre fonctionne : ouvrez votre profil (votre nom au bas de la barre latérale), sélectionnez l'onglet Sécurité, et sous Jetons d'accès de longue durée, sélectionnez Créer un jeton. Votre propre jeton fonctionne également depuis l'extérieur de votre réseau domestique s'il venait à fuiter, et Home Assistant enregistre les modifications du serveur sous votre nom. Plus sûr : un compte créé spécialement pour HA-MCP, avec l'accès local uniquement activé (voir les champs ci-dessous).",
           "admin_username": "Uniquement pour un compte que vous avez créé exprès pour HA-MCP, dans Paramètres → Personnes → Ajouter une personne avec Autoriser la connexion, Accès local uniquement et Administrateur activés. N'entrez jamais vos propres identifiants ici : pour utiliser votre propre compte, collez plutôt son jeton ci-dessus. HA-MCP crée le jeton de ce compte (nommé HA-MCP Server) afin que personne n'ait à s'y connecter, et le mot de passe n'est pas conservé. Son jeton ne fonctionne que depuis votre réseau local, là où le serveur s'exécute, et Home Assistant enregistre les modifications du serveur sous ce compte.",
           "admin_password": "Utilisé une seule fois pour créer le jeton. N'utilisez jamais votre propre mot de passe.",
           "enable_native_llm_import": "Désactivé par défaut. En mode Native, autorisez les clients MCP à découvrir et appeler les API LLM sélectionnées ci-dessous avec leur identité courante. Ce choix est indépendant de l’export vers Assist. En mode Legacy, la sélection est conservée mais cet import est indisponible.",
-          "native_import_apis": "Identifiants explicites, par exemple assist. Cette liste est conservée lorsque l’import est désactivé. Les API exportées par HA-MCP sont exclues pour éviter les boucles."
+          "native_import_apis": "Identifiants explicites, par exemple assist. Cette liste est conservée lorsque l’import est désactivé. Les API exportées par HA-MCP sont exclues pour éviter les boucles.",
+          "oauth_allow_any_callback": "Utilisé uniquement lorsque le mode d'authentification est l'URL de webhook secrète. Accepte une connexion OAuth vers n'importe quel callback https://, ou http:// sur 127.0.0.1, [::1] ou localhost, au lieu de se limiter à la liste ci-dessus, de sorte que vous n'avez jamais besoin d'ajouter un client. Le coût : votre adresse Home Assistant transmet alors un lien de connexion forgé à n'importe quel site web qu'il nomme, qu'un lien de hameçonnage peut utiliser pour paraître provenir de votre Home Assistant. Prend effet sans redémarrage."
         }
       }
     }
@@ -236,5 +240,12 @@
     "server_source_override": "remplacement des exigences pip",
     "version_not_installed": "pas encore installé",
     "version_unknown": "inconnu"
+  },
+  "entity": {
+    "switch": {
+      "server_access": {
+        "name": "Accès"
+      }
+    }
   }
 }

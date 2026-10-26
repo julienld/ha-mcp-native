@@ -39,7 +39,7 @@ def public_release(tmp_path, published_assets, request):
         )
     wheel_hash = published_assets.digest(folder / wheel)
     dependency = (
-        f"ha-mcp @ https://github.com/julienld/ha-mcp-native/releases/download/{tag}/{wheel}"
+        f"ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/releases/download/{tag}/{wheel}"
         f"#sha256={wheel_hash}"
     )
     manifest = json.dumps(
@@ -53,7 +53,7 @@ def public_release(tmp_path, published_assets, request):
         archive.writestr("manifest.json", manifest)
         archive.writestr("__init__.py", "# released source\n")
     proof = {
-        "repository": "julienld/ha-mcp-native",
+        "repository": "homeassistant-ai/ha-mcp",
         "revision": "a" * 40,
         "tag": tag,
         "library_version": version,
@@ -73,13 +73,20 @@ def public_release(tmp_path, published_assets, request):
     )
 
 
-def fixture_download(monkeypatch, published_assets, release):
+def fixture_download(
+    monkeypatch,
+    published_assets,
+    release,
+    *,
+    expected_repository="homeassistant-ai/ha-mcp",
+):
     calls = []
 
     def download(
         tag, filename, destination, maximum, *, repository=published_assets.REPOSITORY
     ):
         assert tag == release.tag
+        assert repository == expected_repository
         content = (release.folder / filename).read_bytes()
         assert len(content) <= maximum
         destination.write_bytes(content)
@@ -97,10 +104,10 @@ def fixture_download(monkeypatch, published_assets, release):
 def test_explicit_repository_is_used_for_download_and_provenance(
     tmp_path, monkeypatch, published_assets, public_release
 ):
-    repository = "homeassistant-ai/ha-mcp"
+    repository = "julienld/ha-mcp-native"
     public_release.proof["repository"] = repository
     public_release.proof["dependency"] = public_release.proof["dependency"].replace(
-        "julienld/ha-mcp-native", repository
+        "homeassistant-ai/ha-mcp", repository
     )
     manifest = json.loads(public_release.manifest)
     manifest["requirements"][0] = public_release.proof["dependency"]
@@ -113,7 +120,9 @@ def test_explicit_repository_is_used_for_download_and_provenance(
     (public_release.folder / "native-build.json").write_text(
         json.dumps(public_release.proof)
     )
-    calls = fixture_download(monkeypatch, published_assets, public_release)
+    calls = fixture_download(
+        monkeypatch, published_assets, public_release, expected_repository=repository
+    )
     output = tmp_path / "downloaded"
     receipt = published_assets.fetch(
         tmp_path, output, public_release.tag, repository=repository
@@ -174,11 +183,11 @@ def test_explicit_repository_sets_public_request_url(
         "native-build.json",
         tmp_path / "asset",
         1024,
-        repository="homeassistant-ai/ha-mcp",
+        repository="julienld/ha-mcp-native",
     )
     assert (
         requests[0].full_url
-        == "https://github.com/homeassistant-ai/ha-mcp/releases/download/v1/native-build.json"
+        == "https://github.com/julienld/ha-mcp-native/releases/download/v1/native-build.json"
     )
 
 
@@ -384,7 +393,7 @@ def test_download_uses_only_public_request_and_preserves_bytes(
     assert destination.read_bytes() == b"published bytes"
     assert (
         requests[0].full_url
-        == "https://github.com/julienld/ha-mcp-native/releases/download/v1/native-build.json"
+        == "https://github.com/homeassistant-ai/ha-mcp/releases/download/v1/native-build.json"
     )
     assert not requests[0].has_header("Authorization")
 

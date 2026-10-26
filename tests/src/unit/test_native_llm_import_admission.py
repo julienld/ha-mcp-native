@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ._embedded_stubs import install
+from ._embedded_stubs import LlmToolResult, install
 
 install()
 
@@ -61,7 +61,7 @@ async def test_import_refuses_revocation_during_api_resolution(
     instance = SimpleNamespace(
         api=owner,
         tools=[tool],
-        async_call_tool=AsyncMock(return_value={"switched": True}),
+        async_call_tool=AsyncMock(return_value=LlmToolResult({"switched": True})),
     )
     resolutions = 0
 

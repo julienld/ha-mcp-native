@@ -7,12 +7,11 @@ from ha_mcp.backends.legacy_flows import legacy_helper_flow
 from ha_mcp.runtime import helper_targets as _shared
 
 from ..client.rest_client import (
-    HomeAssistantAPIError,
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
 from ..errors import create_error_response
-from .helpers import raise_tool_error, ws_failure_code
+from .helpers import get_entity_state_or_none, raise_tool_error, ws_failure_code
 
 FlowLookupReason = _shared.FlowLookupReason
 _raise_unexpected_registry_reply = legacy_helper_flow(
@@ -88,12 +87,7 @@ async def _absence_reason(client: Any, entity_id: str) -> FlowLookupReason:
     template sensor without unique_id, ``zone.home``) still has a state. A
     state read failing with a status other than 404 propagates.
     """
-    try:
-        state = await client.get_entity_state(entity_id)
-    except HomeAssistantAPIError as e:
-        if e.status_code != 404:
-            raise
-        state = None
+    state = await get_entity_state_or_none(client, entity_id)
     return "not_registry_managed" if state else "not_in_registry"
 
 

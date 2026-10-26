@@ -25,7 +25,7 @@ NON_ADMIN_TEST_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIzNzkyOTc
 # the beta lane uses the explicit override, while compatibility matrices use
 # HA_IMAGE_GHCR for both their image pull and the containers booted by tests.
 # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-_DEFAULT_HA_TEST_IMAGE = "ghcr.io/home-assistant/home-assistant:2026.10.2"
+_DEFAULT_HA_TEST_IMAGE = "ghcr.io/home-assistant/home-assistant:2026.10.4"
 HA_TEST_IMAGE = os.environ.get(
     "HA_TEST_IMAGE", os.environ.get("HA_IMAGE_GHCR", _DEFAULT_HA_TEST_IMAGE)
 )

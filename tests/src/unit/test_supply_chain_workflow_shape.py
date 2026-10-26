@@ -314,27 +314,45 @@ def test_python_runtime_automation_is_digest_only() -> None:
     assert not any("postUpgradeTasks" in rule for rule in python_rules)
 
 
-def test_dev_release_tag_cleanup_uses_authenticated_github_api() -> None:
+def test_dev_releases_preserve_pinned_assets_and_source_identity() -> None:
     jobs = _workflow(_WORKFLOW_DIR / "publish-dev.yml")["jobs"]
-    create_run = next(
-        step["run"]
-        for step in jobs["create-prerelease"]["steps"]
-        if step.get("name") == "Create pre-release"
+    active = "\n".join(
+        step.get("run", "") for job in jobs.values() for step in job.get("steps", [])
     )
-    cleanup_run = next(
-        step["run"]
-        for step in jobs["cleanup-old-prereleases"]["steps"]
-        if step.get("name") == "Delete old dev releases (keep last 5)"
-    )
+    assert "gh release delete" not in active
+    assert "--clobber" not in active
+    assert "git push --quiet --force" not in active
+    assert "git tag -f" not in active
+    assert 'git tag "$TAG" "$STAMP_SHA"' in active
 
+
+def test_dev_release_delivers_the_exact_build_with_the_native_publisher() -> None:
+    job = _workflow(_WORKFLOW_DIR / "publish-dev.yml")["jobs"]["create-prerelease"]
+    steps = job["steps"]
+    names = [step.get("name") for step in steps]
+    assert "publish-pypi-dev" in job["needs"]
+    assert job["if"] == "github.ref == 'refs/heads/master'"
+    prepare = steps[names.index("Prepare the paired native release assets")]
+    create = steps[names.index("Create pre-release")]
+    assert names.index(prepare["name"]) < names.index(create["name"])
+    for step in (prepare, create):
+        assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.dev_version }}"
+        assert "native_release_delivery.py" in step["run"]
+    assert ' --revision "$GITHUB_SHA"' in prepare["run"]
+    assert ' --revision "$STAMP_SHA"' in create["run"]
+    stamp = steps[
+        names.index("Stamp the full source tag with the installable component metadata")
+    ]
+    assert stamp["id"] == "stamp"
+    assert create["env"]["STAMP_SHA"] == "${{ steps.stamp.outputs.revision }}"
     assert (
-        'gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$TAG"' in create_run
+        names.index(prepare["name"])
+        < names.index(stamp["name"])
+        < names.index(create["name"])
     )
-    assert (
-        'gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$tag"'
-        in cleanup_run
-    )
-    assert "git push origin --delete" not in create_run + cleanup_run
+    assert "stage-dev-source" in stamp["run"] and "attest-dev-source" in stamp["run"]
+    assert " prepare " in prepare["run"]
+    assert " publish " in create["run"]
 
 
 def test_renovate_can_write_the_status_check_it_publishes() -> None:

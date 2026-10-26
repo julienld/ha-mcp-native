@@ -239,6 +239,15 @@ class NativeApprovalGate:
                 )
         if dynamic:
             self.queue.remove(pending.token)
+            return _result(
+                "not_started",
+                "This single-use approval request has expired because this call's "
+                "wait window closed. There is nothing left to approve. "
+                f"{pending.tool_name} was not executed. A new call to this tool "
+                "requires a new approval while it is waiting. Do not automatically "
+                "replay an enclosing tool or script; it may already have performed "
+                "other actions.",
+            )
         return _result(
             "pending",
             "Awaiting administrator approval; no tool was executed",

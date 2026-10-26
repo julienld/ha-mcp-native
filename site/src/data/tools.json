@@ -1887,7 +1887,7 @@
   {
     "name": "ha_config_list_groups",
     "title": "List Groups",
-    "description": "List Home Assistant entity groups with their member entities.\n\nReturns one page of old-style groups created via the group.set service\nor YAML configuration (platform-specific groups such as light or cover\ngroups are separate entities); `total_count` and `has_more` report the\nfull set. Each group includes its entity_id, friendly name, state,\nmember entities, icon and all mode.\n\nEXAMPLE: ha_config_list_groups(offset=100)",
+    "description": "List Home Assistant entity groups with their member entities.\n\nReturns one page of old-style groups created via the group.set service\nor YAML configuration (platform-specific groups such as light or cover\ngroups are separate entities); `total_count` and `has_more` report the\nfull set. Each group carries Core's state fields and attributes, its\nmembers as `entity_ids`, and its object_id. `auto` is true for a group\ncreated by ha_config_set_group (group.set) and false for a YAML group.\nThe in-process runtime also reads the all/any mode from its Core owner.\n\nEXAMPLE: ha_config_list_groups(offset=100)",
     "inputSchema": {
       "properties": {
         "limit": {
@@ -1923,12 +1923,12 @@
   {
     "name": "ha_config_remove_group",
     "title": "Remove Group",
-    "description": "Remove a service-based Home Assistant entity group via the group.remove service.\n\n**When NOT to use:** for groups created through `ha_config_set_helper(helper_type=\"group\", ...)`,\nuse `ha_remove_helpers_integrations`. Those config-entry-backed groups are not reachable via the\ngroup.remove service.\n\n**When to use:** removing groups created with `ha_config_set_group` or defined in YAML\nvia `group:` configuration. Config-entry-backed deletion tools cannot find these.\n\nEXAMPLES:\n- Remove group: ha_config_remove_group(\"living_room_lights\")\n\nUse ha_config_list_groups() to find existing groups.\n\n**WARNING:**\n- Removing a group used in automations may cause those automations to fail.\n- Groups defined in YAML can be removed at runtime but will reappear after restart.\n- This only removes old-style groups, not platform-specific groups.",
+    "description": "Remove a service-based Home Assistant entity group via the group.remove service.\n\n**When NOT to use:** for groups created through `ha_config_set_helper(helper_type=\"group\", ...)`,\nuse `ha_remove_helpers_integrations`. Those config-entry-backed groups are not reachable via the\ngroup.remove service.\n\n**When to use:** removing groups created with `ha_config_set_group` or defined in YAML\nvia `group:` configuration. Config-entry-backed deletion tools cannot find these.\n\nEXAMPLES:\n- Remove group: ha_config_remove_group(\"living_room_lights\")\n\nUse ha_config_list_groups() to find existing groups.\n\n**WARNING:**\n- Removing a group used in automations may cause those automations to fail.\n- Groups defined in YAML can be removed at runtime but come back on group.reload\n  or a restart.\n- This only removes old-style groups, not platform-specific groups.",
     "inputSchema": {
       "properties": {
         "object_id": {
           "type": "str",
-          "description": "Group identifier without 'group.' prefix (e.g., 'living_room_lights')"
+          "description": "Group identifier: a lowercase slug without the group. prefix (e.g., living_room_lights)"
         },
         "wait": {
           "type": "bool",
@@ -1954,21 +1954,21 @@
   {
     "name": "ha_config_set_group",
     "title": "Create or Update Group",
-    "description": "Create or update a service-based Home Assistant entity group via the group.set service.\n\n**When NOT to use:** for typical \"combine these entities into one controllable group\"\nrequests, prefer `ha_config_set_helper(helper_type=\"group\", ...)`. Config-entry-backed\ngroups are registered in the entity registry, so `ha_set_entity` can assign them to\nareas and they are deletable via `ha_remove_helpers_integrations`.\n\n**When to use:** compatibility with existing groups already configured via group.set\nor YAML, or the rare case where entity-registry membership is explicitly unwanted.\nGroups created here are only removable via `ha_config_remove_group` —\n`ha_remove_helpers_integrations` will not find them.\n\n**For NEW groups:** Provide object_id and entities (required).\n**For EXISTING groups:** Provide object_id and any fields to update.\nentities, add_entities, and remove_entities are mutually exclusive.\n\nEXAMPLES:\n- Create: ha_config_set_group(\"bedroom_lights\", entities=[\"light.lamp\", \"light.ceiling\"], name=\"Bedroom Lights\")\n- Add entities: ha_config_set_group(\"lights\", add_entities=[\"light.extra\"])",
+    "description": "Create or update a service-based Home Assistant entity group via the group.set service.\n\n**When NOT to use:** for typical \"combine these entities into one controllable group\"\nrequests, prefer `ha_config_set_helper(helper_type=\"group\", ...)`. Config-entry-backed\ngroups are registered in the entity registry, so `ha_set_entity` can assign them to\nareas and they are deletable via `ha_remove_helpers_integrations`.\n\n**When to use:** compatibility with existing groups already configured via group.set\nor YAML, or the rare case where entity-registry membership is explicitly unwanted.\nGroups created here are only removable via `ha_config_remove_group` —\n`ha_remove_helpers_integrations` will not find them. They survive group.reload but\nnot a restart.\n\nCore creates group.<object_id> when it does not exist (members from entities or\nadd_entities) and updates it otherwise. entities, add_entities, and remove_entities\nare mutually exclusive.\n\nEXAMPLES:\n- Create: ha_config_set_group(\"bedroom_lights\", entities=[\"light.lamp\", \"light.ceiling\"], name=\"Bedroom Lights\")\n- Add entities: ha_config_set_group(\"lights\", add_entities=[\"light.extra\"])",
     "inputSchema": {
       "properties": {
         "object_id": {
           "type": "str",
-          "description": "Group identifier without 'group.' prefix (e.g., 'living_room_lights')"
+          "description": "Group identifier: a lowercase slug without the group. prefix (e.g., living_room_lights)"
         },
         "entities": {
           "type": "list[str] | None",
-          "description": "List of entity IDs for the group. When updating, replaces all entities.",
+          "description": "List of entity IDs for the group. When updating, replaces all entities; an empty list empties the group, or creates it without members.",
           "default": null
         },
         "name": {
           "type": "str | None",
-          "description": "Friendly display name for the group",
+          "description": "Friendly display name; a new group without one is named after object_id",
           "default": null
         },
         "icon": {
@@ -1978,17 +1978,17 @@
         },
         "all_on": {
           "type": "bool | None",
-          "description": "If True, all entities must be on for group to be on",
+          "description": "If True, all entities must be on for group to be on. Remote Core state does not expose this mode; the in-process runtime can read and restore it.",
           "default": null
         },
         "add_entities": {
           "type": "list[str] | None",
-          "description": "Add these entities to an existing group",
+          "description": "Entities to add to the group's members",
           "default": null
         },
         "remove_entities": {
           "type": "list[str] | None",
-          "description": "Remove these entities from an existing group",
+          "description": "Entities to remove from the group's members",
           "default": null
         },
         "wait": {
@@ -2015,7 +2015,7 @@
   {
     "name": "ha_get_hacs_info",
     "title": "Get HACS Info",
-    "description": "Get HACS (Home Assistant Community Store) data — search the store or fetch repository details.\n\nUse ``action=\"search\"`` to search/browse/list store repositories, or\n``action=\"info\"`` for one repository's full details (README, versions, GitHub\nstats). This tool is read-only; to install or add repositories use\n``ha_manage_hacs``, and for non-HACS entities/config use the domain-specific tools.\n\n**DASHBOARD TIP:** ``action=\"search\", installed_only=True, category=\"lovelace\"``\ndiscovers installed custom cards to wire into ``ha_config_set_dashboard()``.\n\n**Examples:**\n- Search the store: ha_get_hacs_info(action=\"search\", query=\"mushroom\", category=\"lovelace\")\n- List installed: ha_get_hacs_info(action=\"search\", installed_only=True)\n- Repository details: ha_get_hacs_info(action=\"info\", repository_id=\"441028036\")\n\n**Caveats:** Native ``info`` reads only the already-loaded HACS cache,\nincluding cached README/additional information when available, and reports\nfreshness. It never refreshes GitHub or clears HACS's new flag. Use\nha_manage_hacs(action=\"update_information\") to refresh explicitly. The\nlegacy remote info endpoint may fetch GitHub and update HACS metadata;\nGitHub rate limits and HACS's configured credentials apply there.\n``search`` reads HACS's locally cached repository index.",
+    "description": "Get cached HACS or Home Assistant Marketplace data — search the store or read repository details.\n\nUse ``action=\"search\"`` to search/browse/list store repositories, or\n``action=\"info\"`` for one repository's full details (README, versions, GitHub\nstats). This tool is read-only; to install or add repositories use\n``ha_manage_hacs``, and for non-HACS entities/config use the domain-specific tools.\n\n**DASHBOARD TIP:** ``action=\"search\", installed_only=True, category=\"lovelace\"``\ndiscovers installed custom cards to wire into ``ha_config_set_dashboard()``.\n\n**Examples:**\n- Search the store: ha_get_hacs_info(action=\"search\", query=\"mushroom\", category=\"lovelace\")\n- List installed: ha_get_hacs_info(action=\"search\", installed_only=True)\n- Repository details: ha_get_hacs_info(action=\"info\", repository_id=\"441028036\")\n\n**Caveats:** ``info`` reads only the already-loaded store cache,\nincluding cached README/additional information when available, and reports\nfreshness. It never refreshes GitHub or clears HACS's new flag. Use\nha_manage_hacs(action=\"update_information\") to refresh explicitly. The\nremote path needs the component cache capability for full details; without\nit, cached catalog fields are returned with an explicit completeness note.\nMarketplace no longer supports appdaemon or python_script repositories.",
     "inputSchema": {
       "properties": {
         "action": {
@@ -2078,7 +2078,7 @@
   {
     "name": "ha_manage_hacs",
     "title": "Manage HACS",
-    "description": "Manage HACS (Home Assistant Community Store) — install/update, remove, add custom repositories, or refresh repository information.\n\nThis tool performs writes; to search the store or read repository details use\n``ha_get_hacs_info``. Use ``action=\"update_information\"`` to run the HACS UI's\n\"Update information\" action — a forced re-fetch of one repository's release data\nfrom GitHub, so a pending update becomes visible to HACS and its update entity\nimmediately.\n\n**Examples:**\n- Install latest: ha_manage_hacs(action=\"download\", repository_id=\"441028036\")\n- Install a version: ha_manage_hacs(action=\"download\", repository_id=\"piitaya/lovelace-mushroom\", version=\"v4.0.0\")\n- Remove: ha_manage_hacs(action=\"remove\", repository_id=\"owner/repo\")\n- Add a custom repo: ha_manage_hacs(action=\"add_repository\", repository=\"owner/repo\", category=\"lovelace\")\n- Refresh release data: ha_manage_hacs(action=\"update_information\", repository_id=\"owner/repo\")\n\n**Caveats:** Installing an integration usually needs a Home Assistant restart to\nactivate; new Lovelace cards need a browser cache clear. ``add_repository`` requires ``owner/repo``\nformat plus a matching ``category``. Removing an integration deletes its files but\nthe loaded module persists until the next Home Assistant restart — delete its config\nentries first (``ha_remove_helpers_integrations``). HACS refreshes custom\nrepositories on its own only about every 48 hours, so ``update_information`` is the\nway to surface a just-published release. Native self-update/removal changes\nfiles while the existing runtime remains loaded; the response reports\npending_restart and never claims that a new runtime is active. No automatic\nrestart or config-entry removal is performed by these tools.",
+    "description": "Manage HACS or Home Assistant Marketplace — install/update, remove, add repositories, or refresh metadata.\n\nThis tool performs writes; to search the store or read repository details use\n``ha_get_hacs_info``. Use ``action=\"update_information\"`` to run the HACS UI's\n\"Update information\" action — a forced re-fetch of one repository's release data\nfrom GitHub, so a pending update becomes visible to HACS and its update entity\nimmediately.\n\n**Examples:**\n- Install latest: ha_manage_hacs(action=\"download\", repository_id=\"441028036\")\n- Install a version: ha_manage_hacs(action=\"download\", repository_id=\"piitaya/lovelace-mushroom\", version=\"v4.0.0\")\n- Remove: ha_manage_hacs(action=\"remove\", repository_id=\"owner/repo\")\n- Add a custom repo: ha_manage_hacs(action=\"add_repository\", repository=\"owner/repo\", category=\"lovelace\")\n- Refresh release data: ha_manage_hacs(action=\"update_information\", repository_id=\"owner/repo\")\n\n**Caveats:** Installing an integration usually needs a Home Assistant restart to\nactivate; new Lovelace cards need a browser cache clear. ``add_repository`` requires ``owner/repo``\nformat plus a matching ``category``. Removing an integration deletes its files but\nthe loaded module persists until the next Home Assistant restart — delete its config\nentries first (``ha_remove_helpers_integrations``). HACS refreshes custom\nrepositories on its own only about every 48 hours, so ``update_information`` is the\nway to surface a just-published release. Native self-update/removal changes\nfiles while the existing runtime remains loaded; the response reports\npending_restart and never claims that a new runtime is active. No automatic\nrestart or config-entry removal is performed by these tools.\nMarketplace requires this caller's warning acceptance in its UI before\ninstallation, and a connected GitHub account to add custom repositories.\nThe tool never accepts the warning on the caller's behalf.",
     "inputSchema": {
       "properties": {
         "action": {
@@ -4120,7 +4120,7 @@
   {
     "name": "ha_manage_backup",
     "title": "Manage Backups",
-    "description": "Manage Home Assistant backups — both full HA snapshots AND per-edit auto-backups.\n\n**Pick the scope first**, then the action. Wrong scope routes through the wrong code path:\n\n| scope | action | What it does |\n|---|---|---|\n| `snapshot` | `create` | Create a full HA tarball (config + addons, no DB by default). Can take a while on a large instance; progress heartbeats are sent while waiting. |\n| `snapshot` | `list` | List full HA tarball snapshots (id, name, date, size). Read-only — use to discover a `backup_id` or confirm a backup landed. |\n| `snapshot` | `restore` | Restore a full HA tarball. **Restarts HA.** Last-resort recovery. |\n| `snapshot` | `delete` | Delete one full HA tarball by `backup_id` (`confirm=True` required). **Disabled by default** (`enable_snapshot_delete` setting) and layered with guards even when enabled — see below. |\n| `edits` | `create` | On-demand snapshot of one entity (`domain` + `entity_id` required). Use before the user manually edits in the HA UI. Same handler path the decorator takes on writes; bypasses the `enable_auto_backup` toggle. |\n| `edits` | `list` | List per-entity auto-backups (lightweight). Filter by `domain` and/or `entity_id`. |\n| `edits` | `view` | Read one auto-backup file by name; returns YAML and parsed `config`. |\n| `edits` | `diff` | Compare one auto-backup against the entity's current config. RFC 6902 JSON-Patch + add/remove/replace counts; bounded output. Read-only — fetches the live config, makes no changes. |\n| `edits` | `restore` | Re-apply one auto-backup. Existing flow helpers (template, group, utility_meter, …) and config subentries require a fresh safety snapshot; other domains follow auto-backup settings and may proceed without one. A deleted flow helper is recreated with a new config-entry ID and its saved entity IDs are restored if unoccupied; a deleted subentry is recreated with a new subentry ID. A deleted integration config entry cannot be recreated: its snapshot holds only metadata and the enabled state. **No HA restart.** |\n| `edits` | `delete` | Delete one auto-backup by `backup_name`, or bulk-delete by filter. |\n\n**When to use which scope:**\n- Use `scope=\"edits\"` to undo a recent automation/script/scene/dashboard/helper edit by the agent. Lightweight, fast, no restart.\n- Use `scope=\"snapshot\"` only for system-wide recovery (botched add-on update, mass config corruption, etc.).\n\n**`scope=\"snapshot\"` backup-hint:**\nRun before operations that CANNOT be undone (e.g., deleting devices). If the current definition was fetched or can be fetched, this tool is usually not needed.\n\n**`(snapshot, delete)` is off by default and layered even when enabled:** a human must\nset `enable_snapshot_delete=true` (env var, web settings UI, or add-on Supervisor\noptions) — an agent cannot turn this on itself. When enabled, a delete call is still\nrefused if: the target is a scheduled/automatic backup; it's younger than\n`snapshot_delete_min_age_days` (default 7, 0 disables the floor); or it's the single\nnewest snapshot remaining. These guarantee at least one recovery point always\nsurvives an agent's own mistakes.\n\n**Human-managed backup controls:** `enable_snapshot_actions=false` (ENABLE_SNAPSHOT_ACTIONS) blocks every snapshot action, including listing. `backup_read_only=true` (BACKUP_READ_ONLY) allows edits list/view/diff and snapshot list when snapshots are enabled; it blocks explicit create/restore/delete in both scopes. Automatic pre-edit capture still follows `enable_auto_backup`. A human must change these controls in the Backups tab, app configuration, or environment; developer tools cannot change them. Global and connection Read Only Mode still restrict writes.\n\n**`enable_auto_backup` and `scope=\"edits\"`:** the automatic-on-write capture (every wrapped tool call) is gated by `enable_auto_backup=true` — if the listing is empty, check the toggle (web settings UI or `ENABLE_AUTO_BACKUP=true` env var). The explicit `(edits, create)` action bypasses the toggle since the request is explicit; `list` / `view` / `restore` / `delete` operate on whatever's already on disk regardless of the toggle's current state.\n\n**Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.\n\n**Examples:**\n- Snapshot before risky op: `ha_manage_backup(scope=\"snapshot\", action=\"create\", name=\"Before_Big_Change\")`\n- List snapshots (to discover a backup_id or confirm one landed): `ha_manage_backup(scope=\"snapshot\", action=\"list\")`\n- Restore full snapshot: `ha_manage_backup(scope=\"snapshot\", action=\"restore\", backup_id=\"dd7550ed\")`\n- Delete an old snapshot (requires `enable_snapshot_delete=true`): `ha_manage_backup(scope=\"snapshot\", action=\"delete\", backup_id=\"dd7550ed\", confirm=True)`\n- On-demand entity snapshot before a manual UI edit: `ha_manage_backup(scope=\"edits\", action=\"create\", domain=\"helper_input_boolean\", entity_id=\"welcome_home_active\")`\n- List recent auto-backups for one automation: `ha_manage_backup(scope=\"edits\", action=\"list\", domain=\"automation\", entity_id=\"welcome_home\")`\n- View an auto-backup: `ha_manage_backup(scope=\"edits\", action=\"view\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Diff an auto-backup vs current state: `ha_manage_backup(scope=\"edits\", action=\"diff\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Restore an auto-backup: `ha_manage_backup(scope=\"edits\", action=\"restore\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Delete one auto-backup: `ha_manage_backup(scope=\"edits\", action=\"delete\", backup_name=\"...\")`\n- Bulk-delete old auto-backups: `ha_manage_backup(scope=\"edits\", action=\"delete\", older_than_days=30)`",
+    "description": "Manage Home Assistant backups — both full HA snapshots AND per-edit auto-backups.\n\n**Pick the scope first**, then the action. Wrong scope routes through the wrong code path:\n\n| scope | action | What it does |\n|---|---|---|\n| `snapshot` | `create` | Create a full HA tarball (config + addons, no DB by default). Can take a while on a large instance; progress heartbeats are sent while waiting. |\n| `snapshot` | `list` | List full HA tarball snapshots (id, name, date, size). Read-only — use to discover a `backup_id` or confirm a backup landed. |\n| `snapshot` | `restore` | Restore a full HA tarball. **Restarts HA.** Last-resort recovery. |\n| `snapshot` | `delete` | Delete one full HA tarball by `backup_id` (`confirm=True` required). **Disabled by default** (`enable_snapshot_delete` setting) and layered with guards even when enabled — see below. |\n| `edits` | `create` | On-demand snapshot of one entity (`domain` + `entity_id` required). Use before the user manually edits in the HA UI. Same handler path the decorator takes on writes; bypasses the `enable_auto_backup` toggle. |\n| `edits` | `list` | List per-entity auto-backups (lightweight). Filter by `domain` and/or `entity_id`. |\n| `edits` | `view` | Read one auto-backup file by name; returns YAML and parsed `config`. |\n| `edits` | `diff` | Compare one auto-backup against the entity's current config. RFC 6902 JSON-Patch + add/remove/replace counts; bounded output. Read-only — fetches the live config, makes no changes. |\n| `edits` | `restore` | Re-apply one auto-backup. Existing flow helpers (template, group, utility_meter, …) and config subentries require a fresh safety snapshot; other domains follow auto-backup settings and may proceed without one. A deleted flow helper is recreated with a new config-entry ID and its saved entity IDs are restored if unoccupied; a deleted subentry is recreated with a new subentry ID. A deleted integration config entry cannot be recreated: its snapshot holds only metadata and the enabled state. **No HA restart.** |\n| `edits` | `delete` | Delete one auto-backup by `backup_name`, or bulk-delete by filter. |\n\n**When to use which scope:**\n- Use `scope=\"edits\"` to undo a recent automation/script/scene/dashboard/helper edit by the agent. Lightweight, fast, no restart.\n- Use `scope=\"snapshot\"` only for system-wide recovery (botched add-on update, mass config corruption, etc.).\n\n**`scope=\"snapshot\"` backup-hint:**\nRun before operations that CANNOT be undone (e.g., deleting devices). If the current definition was fetched or can be fetched, this tool is usually not needed.\n\n**`(snapshot, delete)` is off by default and layered even when enabled:** a human must\nset `enable_snapshot_delete=true` (env var, web settings UI, or add-on Supervisor\noptions) — an agent cannot turn this on itself. When enabled, a delete call is still\nrefused if: the target is a scheduled/automatic backup; it's younger than\n`snapshot_delete_min_age_days` (default 7, 0 disables the floor); or it's the single\nnewest snapshot remaining. These guarantee at least one recovery point always\nsurvives an agent's own mistakes.\n\n**Human-managed backup controls:** `enable_snapshot_actions=false` (ENABLE_SNAPSHOT_ACTIONS) blocks every snapshot action, including listing. `backup_read_only=true` (BACKUP_READ_ONLY) allows edits list/view/diff and snapshot list when snapshots are enabled; it blocks explicit create/restore/delete in both scopes. Automatic pre-edit capture still follows `enable_auto_backup`. A human must change these controls in the Backups tab, app configuration, or environment; developer tools cannot change them. Global and connection Read Only Mode still restrict writes.\n\n**`enable_auto_backup` and `scope=\"edits\"`:** the automatic-on-write capture (every wrapped tool call) is gated by `enable_auto_backup=true` — if the listing is empty, check the toggle (web settings UI or `ENABLE_AUTO_BACKUP=true` env var). The explicit `(edits, create)` action bypasses the toggle since the request is explicit; `list` / `view` / `restore` / `delete` operate on whatever's already on disk regardless of the toggle's current state.\n\n**Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.\n\n**Entity edit history:** new automatic captures from `ha_set_entity` and `ha_remove_entity` use `domain=\"entity_registry\"` and the durable registry UUID as `entity_id`. They contain registry settings, including name, area, hidden state and options, and follow the same registration across entity-ID renames. An explicit registry capture accepts an HA entity ID (e.g. `light.example`) or registry UUID; reuse the saved UUID returned by `edits.create` / `edits.list` for exact list/delete filters. Historical `domain=\"entity\"` snapshots remain readable and restore only temporary state and attributes, not registry settings or physical device state. Their old domain/entity-ID filters still select those old snapshots; they do not also select new registry history. List without filters to discover both types, then use the returned `backup_name` to view or restore one snapshot.\n\n**Examples:**\n- Snapshot before risky op: `ha_manage_backup(scope=\"snapshot\", action=\"create\", name=\"Before_Big_Change\")`\n- List snapshots (to discover a backup_id or confirm one landed): `ha_manage_backup(scope=\"snapshot\", action=\"list\")`\n- Restore full snapshot: `ha_manage_backup(scope=\"snapshot\", action=\"restore\", backup_id=\"dd7550ed\")`\n- Delete an old snapshot (requires `enable_snapshot_delete=true`): `ha_manage_backup(scope=\"snapshot\", action=\"delete\", backup_id=\"dd7550ed\", confirm=True)`\n- On-demand entity snapshot before a manual UI edit: `ha_manage_backup(scope=\"edits\", action=\"create\", domain=\"helper_input_boolean\", entity_id=\"welcome_home_active\")`\n- List recent auto-backups for one automation: `ha_manage_backup(scope=\"edits\", action=\"list\", domain=\"automation\", entity_id=\"welcome_home\")`\n- View an auto-backup: `ha_manage_backup(scope=\"edits\", action=\"view\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Diff an auto-backup vs current state: `ha_manage_backup(scope=\"edits\", action=\"diff\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Restore an auto-backup: `ha_manage_backup(scope=\"edits\", action=\"restore\", backup_name=\"automation.welcome_home.20260521_153000.yaml\")`\n- Delete one auto-backup: `ha_manage_backup(scope=\"edits\", action=\"delete\", backup_name=\"...\")`\n- Bulk-delete old auto-backups: `ha_manage_backup(scope=\"edits\", action=\"delete\", older_than_days=30)`",
     "inputSchema": {
       "properties": {
         "scope": {
@@ -4154,12 +4154,12 @@
         "domain": {
           "type": "str | None",
           "default": null,
-          "description": "(edits.create / edits.list / edits.delete) Filter auto-backups by domain (e.g. 'automation', 'helper_timer'). Required for edits.create."
+          "description": "(edits.create / edits.list / edits.delete) Snapshot domain (e.g. 'automation', 'helper_timer'). 'entity' stores state/attributes; 'entity_registry' stores registry settings. Required for edits.create; list/delete match the domain exactly."
         },
         "entity_id": {
           "type": "str | None",
           "default": null,
-          "description": "(edits.create / edits.list / edits.delete) Filter auto-backups by entity ID. Required for edits.create."
+          "description": "(edits.create / edits.list / edits.delete) Snapshot target ID; required for edits.create. For entity_registry creation, pass an HA entity ID or registry UUID; create/list return the saved UUID. List/delete match the saved ID exactly, without resolving entity aliases."
         },
         "backup_name": {
           "type": "str | None",
@@ -4244,6 +4244,30 @@
       "beta"
     ],
     "source_file": "tools_code.py"
+  },
+  {
+    "name": "ha_manage_ha_mcp_updates",
+    "title": "Update HA-MCP",
+    "description": "Update HA-MCP while preserving the current installation and runtime.\n\nUse ha_manage_updates for other Home Assistant updates. Check first to\ninspect versions, compatibility and restart requirements; guide includes\nall supported installation paths. Breaking or unknown release impacts\nrequire review before installation through the owner's interface.\nInstalled component files become active only after ha_restart and a new\ncheck; an uncertain write must be inspected rather than replayed.\n\nEXAMPLES: ha_manage_ha_mcp_updates(action=\"check\"); ha_manage_ha_mcp_updates(action=\"update\").",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "type": "Literal['check', 'guide', 'update']",
+          "description": "Inspect this server's installation and update capability, get its owner-specific guide, or apply a compatible ordinary update through its owner.",
+          "default": "check"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "tags": [
+      "System"
+    ],
+    "source_file": "tools_self_update.py"
   },
   {
     "name": "ha_manage_security_policy",
@@ -4418,12 +4442,17 @@
   {
     "name": "ha_restart",
     "title": "Restart Home Assistant",
-    "description": "Execute a Home Assistant restart.\n\nWARNING: restarts the entire Home Assistant instance; all automations\nare unavailable during the restart, which typically takes 1-5 minutes.\nConfig is validated automatically before the restart proceeds (to\npre-check, call ha_get_system_health(include=\"config_check\")). For\nconfiguration changes, consider ha_reload_core() instead, which reloads\nspecific components without a full restart. When this server runs\ninside Home Assistant (embedded), it replies before the restart starts\nand is unreachable until Home Assistant is back.\n\nEXAMPLE: ha_restart(confirm=True)",
+    "description": "Execute a Home Assistant restart.\n\nWARNING: restarts the entire Home Assistant instance; all automations\nare unavailable during the restart, which typically takes 1-5 minutes.\nConfig is validated automatically before the restart proceeds (to\npre-check, call ha_get_system_health(include=\"config_check\")). For\nconfiguration changes, consider ha_reload_core() instead, which reloads\nspecific components without a full restart. When this server runs\ninside Home Assistant (embedded), it replies before the restart starts\nand is unreachable until Home Assistant is back; with safe_mode it\nstays down until Home Assistant is next restarted normally, because it\nis itself a custom integration.\n\nEXAMPLE: ha_restart(confirm=True)",
     "inputSchema": {
       "properties": {
         "confirm": {
           "type": "bool",
           "description": "Must be True to confirm the restart.",
+          "default": false
+        },
+        "safe_mode": {
+          "type": "bool",
+          "description": "Restart in safe mode: no custom integrations or custom frontend resources load until the next normal restart.",
           "default": false
         }
       }

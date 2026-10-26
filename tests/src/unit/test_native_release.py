@@ -18,11 +18,19 @@ from packaging.version import Version
 
 
 @pytest.fixture
-def release_builder():
+def release_builder(monkeypatch):
     path = Path(__file__).resolve().parents[3] / "scripts/native_release.py"
+    monkeypatch.syspath_prepend(str(path.parent))
     spec = importlib.util.spec_from_file_location("native_release_builder", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(
+        module.core_window,
+        "resolve_window",
+        lambda: module.core_window.make_window(
+            "2026.10.4", {"2026.10.0": "3.14.9", "2026.10.4": "3.14.9"}
+        ),
+    )
     return module
 
 
@@ -43,7 +51,7 @@ ha-mcp = "ha_mcp:main"
 """)
     (root / "hacs.json").write_text(
         json.dumps(
-            {"name": "HA-MCP", "homeassistant": "2026.8.0", "render_readme": True}
+            {"name": "HA-MCP", "homeassistant": "2026.10.0", "render_readme": True}
         )
     )
     (root / "LICENSE").write_text("fixture license\n")
@@ -59,8 +67,9 @@ ha-mcp = "ha_mcp:main"
         )
     )
     (component / "const.py").write_text(
-        'COMPONENT_VERSION = "8.7.0"\nMIN_NATIVE_HOME_ASSISTANT_VERSION = "2026.10.2"\n'
+        'COMPONENT_VERSION = "8.7.0"\nMIN_NATIVE_HOME_ASSISTANT_VERSION = "2026.10.0"\nMIN_EMBEDDED_HOME_ASSISTANT_VERSION = "2026.10.0"\n'
     )
+    (component / "hacs.json").write_text(json.dumps({"homeassistant": "2026.10.0"}))
     (component / "__init__.py").write_text("# fixture component\n")
     monkeypatch.setattr(release_builder, "run", lambda *args, **kwargs: "a" * 40)
 
@@ -126,6 +135,60 @@ def test_each_candidate_has_a_unique_manifest_version_and_numeric_legacy_protoco
             versions.append(manifest["version"])
             assert 'COMPONENT_VERSION = "9.0.0"' in archive.read("const.py").decode()
     assert Version(versions[0]) < Version(versions[1]) < Version("9.0.0")
+
+
+def test_release_refuses_stale_floors_even_when_building_old_revision(
+    source, tmp_path, release_builder, monkeypatch
+):
+    monkeypatch.setattr(
+        release_builder.core_window,
+        "resolve_window",
+        lambda: release_builder.core_window.make_window(
+            "2026.12.1", {"2026.11.0": "3.15.1", "2026.12.1": "3.15.2"}
+        ),
+    )
+    with pytest.raises(ValueError, match=r"requires minimum 2026\.11\.0"):
+        release_builder.build(
+            source,
+            tmp_path / "rejected",
+            "9.0.0",
+            "v9.0.0",
+            "example/repo",
+            revision="old-sha",
+            prepare_hacs=True,
+        )
+    assert not list((tmp_path / "rejected").glob("*.whl"))
+
+
+def test_qualification_can_measure_new_core_without_publishing_a_stale_floor(
+    source, tmp_path, release_builder
+):
+    window = release_builder.core_window.make_window(
+        "2026.12.1", {"2026.11.0": "3.15.1", "2026.12.1": "3.15.2"}
+    )
+    proof = release_builder.build(
+        source,
+        tmp_path / "qualification",
+        "9.0.0.dev1",
+        "native-ci-123",
+        "example/repo",
+        window=window,
+        qualification_only=True,
+    )
+    assert proof["qualification_only"] and proof["core_window"] == window
+    assert proof["hacs_snapshot"] is None
+    for tag, prepare in [("v9.0.0", False), ("native-ci-123", True)]:
+        with pytest.raises(ValueError, match="Qualification-only"):
+            release_builder.build(
+                source,
+                tmp_path / "not-created",
+                "9.0.0",
+                tag,
+                "example/repo",
+                window=window,
+                qualification_only=True,
+                prepare_hacs=prepare,
+            )
 
 
 def test_component_dependency_hash_binds_the_exact_wheel(
@@ -210,7 +273,7 @@ def test_hacs_snapshot_selects_exact_zip_without_changing_source_or_workflows(
     snapshot = output / "hacs-repository"
     metadata = json.loads((snapshot / "hacs.json").read_text())
     assert metadata["zip_release"] and metadata["filename"] == "ha_mcp_tools.zip"
-    assert metadata["hide_default_branch"] and metadata["homeassistant"] == "2026.10.2"
+    assert metadata["hide_default_branch"] and metadata["homeassistant"] == "2026.10.0"
     with zipfile.ZipFile(output / metadata["filename"]) as archive:
         folder = snapshot / "custom_components/ha_mcp_tools"
         assert set(archive.namelist()) == {

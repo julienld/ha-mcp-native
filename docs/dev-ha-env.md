@@ -5,9 +5,11 @@ runner and exposes it, plus your branch's ha-mcp server, through temporary
 Cloudflare tunnels. Use it to drive a branch against a real HA without Docker
 and without touching your own instance. It boots HA with the E2E suite's own
 bring-up and config (user `mcp` / `mcp`, token `TEST_TOKEN` in
-`tests/test_constants.py`). It is separate from the test suite: nothing in CI
-runs it, and its runner script (`.github/dev-ha-env/hold.py`) is copied into
-the tracked branch's E2E directory only for the run.
+`tests/test_constants.py`). The E2E seed gives `mcp` a French interface; after
+logging in, change it under your profile (your name at the bottom of the
+sidebar) → **General** → **Language**. It is separate from the test suite:
+nothing in CI runs it, and its runner script (`.github/dev-ha-env/hold.py`) is
+copied into the tracked branch's E2E directory only for the run.
 
 | `platform` | `server` | What runs |
 |---|---|---|
@@ -16,11 +18,17 @@ the tracked branch's E2E directory only for the run.
 | `haos` | `standalone` | HAOS VM; your branch's server runs on the runner |
 | `haos` | `embedded` | HAOS VM; the server runs inside the component |
 | `haos` | `app` | HAOS VM; the server runs as the app (add-on) |
+| `docker` | `oauth` | HA container; your branch's server runs on the runner as `ha-mcp-oauth`, with the `MCP:` URL's origin as its public URL |
 
 Test on `server=embedded` with the File & YAML Tools entry in place first (the
 defaults): the server running in-process inside the component, with the
 filesystem tools beside it, is ha-mcp's main install. Use `standalone` or `app`
-for a change specific to that mode.
+for a change specific to that mode. `oauth` runs the standalone server through
+the `ha-mcp-oauth` entrypoint: `MCP:` answers 401 until a client completes the
+consent flow against that URL's origin, so drive the flow first and pass the
+access token as a Bearer. The server keeps the origin it started with, so if
+the `MCP:` tunnel dies the run reports it as `down` rather than publishing a
+new URL; start a new run.
 
 `no_component=true` removes the component's File & YAML Tools entry, like the
 no-tools E2E lanes. `strict_bps` (default on, as agents meet it) sets strict

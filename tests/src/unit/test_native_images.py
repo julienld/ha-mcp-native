@@ -172,7 +172,6 @@ async def test_assist_reports_image_limit_without_base64_or_losing_write_outcome
         "exposed_catalog",
         AsyncMock(return_value=([SimpleNamespace(name="native_image")], set())),
     )
-    monkeypatch.setattr(native_llm, "tool_result", lambda value, **kwargs: value)
     result = await native_llm.call_exposed(
         manager,
         "native_image",
@@ -181,14 +180,15 @@ async def test_assist_reports_image_limit_without_base64_or_losing_write_outcome
             context=SimpleNamespace(user_id="owner"), platform="test", language="en"
         ),
     )
-    assert result["structuredContent"]["changed"] is True
+    assert result.error is False
+    data = result.data
+    assert data["structuredContent"]["changed"] is True
     assert (
-        "Assist cannot receive tool images"
-        in result["structuredContent"]["warnings"][0]
+        "Assist cannot receive tool images" in data["structuredContent"]["warnings"][0]
     )
-    assert result["meta"]["ha_mcp"]["status"] == "confirmed"
-    assert all(block["type"] != "image" for block in result["content"])
-    assert base64.b64encode(_IMAGE).decode() not in json.dumps(result)
+    assert data["meta"]["ha_mcp"]["status"] == "confirmed"
+    assert all(block["type"] != "image" for block in data["content"])
+    assert base64.b64encode(_IMAGE).decode() not in json.dumps(data)
 
 
 async def test_camera_caption_remains_plain_text_beside_the_image(image_runtime):
@@ -221,7 +221,6 @@ async def test_assist_refuses_image_only_tools_before_provider_execution(
         "exposed_catalog",
         AsyncMock(return_value=([SimpleNamespace(name="native_image")], set())),
     )
-    monkeypatch.setattr(native_llm, "tool_result", lambda value, **kwargs: value)
     result = await native_llm.call_exposed(
         manager,
         "native_image",
@@ -231,8 +230,11 @@ async def test_assist_refuses_image_only_tools_before_provider_execution(
         ),
     )
     manager.engine.call.assert_not_awaited()
-    assert result["structuredContent"]["error"]["code"] == "IMAGE_CONTENT_UNSUPPORTED"
-    assert result["meta"]["ha_mcp"]["status"] == "not_started"
+    assert result.error is True
+    assert (
+        result.data["structuredContent"]["error"]["code"] == "IMAGE_CONTENT_UNSUPPORTED"
+    )
+    assert result.data["meta"]["ha_mcp"]["status"] == "not_started"
 
 
 async def test_visibility_refuses_camera_pixels_before_provider_execution(

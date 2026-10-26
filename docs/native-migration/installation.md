@@ -1,397 +1,183 @@
-# Native candidate installation and rollback
+# Native packaging, delivery and rollback
 
-The public fork is
-[`julienld/ha-mcp-native`](https://github.com/julienld/ha-mcp-native).
-Choose a reviewed version from its [published releases](https://github.com/julienld/ha-mcp-native/releases)
-before installation. The preparation commands below create local artifacts;
-they do not publish an installable release. Publication is a separate maintainer
-operation after artifact review and qualification. Legacy compatibility has not
-been deprecated. Consult [published-candidate status](../../tests/native/PUBLISHED.md): dev2 failed
-the shared-dependency installation check and must not be treated as qualified.
+This maintainer guide defines the paired release and qualification contract.
+For installation and runtime settings, use the
+[in-process server guide](../in-process-server.md). Legacy compatibility remains
+supported; an upgrade must preserve existing entries and their saved choices.
 
-## What HACS must install
+## Paired artifacts and identity
 
-The native release builder produces a library wheel and `ha_mcp_tools.zip` from
-one committed source revision and its pinned skills submodule. Home Assistant
-installs the wheel named by the ZIP's integration manifest. The wheel URL uses
-the public GitHub release asset route, with a SHA-256 fragment; it contains no
-credentials or expiring redirect URL.
+`scripts/native_release.py` exports one committed source revision and its pinned
+submodules, then builds a native `ha-mcp` wheel and `ha_mcp_tools.zip`. The
+component manifest selects that exact wheel through a public GitHub release URL
+with a SHA-256 fragment. Both `hacs.json` files select the ZIP release asset.
+Home Assistant installs the manifest requirements through its normal requirement
+manager and package installer, with Core's own constraints and installer version.
 
-HACS needs `zip_release: true` and `filename: ha_mcp_tools.zip` in the selected
-version's root `hacs.json` to download that asset. Without them it installs the
-repository sources. See the [HACS archive settings](https://www.hacs.dev/docs/publish/start/#hacsjson)
-and the [integration release requirements](https://hacs.dev/docs/publish/integration/#github-releases-optional).
+Keep these identities distinct:
 
-The source repository's `hacs.json` and release versions stay unchanged. Its
-upstream mirror workflow copies those files and publishes source snapshots;
-changing them globally to require a ZIP would break that separate channel.
-Instead, `--prepare-hacs` creates a **distribution tree** containing:
+- The wheel and integration manifest carry the complete release version,
+  including `X.Y.Z.devN` for development releases.
+- `COMPONENT_VERSION` remains numeric `X.Y.Z` for released clients that parse
+  the legacy protocol version as integer segments. It is not the build identity.
+- `native-build.json.revision` identifies the original code SHA, with submodule
+  gitlinks and artifact digests. A dev tag's `release_revision` identifies its
+  full-source stamp commit, whose single parent is that code SHA. Only the
+  component manifest and protocol constant differ, with exact bytes verified.
+- A mirror distribution commit is separate from either source identity; its
+  recorded provenance binds it to the upstream artifacts.
 
-- `hacs.json`: ZIP selection, hidden default-branch choice, and the native Core
-  minimum read from the candidate's source;
-- `custom_components/ha_mcp_tools/`: exactly the ZIP's component files;
-- a short README, the license, and `native-source.json` linking the source SHA,
-  library requirement and ZIP digest.
+The ZIP's `native-wheel.json` indexes the paired wheel's package and distribution
+metadata bytes, excluding installer-owned receipts and the rewritten `RECORD`.
+It can establish installed payload equality when uv omits a PEP 610 archive hash.
+A contradictory receipt is still refused. Digests and JSON provenance are not
+publisher signatures, and payload equality is not proof of every object already
+loaded in memory. Restart Core after changing the paired release.
 
-This tree is intended for a separate commit and release tag in the **same fork**.
-It has no `.github/workflows` and does not change the default branch. HACS reads
-the manifest for the selected version, as implemented in
-[HACS 2.0.5](https://github.com/hacs/integration/blob/c0dfd8b44297c3673c21973e2539375a53687a9c/custom_components/hacs/repositories/base.py#L715).
+## Dependency profiles
 
-## Versions and build evidence
+The HACS native wheel has **no active dependency edges**. Its original dependency
+graph remains available in the optional `standalone` extra; native host packages
+are declared individually in the component manifest. Core skips satisfied
+individual roots, whereas installing a URL wheel with active dependencies through
+its normal `uv --upgrade` path can re-resolve the whole graph. Broad ranges alone
+do not prevent shared-package replacement. Do not replace this path with an
+unconstrained installer or a plain pip build-time install.
 
-For a candidate such as `9.0.0.dev123`:
+The profile relies on packages supplied by Core's base installation, while keeping
+required non-base packages, including Pydantic, explicitly declared. A constraint
+does not prove that a package is installed. Separated extras such as `cachetools`,
+`socksio` and `email-validator` preserve the required capabilities without requesting
+unused provider or persistence graphs. Native FastMCP/MCP and Rich use private
+copies under `ha_mcp._vendor`; legacy Assist also uses the private MCP SDK. They
+must not replace Core's shared `mcp` distribution. Keep optional integration
+imports behind loaded-owner checks; adding them to `after_dependencies` can cause
+Core to install their requirements even when they are not configured.
 
-| Surface | Value | Purpose |
-| --- | --- | --- |
-| Library wheel | `9.0.0.dev123` | Exact installed Python distribution |
-| Integration manifest | `9.0.0.dev123` | Unique candidate version in Home Assistant |
-| Distribution tag | `9.0.0.dev123` (or `v9.0.0.dev123`) | HACS release selection |
-| Legacy protocol `COMPONENT_VERSION` | `9.0.0` | Numeric compatibility floor for already-released clients |
-
-The last value is **not the complete candidate identity**. Historical clients
-parse its dot-separated segments as integers. Keeping that wire value numeric
-preserves their compatibility check while the manifest and library identify each
-candidate. `native-build.json` records both versions, the source SHA, submodule
-SHAs, artifact hashes and distribution-tree file hashes.
-
-The ZIP also carries `native-wheel.json`, a versioned index of the paired wheel's
-package and distribution-metadata bytes. It excludes the installed `RECORD`, which
-uv rewrites, and rejects installer-owned receipts in the source wheel. The index
-is bounded to 10,000 files, 128 MiB of payload and 4 MiB of JSON. It lets the
-runtime verify the installed payload when uv's PEP 610 receipt omits the hash;
-an explicitly contradictory receipt is still a refusal. This is artifact
-identity evidence, not a publisher signature.
-
-PEP 440 ordering gives `9.0.0.dev9 < 9.0.0.dev10 < 9.0.0`. This comparison was
-also exercised with AwesomeVersion 25.8.0, the version library used by HACS.
-Use a new, increasing development number and a new tag for every public
-candidate. Never replace an existing candidate's assets or reuse its version.
-
-The asset URL alone does not make a release immutable. GitHub's
-[immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
-lock its tag and assets after publication and provide release attestations.
-The local JSON evidence is a digest record, not a signature. HACS does not verify
-that JSON or a release attestation during ordinary ZIP installation. The wheel's
-[SHA-256 URL fragment](https://packaging.python.org/en/latest/specifications/version-specifiers/#direct-references)
-allows the Python installer to verify its downloaded bytes.
-
-## Dependency profile and the dev2 finding
-
-Core's [requirement manager](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/requirements.py)
-skips individually satisfied requirements. When installation is needed, its
-[package installer](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/util/package.py)
-uses `uv pip install --upgrade` under Core's constraints. A URL wheel with active
-`Requires-Dist` entries therefore re-resolves its dependency graph, including
-already-compatible packages. Installing the same wheel with ordinary pip in a
-Docker build did not exercise that behavior.
-
-The [dev2 public-install run](https://github.com/julienld/ha-mcp-native/actions/runs/39866932217)
-observed these replacements in Core 2026.10.2:
-
-| Package | Before → after | Relevant edge in the old wheel graph |
-| --- | --- | --- |
-| authlib | 1.7.2 → 1.8.0 | Unused native OIDC/provider dependency |
-| joserfc | 1.7.5 → 1.7.7 | Direct declaration and Authlib |
-| click | 8.1.8 → 8.3.1 | Uvicorn |
-| cachetools | 7.2.2 → 7.2.4 | `py-key-value-aio[memory]` |
-| certifi | 2026.7.22 → 2026.10.19 | HTTPX |
-| pycparser | 3.11 → 3.12 | Cryptography → CFFI |
-| pydantic-settings | 2.16.0 → 2.16.1 | Direct declaration |
-| platformdirs | 4.13.3 → 4.13.5 | Direct declaration |
-| starlette | 1.8.0 → 1.9.0 | Direct declaration and SSE-Starlette |
-
-Authlib 1.8 violated PySenz's upper bound; Click 8.3 violated gTTS and PyOmie's
-upper bounds. Broader compatibility ranges alone did not prevent these changes.
-
-The revised candidate wheel has **no active `Requires-Dist` entries**. All
-original project dependencies remain available through its `standalone` extra.
-The component manifest declares the required host packages individually, so Core
-can retain each compatible installed version. The profile:
-
-- relies on the [Core base contract](https://github.com/home-assistant/core/blob/2026.10.2/pyproject.toml)
-  for HTTPX/AnyIO, Cryptography, PyJWT, PyYAML, typing extensions, packaging and
-  psutil, rather than redeclaring their graphs through the URL wheel;
-- keeps Pydantic, Pydantic Settings, Starlette/SSE, HTTPX2, Uvicorn and other
-  required non-base packages in the component requirements. A pin in Core's
-  constraints file does not itself prove that a package is installed;
-- declares `cachetools`, `socksio` and `email-validator` independently, retaining
-  their runtime capabilities without requesting the parent extras. The native
-  session store uses memory, not filetree/keyring persistence;
-- leaves unused OIDC/provider Authlib/Joserfc and OpenAPI-provider dependencies
-  in `standalone`, and uses the existing private MCP SDK for legacy Assist too.
-  It does not install Core's shared `mcp` package.
-
-No additional vendor tree or custom installer is introduced by this profile.
-Missing packages still have their own transitive dependencies, so the profile
-must pass both the full Container environment and a fresh Core-base environment
-seeded with the older image's certifi. Both use Core's real installer and compare
-**all** distributions: the full lane after setup/restart, the minimal lane after
-each installation and its SDK/state/transport probes. Compatibility ranges admit
-future Core versions; they are not an assurance that every future dependency
-graph is unchanged. Shared changes follow the qualification policy below.
+The ordinary PyPI wheel and sdist retain the complete default dependency graph:
+`ha-mcp` for stable, `ha-mcp-dev` for development. The native URL wheel remains
+`ha-mcp` in both channels. Never upload the dependency-free native wheel as the
+ordinary PyPI distribution.
 
 ### Compatible shared-package upgrades
 
-On 23 October 2026 Julien chose compatible shared-package upgrades under Core's
-normal installer instead of adding private HTTPX2/HTTPCore2 copies. The native
-profile retains its existing capabilities, including the client email-schema
-dependency. HTTPX2 remains within its supported 2.x API range; the standalone
-lock keeps its selected versions.
+Qualification uses Core's normal installer and constraints, with dependency
+observations before installation, after setup and after a complete Core restart.
+The minimal Core lane also observes each manifest root and declared integration
+dependency. Check every installed distribution, compare each observation to the
+baseline and its predecessor, and retain existing conflicts separately from new
+ones.
 
-Qualification records every distribution before installation, after setup and
-after a complete Core restart. The minimal lane also checks each manifest root
-and declared integration dependency. Compatible upgrades may pass; removals,
-downgrades, incompatible release changes, new dependency conflicts and violations
-of Core's applicable constraints fail. Core, its shared MCP SDK, Pydantic, HTTPX
-and Cryptography retain their preinstalled versions. New packages must satisfy
-Core's constraints and the dependency checks too. Comparing each observation
-with its predecessor also detects a package added during setup then removed or
-downgraded at restart.
+Compatible shared upgrades may pass. Reject removals, downgrades, epoch or major
+changes, pre-1.0 minor changes, stable-to-prerelease transitions, new dependency
+conflicts and violations of applicable Core constraints. Preinstalled Core,
+shared MCP, Pydantic, HTTPX and Cryptography must retain their versions. Newly
+added distributions must satisfy the same constraints and conflict checks.
+The initial dependency-free wheel installation must change no preinstalled
+package; allowed upgrades belong to subsequent manifest processing by Core.
 
-The initial HACS wheel still has no active dependencies and must not change any
-preinstalled package before Core processes the manifest. Compatible upgrades
-belong to the ordinary requirement-manager path, not a wheel dependency graph.
+Exercise both the full Container environment and minimal Core with older
+permitted transitive packages. Verify actual runtime imports, protocol and state
+operations as well as installed versions. These checks do not establish
+compatibility with every third-party integration and do not provide a production
+transaction or automatic rollback. The fixtures and policy live under
+[`tests/native/`](../../tests/native/); public delivery evidence is described in
+[published qualification](../../tests/native/PUBLISHED.md).
 
-The records keep pre-existing diagnostics separate from newly introduced ones;
-a pre-existing conflict does not mean the environment is clean. A successful
-package check does not establish compatibility with every optional integration.
-Actual runtime probes before and after restart remain required because versions
-on disk do not identify every class already loaded in memory. These are
-qualification checks, not an integration-specific installer or automatic
-rollback in a user's Home Assistant.
+## Prepare without publishing
 
-Optional integration APIs use `optional_integrations.loaded_integration_module`:
-Core must already have loaded the named integration before its module is
-resolved. Radio, Assist and Supervisor operations still pin their runtime owners
-and revalidate them across awaits. Cloud connect URLs are offered only while
-Cloud is loaded; local webhook URLs remain available without it. This boundary
-does not initialize integrations or install their libraries.
-
-Do not add optional radios, KNX, Assist, Supervisor or Cloud to
-`after_dependencies` merely to satisfy Hassfest. Core 2026.10.2
-[installs requirements for both dependency lists](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/requirements.py#L195),
-even when those integrations are not configured. The 2026-10-23 correction
-declares the required Core API domains and removes Cloud's eager dependency;
-loaded-owner tests cover unavailable integrations, changed owners and import
-failures. Full and minimal Core installation receipts remain the acceptance
-checks for the resulting dependency graph.
-
-This correction prevents new resolver churn; it does not undo packages already
-changed by dev2. Restore or recreate an affected Core environment through the
-installation platform's supported procedure, preserving its configuration.
-
-## Prepare a reviewable candidate
-
-From a checkout of the exact source commit that passed native CI, with its
-submodule available:
+Use an immutable source SHA, the exact version selected by the release pipeline
+and an unused output directory. For example, replace the coordinates below with
+the reviewed source and version:
 
 ```powershell
-uv run -s scripts/native_release.py --version 9.0.0.dev123 --tag 9.0.0.dev123 --prepare-hacs --output dist/native-9.0.0.dev123
+uv run -s scripts/native_release.py --revision SOURCE_SHA --version X.Y.Z --tag vX.Y.Z --github homeassistant-ai/ha-mcp --source-github homeassistant-ai/ha-mcp --with-standalone --prepare-hacs --output dist/native-review
 ```
 
-Choose the actual unused version before running this command. The destination
-must not exist. An interrupted build is not a valid candidate; use a new output
-directory and inspect the complete evidence before continuing. The builder uses
-tracked `HEAD`, ignores uncommitted source edits, performs no installation in the
-working environment and creates no commit, tag, remote branch or release.
+`--with-standalone` adds the complete wheel and sdist in `standalone/`.
+`--prepare-hacs` adds a reviewable `hacs-repository/` distribution tree; it does
+not replace the full source history or create a commit or tag. Review the ZIP,
+wheel, index, provenance and staged tree together. Uncommitted edits are not
+exported. An incomplete output directory is not a valid release.
 
-For another GitHub repository, pass `--github OWNER/REPOSITORY` to the builder
-and the same trusted `--repository OWNER/REPOSITORY` to release qualification.
-The workflow passes its own `GITHUB_REPOSITORY` through the builder, public
-fetch, image verification and minimal Core worker. The old fork remains the
-default for manual preview commands. Never derive the expected repository
-from downloaded metadata: it must match the independently selected repository,
-source revision, tag, wheel URL and digests before execution.
+The default asset repository is `homeassistant-ai/ha-mcp`. For a fork, supply
+`--github OWNER/REPOSITORY`; use `--source-github` when source links differ.
+Qualification must independently select that same asset repository with
+`--repository` (and Docker's `RELEASE_REPOSITORY` build argument). Never derive
+the expected origin from downloaded metadata. Existing fork releases remain
+verifiable through these explicit options.
 
-Review the wheel, component ZIP, `native-build.json` and `hacs-repository/`
-together. Verify that the snapshot's component files match the archive, that its
-manifest names that wheel and hash, and that the source commit links resolve.
-Use the same artifacts for the qualification run and eventual upload.
+The reusable/manual `native-distribution.yml` accepts version, tag and source
+revision, builds both profiles and uploads an Actions artifact. It has only
+`contents: read` permission. Staging performs no tag, release, PyPI or mirror
+publication and is not authorization to publish.
 
-### Build the canonical standalone and native profiles together
+## Release delivery
 
-`--with-standalone` adds a complete standalone wheel and source distribution in
-`standalone/`, while the native wheel, component ZIP and payload index keep their
-existing layout. Both builds use one exported source commit, its pinned
-submodules and one supplied version. The native wheel retains zero active
-dependency edges; the standalone wheel and sdist retain the source's complete
-default dependency graph, so ordinary `uvx ha-mcp` installations remain viable.
-The package names remain `ha-mcp` for stable and `ha-mcp-dev` for the existing
-development channel. The native URL wheel remains `ha-mcp` in either channel.
-Never upload that native wheel to PyPI as the ordinary standalone distribution.
+The existing release workflows use `scripts/native_release_delivery.py`:
 
-Stable builds are supported without publishing a release:
+- **Stable:** SemVer Release builds paired native assets from the stamped
+  `vX.Y.Z` source commit, uploads to a draft and reads back every asset before
+  publication. Release Publish retains ordinary PyPI/container delivery from
+  the same tag.
+- **Development:** Publish Dev Channel uses the exact `scripts/dev_version.sh`
+  version for standalone and native artifacts. Its `vX.Y.Z.devN` tag retains
+  the full source tree with the minimal two-file stamp described above. HACS
+  reads the tag's source manifest before selecting the ZIP, so source discovery
+  and installed metadata must agree. Master's declarations remain unchanged.
+- **Mirror:** the integration mirror verifies the upstream ZIP, wheel and
+  provenance, extracts the ZIP unchanged and records the metadata. Its
+  `vX.Y.Z` / `vX.Y.Z-dev.N` release tags deliver the same bytes, retaining the
+  original upstream wheel URL and digest. The mirror does not rebuild them.
 
-```powershell
-uv run -s scripts/native_release.py --revision SOURCE_SHA --version 9.0.0 --tag v9.0.0 --with-standalone --prepare-hacs --output dist/profiles-9.0.0
-```
+Never overwrite an existing tag, version or asset. The delivery helper verifies
+existing identities and bytes before reusing them; changed or incomplete
+published releases fail. Recover a partial draft using the original
+`native-release-VERSION-RUN-ATTEMPT` Actions artifact and the helper's `publish`
+command with the exact coordinates and notes. It verifies existing assets before
+adding missing ones. Do not rebuild under that identity, use `--clobber`, or
+delete and recreate the release. Keep historical tags and artifacts available
+for pinned installs and rollback. The [component release guide](../agents/custom-component.md#version-cycle)
+owns the detailed pipeline contract.
 
-For dev, supply the version already produced by the canonical `dev-version`
-artifact, such as `9.0.0.dev123`, and its matching tag. Both the existing candidate
-spelling `v9.0.0.dev123` and the mirror spelling `v9.0.0-dev.123` are accepted.
-For stable, use the version and source commit of the semantic-release tag.
-The profile builder does not calculate a replacement version or resolve a
-moving "latest release".
+## Qualification and rollback
 
-`native-build.json` records both profiles' artifact digests and their common
-source revision. `--source-github OWNER/REPO` separates source links from the
-`--github` repository that would host distribution assets. The source SHA is
-never claimed as the future HACS snapshot commit; that distribution commit does
-not exist during preparation.
+New releases start at Core **2026.10.0** for both component runtimes. The release
+window selects the current released stable monthly generation and its predecessor,
+bounded by that minimum. Source floors, HACS metadata and the resolved window
+must agree before publication; dates and unreleased tags do not advance it. See
+[compatibility](compatibility.md) for the amd64/aarch64 contract and its limits.
 
-The reusable/manual `native-distribution.yml` workflow qualifies these builds
-only in `julienld/ha-mcp-native`. It accepts the explicit version, tag and source
-revision, has read-only repository permissions, and uploads an Actions artifact.
-It creates no Git tag, release, PyPI upload or mirror push. Its output is ready
-for a future caller to consume: `standalone/` for the canonical PyPI build and
-the native artifacts plus `hacs-repository/` for HACS. Adoption by upstream's
-SemVer Release, Publish Dev Channel and mirror jobs remains a separate reviewed
-change; their current triggers, distribution names and legacy mirror behavior
-are unchanged. Local/fork qualification does not authorize that publication.
+Require evidence tied to the exact source, repository, tag, artifact hashes,
+Core/Python versions and architecture. Check the actual runtime, Core diagnostics,
+dependency observations, full restart, native/legacy switching and rollback.
+Local candidates rewrite only the disposable image's unavailable wheel URL;
+they cannot prove public download or HACS version selection. The
+[published-asset lane](../../tests/native/PUBLISHED.md) exercises the unchanged
+manifest URL. Authenticated HACS upgrades and HAOS hardware need their own
+completed runs before those claims are made.
 
-After artifact review and qualification, the minimal publication sequence is:
+`haos-native.yml` is a targeted qualification job with an editable exact Core
+pin, initially `2026.10.4`; select `2026.10.0` to exercise the initial minimum.
+The source admission guard still applies. `native-continuity.yml` retains the
+immutable application baseline `2dc504fd97d8416f87b6ea7f2fd8ce0332615956` and one
+common Core `2026.10.2` for before/after behavior. That bench is distinct from the
+compatibility matrix. Both retain manual/qualification-branch triggers without
+a schedule. The container fixture resolves `HA_TEST_IMAGE`, then
+`HA_IMAGE_GHCR`, then its default; report the actual image, not a fixture pin
+from another lane.
 
-1. Initialize a separate local Git checkout from `hacs-repository/`, without
-   adding workflows or copying the development checkout's `.git` directory.
-   Commit the tree with the required session trailers. Its commit is the
-   **distribution commit**; `native-source.json` retains the distinct source SHA.
-2. Push only a dedicated distribution branch and the reviewed version tag to
-   `julienld/ha-mcp-native`. Do not push to `master`, move the default branch,
-   retag an existing release, or dispatch an upstream publishing workflow.
-3. Create a GitHub **draft pre-release**,
-   attach the exact wheel, `ha_mcp_tools.zip` and `native-build.json`, and verify
-   their uploaded digests. Publish the reviewed artifacts. If repository immutable
-   releases are enabled, publication locks the tag and assets; that setting is
-   not assumed or required by this qualification. Draft assets
-   are not anonymously installable by Home Assistant.
-4. Verify the published release and assets with `gh release verify` and
-   `gh release verify-asset` when attestations are available. Then perform the
-   HACS installation and rollback checks below.
+Before an upgrade, take a recoverable backup. Preserve config-entry, webhook and
+LLM API identifiers, saved authentication choices, opt-in flags and legacy
+entries; never delete/recreate entries to update code. Native is the new-entry
+default, while existing entries without `runtime_mode` retain legacy. Runtime
+switches must keep capability and credential checks; no automatic transport or
+authentication fallback is allowed.
 
-The workflow audit found only `Native migration` active in the fork. In the
-source tree, SemVer Release is scheduled/manual; Release Publish follows that
-workflow; dev publication and mirror sync follow `master`. The mirror's separate
-`release-on-tag.yml` is a template outside `.github/workflows` and is omitted
-from the generated tree. Recheck the fork's enabled workflows and their triggers
-immediately before a future push/publication; this audit does not authorize
-running any publishing workflow.
-
-## Install a published candidate
-
-The development candidate targets **Home Assistant 2026.8.0 or newer**, preserving
-the upstream installation minimum. Its three-month amd64/aarch64 qualification
-must pass before that candidate is described as qualified. Native Core admission
-enforces the minimum even if an archive is copied manually.
-
-New automatic **Home Assistant account OAuth login** requires **Core 2026.10.0**
-in both component runtimes. Core 2026.8/9 still accept existing Core Bearer/LLAT access,
-refresh and revocation; secret-URL mode and legacy OAuth remain available.
-The component keeps the same URLs and settings and refuses unsupported new
-login explicitly, without a broker or automatic authentication-mode change.
-See the [account-login contract](../agents/custom-component.md#automatic-home-assistant-account-login)
-for discovery behavior and the preserved refresh envelope.
-
-Core API changes and deprecation diagnostics follow the
-[component review policy](../agents/custom-component.md#deprecation-review-timing).
-Known, still-supported deprecations need a documented bounded exception before
-qualification can allow them; no such exception is currently implemented.
-This does not relax dependency, blocking-call or runtime checks.
-
-The previously published **9.0.0.dev3** still requires **2026.10.2** and retains
-only its recorded qualification. Use the selected release's own metadata; do not
-lower an old archive's version guard to install it on an older Core.
-
-1. Take a recoverable Home Assistant backup and record the currently installed
-   integration/library version and configuration. Keep credential-bearing
-   backups private.
-2. Add `https://github.com/julienld/ha-mcp-native` as a HACS custom repository of
-   type Integration. Enable its pre-release switch and explicitly select the
-   published version tag. Before a regular release exists, registration may
-   initially inspect `master`; downloading that branch does not install this
-   candidate. Avoid having two HACS repositories manage the same
-   `custom_components/ha_mcp_tools` directory.
-3. Download the selected candidate and restart **Home Assistant**, so the new
-   component and library share one generation. An entry reload alone cannot
-   replace already-imported Python/SDK classes.
-4. Configure the existing HA-MCP Server entry. New entries default to native;
-   existing entries without `runtime_mode` retain legacy until an explicit
-   change. Keep the File & YAML Tools entry when those opt-in capabilities are
-   needed. With the webhook off, the administrator sidebar remains available; Assist requires its separate opt-in.
-5. Verify the selected HACS tag, manifest and installed library version, the
-   configured webhook/Assist access, and the native Core log. The previous
-   legacy-only listener URL needs legacy mode or an explicitly updated HA URL.
-
-## Credentials and rollback
-
-The two LLM bridges are independent and **off by default for new entries**.
-Configure preserves each entry's saved choices. `enable_llm_api=true` offers
-HA-MCP tools as an API that an Assist agent can select.
-`enable_native_llm_import=true` lets MCP clients discover and
-call the explicit `native_import_apis` selection in Native mode. Switching either
-bridge off preserves the selected APIs and exposure mode. Home Assistant's own
-built-in Assist tools are unchanged.
-
-On upgrade, config-entry schema 1.3 preserves the previous effective export
-setting: an old server entry with no `enable_llm_api` option gets an explicit
-`true`, including upstream 1.2 entries, whose migration only cleared old package
-overrides. Explicit `true` and `false` choices from upstream settings or prototype
-1.2 remain unchanged, in both Legacy and Native mode. Configure also preserves
-that historical default when a disabled entry has not run its setup migration.
-An entry older than 1.2 drops its saved `pip_spec` override once, following the
-upstream migration so the release's paired package can run. Overrides on entries
-already at 1.2 or newer are retained. New entries start at 1.3 with both bridges
-off; this migration never enables a new entry's bridges. For compatibility, an existing
-nonempty `native_import_apis` list with no import switch is migrated to an
-explicit enabled import. A saved `false` always wins over the retained list.
-Legacy runtime supports export, but retains the native import choice for a later
-runtime switch without exposing an import bridge.
-
-Native calls use validated Home Assistant identity. They do not create an
-internal administrator token or reconnect to HA. Secret-URL and legacy OAuth
-modes retain an explicitly configured owner. Preserve the existing config-entry,
-webhook and LLM API identifiers; do not delete and recreate an entry to upgrade.
-
-Retained legacy credential fields are used only by legacy mode. A native entry
-created without a legacy credential needs a valid administrator credential
-configured explicitly before it can run legacy. A missing or revoked credential
-must produce the existing setup/repair refusal. Do not export tokens, private
-keys, secret webhook paths, config-entry storage or real authentication receipts
-in build evidence or public issue reports.
-
-To switch runtime within the same installed candidate, select legacy in the
-entry options. An exact hashed manifest wheel requires the installed version
-and PEP 610 URL to match. A conflicting archive hash is refused. If uv omitted
-the hash, the component's independent index must instead prove equality of the
-installed files; this does not invent an archive digest in the receipt.
-Receipt and payload inspection run off the HA loop. Overrides, explicit reinstall
-requests, conflicting distributions and unproven origins still require installation; after
-native bindings have loaded, that path requires a full Core restart. The
-receipt is installation metadata. The separate payload check establishes file
-equality at verification time, not a publisher signature or arbitrary in-memory
-code identity.
-
-To roll back code, select the previous published HACS version, retain its paired
-wheel/ZIP, and restart Home Assistant. Keep older releases available. Before
-downgrading Core below the native minimum, return to a compatible legacy
-configuration and artifact. Native mode must refuse the downgrade rather than
-silently activate another transport. HACS file rollback does not undo changes
-to HA entities, configuration or credentials; use the appropriate backup when
-those data must also be restored.
-
-## Remaining public-install qualification
-
-Local tests cover archive selection/layout, versions, hashes, source isolation,
-no overwrite, deterministic ZIP bytes and the managed-install receipt decision.
-The disposable Core CI installs the matching wheel locally and replaces the
-unpublished URL with an exact version pin **only in its image**. Those tests do
-not prove GitHub delivery or a real HACS download of the public candidate.
-The [public-wheel qualification lane](../../tests/native/PUBLISHED.md) exercises
-Core's installer with the unchanged published manifest and checks its receipt.
-
-After publication, verify anonymously accessible ZIP/wheel assets, redirect/hash
-handling by Core's real installer, receipt contents, HACS pre-release selection,
-upgrade between two candidate numbers, full restart, native↔legacy switching
-with the exact hashed URL, and rollback to the previous archive. Test the actual
-HAOS hardware and authenticated HACS setup before claiming those deployments
-qualified. No such public-install or HAOS hardware qualification is claimed here.
+To roll back code, select a compatible previous published version with its
+paired ZIP/wheel and restart Core. Before downgrading Core, select an artifact
+whose own floor admits it; legacy mode does not bypass the new component's
+minimum. Code rollback does not restore entities, configuration, credentials or
+shared packages changed by installation. Restore data or the Core environment
+through the platform's supported backup/recovery procedure when needed. Keep
+credential-bearing backups and receipts out of public qualification artifacts.
