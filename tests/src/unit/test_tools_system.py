@@ -15,10 +15,13 @@ import pytest
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import (
     HomeAssistantAPIError,
+    HomeAssistantAuthError,
     HomeAssistantClient,
+    HomeAssistantCommandNotSent,
     HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
 )
+from ha_mcp.client.service_errors import HomeAssistantWebSocketServiceError
 from ha_mcp.tools.tools_system import SystemTools
 
 
@@ -117,8 +120,8 @@ class TestHaRestartErrorHandling:
         ],
     )
     async def test_lost_restart_acknowledgement_is_unknown_and_never_retried(
-        self, error
-    ):
+        self, error: Exception
+    ) -> None:
         """A proxy error or closed connection cannot prove the requested restart happened."""
         client = _make_client_that_fails_on_restart(error)
         with pytest.raises(ToolError) as caught:
@@ -127,13 +130,14 @@ class TestHaRestartErrorHandling:
         assert outcome["execution_status"] == "outcome_unknown"
         assert outcome["write_outcome_unknown"] is True
         assert outcome["success"] is False
+        assert outcome["error"]["code"] == "SERVICE_CALL_FAILED"
         client.call_service.assert_awaited_once_with(
             "homeassistant", "restart", {"safe_mode": False}
         )
         client.send_websocket_message.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_proxy_error_before_restart_dispatch_still_fails(self):
+    async def test_proxy_error_before_restart_dispatch_still_fails(self) -> None:
         """A preflight failure has no mutation to retry or reconcile."""
         error = HomeAssistantConnectionError("Bad Gateway")
         client = _make_client_that_fails_on_check_config(error)
@@ -142,6 +146,45 @@ class TestHaRestartErrorHandling:
         with pytest.raises(ToolError) as caught:
             await tools.ha_restart(confirm=True)
         assert json.loads(str(caught.value))["execution_status"] == "not_started"
+        client.call_service.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("error", "code"),
+        [
+            (
+                HomeAssistantCommandNotSent("WebSocket not authenticated"),
+                "CONNECTION_FAILED",
+            ),
+            (HomeAssistantAuthError("Invalid token"), "AUTH_INVALID_TOKEN"),
+            (
+                HomeAssistantWebSocketServiceError(
+                    "Restart refused by Core", code="invalid_format"
+                ),
+                "VALIDATION_FAILED",
+            ),
+        ],
+    )
+    async def test_authoritative_refusal_preserves_error_and_reports_not_started(
+        self, error: Exception, code: str
+    ) -> None:
+        client = _make_client_that_fails_on_restart(error)
+        with pytest.raises(ToolError) as caught:
+            await SystemTools(client).ha_restart(confirm=True)
+        outcome = json.loads(str(caught.value))
+        assert outcome["execution_status"] == "not_started"
+        assert outcome["error"]["code"] == code
+        assert outcome["error"]["message"] == str(error)
+        assert not outcome.get("write_outcome_unknown")
+        client.call_service.assert_awaited_once()
+
+    async def test_missing_confirmation_never_checks_or_restarts(self) -> None:
+        client = AsyncMock()
+        with pytest.raises(ToolError) as caught:
+            await SystemTools(client).ha_restart()
+        outcome = json.loads(str(caught.value))
+        assert outcome["execution_status"] == "not_started"
+        assert outcome["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+        client.check_config.assert_not_awaited()
         client.call_service.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -155,19 +198,19 @@ class TestHaRestartErrorHandling:
             await tools.ha_restart(confirm=True)
 
     @pytest.mark.asyncio
-    async def test_success_path_returns_connection_lost_warning(self):
-        """Successful restart (no exception from call_service) surfaces a top-level
-        warnings list with the "connection will be lost" note. Pins the
-        post-#1332 contract on ``tools_system.py`` ~L188-194 (the first return
-        in ha_restart, previously emitting singular ``warning``)."""
+    async def test_acknowledged_restart_is_not_reported_as_completed(self) -> None:
+        """Core's acknowledgement keeps the restart warning, without claiming completion."""
         client = AsyncMock()
         client.check_config.return_value = {"result": "valid"}
-        client.call_service.return_value = None  # restart fires, no error
+        client.call_service.return_value = []  # Core acknowledged the service call.
         tools = SystemTools(client)
 
         result = await tools.ha_restart(confirm=True)
 
         assert result["success"] is True
+        assert result["requested"] is True
+        assert not result.get("verified") and not result.get("restarted")
+        assert "not confirmed" in result["message"]
         warnings = result.get("warnings")
         assert isinstance(warnings, list) and warnings, (
             f"Expected non-empty warnings list, got: {result!r}"

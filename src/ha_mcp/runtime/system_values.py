@@ -106,7 +106,7 @@ def restart_precheck_warnings(
                     "Home Assistant cannot restart while the recorder "
                     "is upgrading its database."
                 ),
-                context={"recorder": recorder},
+                context={"recorder": recorder, "execution_status": "not_started"},
                 suggestions=[
                     "Wait for the upgrade to finish, then call "
                     "ha_restart(confirm=True) again"
@@ -128,7 +128,7 @@ def restart_precheck_warnings(
                     "Home Assistant cannot restart while the backup manager is "
                     "busy creating, receiving or restoring one."
                 ),
-                context={"backup_state": state},
+                context={"backup_state": state, "execution_status": "not_started"},
                 suggestions=[
                     "Wait for the backup to finish, then call "
                     "ha_restart(confirm=True) again"

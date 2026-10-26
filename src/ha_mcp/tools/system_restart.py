@@ -10,11 +10,11 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from .._version import is_embedded
 from ..client.rest_client import (
-    HomeAssistantAPIError,
     HomeAssistantAuthError,
     HomeAssistantCommandNotSent,
     HomeAssistantConnectionError,
 )
+from ..client.service_errors import HomeAssistantWebSocketServiceError
 from ..errors import ErrorCode, create_error_response
 from .helpers import exception_to_structured_error, raise_tool_error
 
@@ -39,13 +39,19 @@ def _schedule_embedded_restart(client: Any, data: dict[str, Any]) -> None:
         except Exception as exc:
             # No caller remains. A lost acknowledgement does not prove either
             # restart success or rejection, and must not trigger a retry.
-            if isinstance(exc.__cause__, httpx.ReadError | httpx.RemoteProtocolError):
+            if _restart_was_refused(exc):
+                logger.warning(
+                    "Deferred Home Assistant restart was refused", exc_info=True
+                )
+            elif isinstance(exc.__cause__, httpx.ReadError | httpx.RemoteProtocolError):
                 logger.warning(
                     "Deferred Home Assistant restart outcome is unknown; "
                     "the connection closed before acknowledgement"
                 )
             else:
-                logger.warning("Deferred Home Assistant restart failed", exc_info=True)
+                logger.warning(
+                    "Deferred Home Assistant restart outcome is unknown", exc_info=True
+                )
 
     task = asyncio.get_running_loop().create_task(_restart())
     _RESTART_TASKS.add(task)
@@ -85,6 +91,7 @@ async def restart_home_assistant(
             create_error_response(
                 ErrorCode.VALIDATION_INVALID_PARAMETER,
                 "Restart not confirmed",
+                context={"execution_status": "not_started"},
                 details=(
                     "You must set confirm=True to restart Home Assistant. "
                     "This is a safety measure to prevent accidental restarts."
@@ -112,7 +119,10 @@ async def restart_home_assistant(
                         "Home Assistant configuration has errors. "
                         "Fix the errors before restarting."
                     ),
-                    context={"config_errors": errors},
+                    context={
+                        "config_errors": errors,
+                        "execution_status": "not_started",
+                    },
                 )
             )
 
@@ -164,20 +174,30 @@ async def restart_home_assistant(
         raise
 
 
+def _restart_was_refused(error: Exception) -> bool:
+    if isinstance(error, HomeAssistantCommandNotSent | HomeAssistantAuthError):
+        return True
+    if isinstance(error, HomeAssistantWebSocketServiceError):
+        # The service adapter's 400 is synthetic. Only Core's structured
+        # preflight codes prove refusal; HTTP status or message text cannot.
+        return error.code in {
+            "unauthorized",
+            "invalid_format",
+            "not_found",
+            "unknown_command",
+        }
+    return False
+
+
 def _raise_restart_error(error: Exception, *, dispatched: bool) -> NoReturn:
-    rejected = isinstance(
-        error, HomeAssistantCommandNotSent | HomeAssistantAuthError
-    ) or (
-        isinstance(error, HomeAssistantAPIError)
-        and error.status_code in {400, 401, 403, 404, 422}
-    )
-    if not dispatched or rejected:
+    if not dispatched or _restart_was_refused(error):
         payload = exception_to_structured_error(error, raise_error=False)
         payload["execution_status"] = "not_started"
     else:
         payload = create_error_response(
             ErrorCode.SERVICE_CALL_FAILED,
             "Home Assistant restart was requested but its outcome is unknown.",
+            details=str(error),
             context={"operation": "restart", "write_outcome_unknown": True},
             suggestions=[
                 "Check Home Assistant's availability and uptime before retrying; the restart may already have happened.",

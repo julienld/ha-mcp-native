@@ -53,6 +53,7 @@ class SystemActionsFacade:
                 create_error_response(
                     ErrorCode.VALIDATION_INVALID_PARAMETER,
                     "Restart not confirmed",
+                    context={"execution_status": "not_started"},
                     details=(
                         "You must set confirm=True to restart Home Assistant. "
                         "This is a safety measure to prevent accidental restarts."

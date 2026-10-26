@@ -689,12 +689,9 @@ class HomeAssistantClient:
         payload: dict[str, Any],
         return_response: bool,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        """Call a service for a non-admin token, in ``call_service``'s return shape.
+        """Call a service over WS, avoiding REST's non-admin 401/IP-ban side effect."""
+        from .service_errors import HomeAssistantWebSocketServiceError
 
-        Over REST an admin-only service answers a non-admin with a 401 that
-        ``http.ban`` counts; over WebSocket the refusal is only an error
-        (#2546). WebSocket reports no changed states, so that list is empty.
-        """
         reply = await self.send_websocket_message(
             {
                 "type": "call_service",
@@ -706,16 +703,16 @@ class HomeAssistantClient:
         )
         if not reply.get("success"):
             error = str(reply.get("error", "Service call failed"))
-            if error.removeprefix("Command failed: ") == "Unauthorized":
+            code = reply.get("error_code")
+            if code == "unauthorized" or (
+                code == "home_assistant_error"
+                and error.removeprefix("Command failed: ") == "Unauthorized"
+            ):
                 raise HomeAssistantAdminRequiredError(
                     f"Service {domain}.{service} is admin-only in Home Assistant "
                     "and this token's user is not an administrator"
                 )
-            raise HomeAssistantAPIError(
-                f"API error: 400 - {error}",
-                status_code=400,
-                response_data={"message": error},
-            )
+            raise HomeAssistantWebSocketServiceError(error, code=code)
         if return_response:
             result = reply.get("result") or {}
             return {"changed_states": [], "service_response": result.get("response")}
@@ -1859,9 +1856,8 @@ class HomeAssistantClient:
 
         for attempt in range(max_retries):
             # Whether the failure happened before a usable connection existed.
-            # Failing to obtain one is transport death whatever class the
-            # manager raises, and it raises a bare ``Exception`` when
-            # ``connect()`` returns False, so this cannot be decided by type.
+            # Failing to obtain one means no command was sent, regardless of
+            # the exception class the pool or connection setup raises.
             acquiring = True
             try:
                 # Use per-client WebSocket keyed to this client's credentials
@@ -1886,6 +1882,8 @@ class HomeAssistantClient:
                 return result
 
             except Exception as e:
+                if acquiring and isinstance(e, HomeAssistantAuthError):
+                    raise
                 error_str = str(e)
                 is_403 = "403" in error_str and "Forbidden" in error_str
 
@@ -1899,17 +1897,8 @@ class HomeAssistantClient:
                     await asyncio.sleep(retry_delay)
                     continue
 
-                # Phase first, type second. Failing before a client exists is
-                # evidence about the transport whatever class was raised, and
-                # the pooled manager raises a bare ``Exception`` when
-                # ``connect()`` returns False, so that case cannot be decided
-                # by type. Past acquisition only the no-answer classes count:
-                # ``send_command`` deliberately re-raises the original
-                # ``ConnectionClosed`` / ``ConnectionResetError`` from the send
-                # rather than wrapping it, to keep at-most-once semantics for
-                # write callers, so those arrive here untranslated. Anything
-                # else (a ``ValueError`` from building the message, say) is a
-                # bug rather than evidence about the connection.
+                # A pool failure precedes dispatch. Afterwards, socket/no-answer
+                # errors may follow a partial write and must never become NotSent.
                 if acquiring or isinstance(e, _NO_ANSWER_ERRORS):
                     # One error channel for "no answer came back" (#1947): the
                     # caller decides the policy, rather than every consumer
@@ -1934,16 +1923,18 @@ class HomeAssistantClient:
                 # reverse-proxy suggestions below. The 403 text survives in the
                 # message, and returning a soft envelope there instead would
                 # put a blocked transport back on the degrade path this change
-                # exists to close. Past acquisition the socket is alive and HA
-                # (or a proxy) answered, so the tailored suggestions apply.
+                # exists to close. Other failures retain the suggestions below;
+                # their text alone does not prove a write was refused before acting.
                 if is_403:
                     logger.error(
-                        f"WebSocket command rejected (403 Forbidden): {error_str}"
+                        f"WebSocket request blocked (403 Forbidden): {error_str}"
                     )
                     return {
                         "success": False,
                         "error": f"WebSocket request blocked (403 Forbidden): {error_str}",
-                        "error_code": getattr(e, "code", None),
+                        "error_code": e.code
+                        if isinstance(e, HomeAssistantCommandError)
+                        else None,
                         "suggestions": [
                             "This may be caused by a reverse proxy or security filter",
                             "Try simplifying the request (e.g., shorter templates, fewer parameters)",
@@ -1956,13 +1947,14 @@ class HomeAssistantClient:
                 # Unknown command." is undiagnosable from a user's log
                 # (issue #1889 took a live reproduction to attribute).
                 logger.error(f"WebSocket message failed ({message.get('type')}): {e}")
-                # Preserve HA's structured error code (e.g. ``not_found``) so callers
-                # can distinguish HA's authoritative verdict from a transient failure
-                # instead of only seeing the stringified message.
+                # Only a protocol rejection establishes HA's error code; a local
+                # exception's ``code`` attribute says nothing about the write outcome.
                 return {
                     "success": False,
                     "error": str(e),
-                    "error_code": getattr(e, "code", None),
+                    "error_code": e.code
+                    if isinstance(e, HomeAssistantCommandError)
+                    else None,
                 }
 
         # Unreachable: every attempt either returns, raises, or ``continue``s,
