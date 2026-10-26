@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 
 from ha_mcp.runtime.hacs_results import added_data
@@ -24,6 +26,42 @@ spec.loader.exec_module(checks_module)
 
 class RegistrationObserved(Exception):
     """Stop before the live owner/cache checks; this test covers their admission."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 401, 500])
+async def test_restart_waits_for_fixture_registration_but_preserves_real_errors(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    monkeypatch.setitem(sys.modules, "run_container", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "checks", checks_module)
+    driver_spec = importlib.util.spec_from_file_location(
+        "hacs_restart_driver_test", Path(__file__).with_name("driver.py")
+    )
+    assert driver_spec and driver_spec.loader
+    driver = importlib.util.module_from_spec(driver_spec)
+    driver_spec.loader.exec_module(driver)
+    request = httpx.Request("GET", "http://unused.invalid/api/native_fixture/probe")
+    response = httpx.Response(status, request=request)
+    error = httpx.HTTPStatusError(
+        "fixture response", request=request, response=response
+    )
+    checks = SimpleNamespace(ready=AsyncMock(side_effect=[error, {"ready": True}]))
+    control = AsyncMock(side_effect=RegistrationObserved())
+    sleep = AsyncMock()
+    monkeypatch.setattr(checks_module.asyncio, "sleep", sleep)
+    if status == 404:
+        with pytest.raises(RegistrationObserved):
+            await driver.after_restart(checks, control)
+        assert checks.ready.await_count == 2
+        sleep.assert_awaited_once()
+    else:
+        with pytest.raises(httpx.HTTPStatusError) as caught:
+            await driver.after_restart(checks, control)
+        assert caught.value is error
+        checks.ready.assert_awaited_once()
+        sleep.assert_not_awaited()
+        control.assert_not_awaited()
 
 
 @pytest.mark.asyncio

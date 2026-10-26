@@ -60,7 +60,9 @@ async def observe(hass: HomeAssistant) -> dict[str, Any]:
 
     entity_id = er.async_get(hass).async_get_entity_id("update", "hacs", REPOSITORY_ID)
     return {
-        "core": importlib.metadata.version("homeassistant"),
+        "core": await hass.async_add_executor_job(
+            importlib.metadata.version, "homeassistant"
+        ),
         "hacs": str(owner.version) if owner else None,
         "owner_class": f"{type(owner).__module__}.{type(owner).__name__}",
         "ready": bool(

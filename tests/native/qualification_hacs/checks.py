@@ -53,6 +53,19 @@ async def wait_probe(
             await asyncio.sleep(0.25)
 
 
+async def wait_native_entry(checks: Any) -> None:
+    """HTTP/auth can return before the test integration registers its view."""
+    async with asyncio.timeout(90):
+        while True:
+            try:
+                await checks.ready()
+                return
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code != 404:
+                    raise
+            await asyncio.sleep(0.5)
+
+
 def unchanged(before: dict[str, Any], after: dict[str, Any]) -> None:
     for key in ("repository", "disk", "network", "install_services"):
         assert after[key] == before[key], (key, before[key], after[key])

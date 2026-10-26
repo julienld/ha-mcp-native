@@ -24,6 +24,7 @@ from checks import (
     Control,
     exercise_hacs_owner,
     hacs_call,
+    wait_native_entry,
     wait_probe,
     ws_cache,
 )
@@ -51,7 +52,7 @@ async def add_tools_entry(checks: Any) -> None:
 
 
 async def after_restart(checks: Any, control: Control) -> dict[str, Any]:
-    await checks.ready()
+    await wait_native_entry(checks)
     restored = await wait_probe(control, lambda p: p["ready"])
     assert restored["repository"]["data"]["installed_version"] == "2.0.0", restored
     assert not restored["repository"]["pending_restart"], restored
