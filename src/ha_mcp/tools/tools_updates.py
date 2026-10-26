@@ -19,7 +19,7 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
-from ..errors import ErrorCode, create_error_response
+from ..errors import ErrorCode, create_error_response, is_service_outcome_unknown
 from ..runtime.update_plans import repair_items, single_update_id, update_targets
 from ..runtime.update_tools import UpdateToolsFacade
 from ..runtime.update_values import (
@@ -48,6 +48,7 @@ from .helpers import (
     raise_tool_error,
     register_tool_methods,
 )
+from .service_outcome import create_service_item_error
 from .tool_hints import write_hints
 
 logger = logging.getLogger(__name__)
@@ -253,20 +254,16 @@ class UpdateTools(UpdateToolsFacade):
                 await self._client.call_service("update", action, data)
                 results.append({"success": True, "entity_id": eid})
                 succeeded += 1
-            except (HomeAssistantConnectionError, HomeAssistantAuthError):
-                # Fatal transport/auth failure — the connection is gone,
-                # so remaining items would fail identically. Propagate to
-                # surface the root cause instead of N per-item errors.
-                raise
+            except (HomeAssistantConnectionError, HomeAssistantAuthError) as e:
+                if not is_service_outcome_unknown(e):
+                    raise
+                results.append(create_service_item_error(e, context={"entity_id": eid}))
+                break
             except Exception as e:  # noqa: BLE001
                 # Batch item failure — collect, don't raise.
-                results.append(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        str(e),
-                        context={"entity_id": eid},
-                    )
-                )
+                results.append(create_service_item_error(e, context={"entity_id": eid}))
+                if is_service_outcome_unknown(e):
+                    break
         return results, succeeded
 
     async def _execute_batch_action(
@@ -290,7 +287,10 @@ class UpdateTools(UpdateToolsFacade):
         )
         results.extend(call_results)
 
-        return update_batch_result(action, requested, results, succeeded)
+        response = update_batch_result(action, requested, results, succeeded)
+        if len(call_results) < len(targets):
+            response["not_attempted"] = targets[len(call_results) :]
+        return response
 
     async def _known_repair_keys(self) -> set[tuple[str, str]] | None:
         """(domain, issue_id) of every listed Repairs issue, ignored ones included.

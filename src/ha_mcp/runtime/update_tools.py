@@ -103,11 +103,12 @@ class UpdateToolsFacade:
         issue_id to 'ignore_repair' / 'unignore_repair'. In Read Only Mode the
         read actions ('list', 'get') stay available; write actions are blocked.
 
-        'install' blocks until each update finishes (minutes). One that outlasts
-        the request timeout ends the call with a connection timeout while it
-        keeps running, and a Core update restarts Home Assistant; neither means
-        failure, but later batch targets were not started. Confirm per entity
-        with action='get'; finished updates drop out of 'list'. When hosted in
+        'install' blocks until each update finishes (minutes). Any unknown
+        service outcome stops the batch, preserving earlier results and the
+        current item's diagnostic; later targets are marked not_attempted.
+        An update may still be running, or Core restarting. Check the affected
+        entity with action='get' before retrying. Finished updates drop out of
+        'list'. When hosted in
         Home Assistant, Core/OS installs are scheduled before its process stops;
         that reply cannot confirm completion and later batch targets are not
         started. 'list' may include ha_mcp_update {current, latest,

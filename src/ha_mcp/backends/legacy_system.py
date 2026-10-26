@@ -5,9 +5,9 @@ from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.errors import ErrorCode, create_error_response
+from ha_mcp.runtime.service_outcome import project_service_reload_results
 from ha_mcp.runtime.system_values import (
     RELOAD_TARGETS,
-    reload_all_result,
     reload_entry_result,
     reload_target_result,
 )
@@ -85,25 +85,7 @@ class LegacySystemActions:
             return_exceptions=True,
         )
 
-        results = []
-        errors = []
-        for (reload_target, _), outcome in zip(reloadable, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                # A non-Exception BaseException (CancelledError,
-                # KeyboardInterrupt, SystemExit) must still unwind the
-                # request, exactly as the prior sequential
-                # ``except Exception`` let it propagate — never demote
-                # it to a per-target warning.
-                if not isinstance(outcome, Exception):
-                    raise outcome
-                # Some services might not be available in all installations
-                error_msg = str(outcome)
-                if "not found" not in error_msg.lower():
-                    errors.append(f"{reload_target}: {error_msg}")
-            else:
-                results.append(reload_target)
-
-        return reload_all_result(results, errors)
+        return project_service_reload_results(reloadable, outcomes)
 
     async def _reload_config_entry(self, entry_id: str) -> dict[str, Any]:
         """Reload a single config entry via the REST config-entries endpoint.

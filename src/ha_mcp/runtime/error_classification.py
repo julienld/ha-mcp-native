@@ -20,6 +20,11 @@ from ha_mcp.errors import (
     create_validation_error,
 )
 
+from .service_outcome import (
+    create_service_outcome_unknown_error,
+    is_service_outcome_unknown,
+)
+
 
 def _classify_api_status(
     error: HomeAssistantAPIError,
@@ -255,6 +260,18 @@ def classified_error(
     *,
     suggestions: list[str] | None = None,
 ) -> dict[str, Any]:
+    if is_service_outcome_unknown(error):
+        response = create_service_outcome_unknown_error(error, context=context)
+        if suggestions:
+            diagnostic = response["error"]
+            existing = diagnostic.get("suggestions") or [diagnostic["suggestion"]]
+            guidance = [
+                *existing,
+                *(item for item in suggestions if item not in existing),
+            ]
+            diagnostic["suggestion"] = guidance[0]
+            diagnostic["suggestions"] = guidance
+        return response
     error_response = _classify_exception(error, str(error).lower(), str(error), context)
     if (
         suggestions

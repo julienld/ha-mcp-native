@@ -5,7 +5,7 @@ This module provides service execution and WebSocket-enabled operation monitorin
 """
 
 import logging
-from typing import Any, NoReturn, cast
+from typing import Any, NamedTuple, NoReturn, cast
 
 import httpx
 from pydantic import SkipValidation
@@ -26,6 +26,7 @@ from ..client.rest_client import (
 from ..client.websocket_client import get_websocket_client
 from ..errors import (
     ErrorCode,
+    HomeAssistantCommandOutcomeUnknown,
     create_connection_error,
     create_entity_not_found_error,
     create_entity_unavailable_after_dispatch_error,
@@ -76,6 +77,7 @@ from .helpers import (
     raise_tool_error,
     register_tool_methods,
 )
+from .service_outcome import create_service_outcome_unknown_error
 from .tool_hints import read_only_hints, write_hints
 from .util_helpers import (
     _SERVICE_TO_STATE,
@@ -157,17 +159,10 @@ async def _reject_operations_group_member_conflicts(
     _reject_group_member_conflicts(entity_ids, states)
 
 
-class _AmbiguousDispatch:
-    """Sentinel type for a post-send-ambiguous component write (see below)."""
+class _AmbiguousDispatch(NamedTuple):
+    """An uncertain component write, retaining diagnostics without allowing replay."""
 
-
-# Returned by ``_call_service_via_component`` when the component frame was SENT but
-# its response/confirmation never arrived (a response-wait timeout or a post-send
-# transport drop): the write MAY have landed, so the caller reports it as ``partial``
-# and MUST NOT re-POST via the legacy path (D9 at-most-once — an ambiguous post-send
-# outcome is never retried). Distinct from ``None`` (the component provably never
-# dispatched → a safe legacy first fire).
-_COMPONENT_DISPATCH_AMBIGUOUS = _AmbiguousDispatch()
+    error: Exception
 
 
 def _parse_json_dict_param(data: Any, *, type_error_message: str) -> Any:
@@ -401,21 +396,23 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
         entity_id: str | None,
         data: str | dict[str, Any] | None,
         return_response: bool = False,
-    ) -> dict[str, Any]:
-        """Handle a HomeAssistantConnectionError raised while calling a service.
-
-        Timeouts are treated as partial success (the service was dispatched but
-        Home Assistant did not respond in time) and return a partial-success
-        response. Non-timeout connection errors raise a structured ToolError.
-        """
-        # Check if this is a timeout - for service calls, timeouts typically
-        # mean the service was dispatched but HA didn't respond in time.
-        # The operation is likely still running (e.g., update.install, long automations).
-        if isinstance(error.__cause__, httpx.TimeoutException):
-            return self._build_timeout_response(
-                domain, service, entity_id, data, return_response=return_response
+    ) -> NoReturn:
+        """Keep an unanswered service write distinct from an establishment failure."""
+        cause = error.__cause__
+        if isinstance(error, HomeAssistantCommandOutcomeUnknown) or (
+            isinstance(cause, httpx.TimeoutException)
+            and not isinstance(cause, (httpx.ConnectTimeout, httpx.PoolTimeout))
+        ):
+            raise_tool_error(
+                create_service_outcome_unknown_error(
+                    error,
+                    context={
+                        "domain": domain,
+                        "service": service,
+                        "entity_id": entity_id,
+                    },
+                )
             )
-        # Non-timeout connection errors are real failures
         exception_to_structured_error(
             error,
             context={
@@ -425,7 +422,6 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
             },
             suggestions=_build_service_suggestions(domain, service, entity_id),
         )
-        return None  # unreachable: exception_to_structured_error always raises
 
     @staticmethod
     def _raise_unexpected_call_service_error(
@@ -536,17 +532,23 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
         timeout: float,
         return_response: bool,
     ) -> dict[str, Any] | _AmbiguousDispatch | None:
-        """Send once through the component and distinguish not-sent from unknown.
+        """Route one service call through the component ``call_service`` capability.
 
-        None permits the first legacy dispatch only after a capability miss,
-        connection establishment failure, explicit CommandNotSent, or the
-        specific unknown_command response. A generic command error is ambiguous:
-        a Core handler can mutate before raising. Timeouts, socket failures and
-        malformed success frames are likewise never replayed.
+        A result envelope confirms dispatch, even if state confirmation is partial.
+        ``None`` permits a first legacy call only when the capability is absent,
+        acquisition fails, the readiness guard raises CommandNotSent, or the router
+        answers unknown_command. Every other post-send error or malformed result is
+        an _AmbiguousDispatch: the service may have mutated before raising. Even a
+        genuine Core error code does not establish that the service never ran.
 
-        The native backend calls the same prep/do owner directly and has no
-        transport fallback. Both paths retain the resolved-domain guard and
-        expected-state confirmation hint.
+        The caller raises an outcome-unknown ToolError for ambiguity, never success
+        or a second dispatch. Losing the response does not cancel HA's background
+        handler. An explicit dispatched result with incomplete confirmation retains
+        its existing partial-success projection.
+
+        The server's reserved-domain guard applies before either route, and the
+        component independently guards its own dispatch. Verb resolution stays
+        server-side; the component executes the exact service it receives.
         """
         caps = await get_component_caps(self._client)
         if not component_supports(caps, "call_service"):
@@ -567,13 +569,6 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
                 exc,
             )
             return None
-        # ``send_command`` transmits the frame INSIDE itself, AFTER its readiness guard
-        # and the actual socket write — so exception TYPE marks the send boundary:
-        # ``HomeAssistantCommandNotSent`` is raised ONLY at the readiness guard (the one
-        # provably-never-sent site → safe legacy first fire); only unknown_command proves that no owner ran; a response-wait TIMEOUT, a send() that raised (bytes may
-        # already be on the socket), or a post-send transport drop (a mid-await socket
-        # close raises plain ``HomeAssistantConnectionError``) is POST-SEND/AMBIGUOUS →
-        # partial, never retried.
         # The confirmation HINT: the expected primary state after ``service`` (or
         # ``None`` for a service with no known primary state). The component confirms
         # only on REACHING this state — skipping a multi-phase service's intermediate
@@ -604,38 +599,18 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
             )
             return None
         except HomeAssistantCommandError as exc:
-            # Only unknown_command proves that this owner never ran. Core can
-            # mutate and then raise any other error: do not replay that write.
+            # Only the router's unknown_command proves the handler never ran.
             if is_unknown_command(exc):
                 invalidate_caps(self._client)
                 return None
-            logger.warning(
-                "%s command error; reporting unknown outcome without retry: %r",
-                WS_CALL_SERVICE,
-                exc,
-            )
-            return _COMPONENT_DISPATCH_AMBIGUOUS
+            return _AmbiguousDispatch(exc)
         except Exception as exc:  # noqa: BLE001
-            # HomeAssistantCommandTimeout (response-wait expired — the frame WAS sent)
-            # or any post-send transport drop (e.g. a pooled-WS drop after send). The
-            # component may still be lawfully mid-write, so this is ambiguous-
-            # dispatched: report partial, NEVER re-POST (D9 at-most-once).
-            logger.warning(
-                "%s post-send timeout/drop; reporting partial (not retried): %r",
-                WS_CALL_SERVICE,
-                exc,
-            )
-            return _COMPONENT_DISPATCH_AMBIGUOUS
+            # A send failure or lost reply cannot establish whether HA acted.
+            return _AmbiguousDispatch(exc)
         result = raw.get("result")
-        # A SUCCESS result frame is produced ONLY after the prep ran to completion (the
-        # single async_call fired), so a malformed/unusable success envelope means the
-        # write already HAPPENED. Report it AMBIGUOUS (partial, never re-POSTed) — a
-        # ``None`` here would route to the legacy REST path and DOUBLE-APPLY. The
-        # happy-path envelope is a dict whose ``dispatched`` is True: presence of the
-        # key is not enough, since a received post-dispatch envelope whose
-        # ``dispatched`` isn't True is one we cannot trust to re-fire.
+        # An unusable acknowledgement proves neither acceptance nor non-execution.
         if not isinstance(result, dict) or result.get("dispatched") is not True:
-            return _COMPONENT_DISPATCH_AMBIGUOUS
+            return _AmbiguousDispatch(ValueError("Malformed component service result"))
         return result
 
     async def _maybe_component_call_service(
@@ -693,8 +668,15 @@ class ServiceTools(LegacyBackendTools, SharedServiceCallTools):
             return_response=return_response,
         )
         if isinstance(component_result, _AmbiguousDispatch):
-            return self._build_timeout_response(
-                domain, service, entity_id, data, return_response=return_response
+            raise_tool_error(
+                create_service_outcome_unknown_error(
+                    component_result.error,
+                    context={
+                        "domain": domain,
+                        "service": service,
+                        "entity_id": entity_id,
+                    },
+                )
             )
         if component_result is None:
             return None

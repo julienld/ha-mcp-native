@@ -204,21 +204,12 @@ class ThemesTools:
             except HomeAssistantAPIError as e:
                 # HA's REST layer collapses the service's validation detail
                 # ("Theme X not found") into a bare 400 - name the theme here.
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.SERVICE_CALL_FAILED,
-                        f"Failed to set theme '{theme_name}': {e}. "
-                        "The theme may not be installed.",
-                        context={
-                            "action": action,
-                            "theme_name": theme_name,
-                            "mode": mode,
-                        },
-                        suggestions=[
-                            "Call ha_manage_theme(action='list') to see "
-                            "installed themes",
-                        ],
-                    )
+                exception_to_structured_error(
+                    e,
+                    context={"action": action, "theme_name": theme_name, "mode": mode},
+                    suggestions=[
+                        "Call ha_manage_theme(action='list') to see installed themes"
+                    ],
                 )
 
             # Re-read the defaults so the agent sees the effective state.

@@ -18,49 +18,6 @@ from .projection import compact_service_result, project_entity_record
 
 class ActionProjection:
     @staticmethod
-    def _build_timeout_response(
-        domain: str,
-        service: str,
-        entity_id: str | None,
-        data: str | dict[str, Any] | None,
-        *,
-        return_response: bool = False,
-    ) -> dict[str, Any]:
-        """Build a partial-success response for service call timeouts.
-
-        When ``return_response`` was requested the key is emitted here too, so a
-        caller never has to branch on whether the key exists: every successful
-        reply carries it. It is necessarily null — the reply never arrived — and
-        that null proves nothing about what the service returned, so it comes
-        with the same ambiguity warning the component's unconfirmed path uses.
-        """
-        response: dict[str, Any] = {
-            "success": True,
-            "partial": True,
-            "domain": domain,
-            "service": service,
-            "entity_id": entity_id,
-            "parameters": data,
-            "message": (
-                f"Service {domain}.{service} was dispatched but Home Assistant "
-                f"did not respond within the timeout period. The operation is likely "
-                f"still running in the background."
-            ),
-            "warnings": [
-                "Response timed out. This is normal for long-running services "
-                f"like updates or firmware installs. Use ha_get_state('{entity_id}') "
-                "to check the current status."
-                if entity_id
-                else "Response timed out. This is normal for long-running services. "
-                "The service was dispatched and may still be executing."
-            ],
-        }
-        if return_response:
-            response["service_response"] = None
-            response["warnings"].append(_COMPONENT_RESPONSE_UNCONFIRMED_WARNING)
-        return response
-
-    @staticmethod
     def _split_return_response_envelope(
         result: Any, *, return_response: bool
     ) -> tuple[Any, Any, bool, list[str]]:
@@ -284,9 +241,9 @@ class ActionProjection:
         transition ``new_state`` records are the same ``State.as_dict()`` shape the
         legacy REST POST returns, so they feed the SAME ``_project_service_result``
         projection; the confirmed target's ``new_state.state`` becomes
-        ``verified_state``; and the component's ``partial`` flag (dispatched but the
-        confirming event lapsed) drives the same partial-success shape the legacy
-        timeout path produces (``_build_timeout_response``).
+        ``verified_state``. A ``partial`` confirmation means the acknowledged
+        service call completed but its confirming state event was not observed;
+        it remains distinct from a missing service acknowledgement.
         """
         transitions = component_result.get("transitions") or []
         # A nonexistent target's pre-dispatch read excludes it from the wait

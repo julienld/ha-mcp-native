@@ -1,9 +1,9 @@
 """Shared ``sys.modules`` stubs for the in-process embedded-server unit tests.
 
-Home Assistant and ``aiohttp`` are not installed in the unit-test environment,
-so the component modules under test — ``embedded_server``, ``mcp_webhook``, and
-``embedded_setup`` — cannot import their top-level ``homeassistant.*`` / aiohttp
-dependencies. This module installs lightweight fakes for exactly that surface,
+Home Assistant is not installed in the unit-test environment. Component tests
+also use recording aiohttp responses; the genuine dev dependency is exercised
+in isolated HTTP probes and the upstream-contract tests. This module installs
+lightweight fakes for that component import and response surface,
 installing ``sys.modules`` fakes for the auth / requirements / http /
 webhook / issue-registry / aiohttp modules the embedded server and webhook
 ingress need.
@@ -646,8 +646,16 @@ def install() -> None:
     )
 
     aiohttp_mod = _make_fake_aiohttp()
+    helpers = ModuleType("aiohttp.helpers")
+    helpers.must_be_empty_body = lambda method, status: (
+        method.upper() == "HEAD"
+        or 100 <= status < 200
+        or status in {204, 304}
+        or (method.upper() == "CONNECT" and 200 <= status < 300)
+    )
     sys.modules["aiohttp"] = aiohttp_mod
     sys.modules["aiohttp.web"] = aiohttp_mod.web
+    sys.modules["aiohttp.helpers"] = helpers
 
     _INSTALLED = True
 

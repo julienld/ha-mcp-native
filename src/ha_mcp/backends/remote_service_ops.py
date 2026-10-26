@@ -28,12 +28,15 @@ async def execute_service_operation(
             return await tools._call_ws_command(**arguments)
         if operation == "services.call_observe":
             return await _call_and_observe(tools, arguments)
+    except ToolFailure:
+        raise
     except ToolError as exc:
         payload = json.loads(str(exc))
         raise ToolFailure(
             payload["error"]["code"], payload["error"]["message"], data=payload
         ) from exc
     except Exception as exc:
+        from ha_mcp.errors import is_service_outcome_unknown
         from ha_mcp.tools.helpers import exception_to_structured_error
 
         payload = exception_to_structured_error(
@@ -46,7 +49,10 @@ async def execute_service_operation(
             raise_error=False,
         )
         raise ToolFailure(
-            payload["error"]["code"], payload["error"]["message"], data=payload
+            payload["error"]["code"],
+            payload["error"]["message"],
+            data=payload,
+            status="outcome_unknown" if is_service_outcome_unknown(exc) else None,
         ) from exc
     raise UnsupportedOperation(operation)
 
@@ -70,7 +76,23 @@ async def _call_and_observe(tools: Any, arguments: dict[str, Any]) -> dict[str, 
             }
         )
         if isinstance(component, _AmbiguousDispatch):
-            return {"unknown_outcome": True}
+            from ha_mcp.runtime.service_outcome import (
+                create_service_outcome_unknown_error,
+            )
+
+            payload = create_service_outcome_unknown_error(
+                component.error,
+                context={
+                    "domain": arguments["domain"],
+                    "service": arguments["service"],
+                },
+            )
+            raise ToolFailure(
+                payload["error"]["code"],
+                payload["error"]["message"],
+                data=payload,
+                status="outcome_unknown",
+            )
         if component is not None:
             result: dict[str, Any] = component
             return result
@@ -79,27 +101,18 @@ async def _call_and_observe(tools: Any, arguments: dict[str, Any]) -> dict[str, 
 
 async def _call_legacy(tools: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     """One first REST fire after a proven component miss; no retry after dispatch."""
-    import httpx
-
-    from ha_mcp.client.rest_client import HomeAssistantConnectionError
-
     entity_id = ",".join(arguments["entity_ids"]) or None
     initial = (
         await tools._validate_entity_before_wait(entity_id)
         if arguments["wait"]
         else None
     )
-    try:
-        raw = await tools._client.call_service(
-            arguments["domain"],
-            arguments["service"],
-            arguments["service_data"],
-            return_response=arguments["return_response"],
-        )
-    except HomeAssistantConnectionError as exc:
-        if isinstance(exc.__cause__, httpx.TimeoutException):
-            return {"unknown_outcome": True}
-        raise
+    raw = await tools._client.call_service(
+        arguments["domain"],
+        arguments["service"],
+        arguments["service_data"],
+        return_response=arguments["return_response"],
+    )
     changed, response, has_response, warnings = tools._split_return_response_envelope(
         raw, return_response=arguments["return_response"]
     )

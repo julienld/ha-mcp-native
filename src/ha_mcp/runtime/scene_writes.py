@@ -23,6 +23,7 @@ from .config_reload import config_reload_waiter
 from .config_write_context import merge_validation_meta
 from .errors import raise_classified, raise_failure
 from .scene_config import SceneConfigTools
+from .service_outcome import record_service_failure
 from .validation import validate_identifier_not_empty
 
 logger = logging.getLogger(__name__)
@@ -363,9 +364,8 @@ class SceneWriteTools(SceneConfigTools):
             logger.warning(
                 "Scene %s not activated after config write: %s", entity_id, exc
             )
-            response["activated"] = False
-            response.setdefault("warnings", []).append(
-                f"Scene config was written, but the scene could not be activated: {exc}"
+            record_service_failure(
+                response, exc, field="activated", entity_id=entity_id
             )
             return
         response["activated"] = True

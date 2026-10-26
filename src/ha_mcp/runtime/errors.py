@@ -2,16 +2,17 @@
 
 from typing import Any, NoReturn
 
-from ha_mcp.errors import ErrorCode
+from ha_mcp.errors import ErrorCode, is_service_outcome_unknown
 from ha_mcp.tool_api import ToolFailure
 
 
-def raise_failure(payload: dict[str, Any]) -> NoReturn:
+def raise_failure(payload: dict[str, Any], *, status: str | None = None) -> NoReturn:
     error = payload.get("error", {})
     raise ToolFailure(
         error.get("code", "TOOL_ERROR") if isinstance(error, dict) else "TOOL_ERROR",
         error.get("message", "Tool failed") if isinstance(error, dict) else str(error),
         data=payload,
+        status=status,
     )
 
 
@@ -26,7 +27,10 @@ def raise_classified(
 
     if isinstance(error, ToolFailure):
         raise error
-    raise_failure(classified_error(error, context, suggestions=suggestions))
+    raise_failure(
+        classified_error(error, context, suggestions=suggestions),
+        status="outcome_unknown" if is_service_outcome_unknown(error) else None,
+    )
 
 
 def ws_failure_code(result: dict[str, Any]) -> ErrorCode:

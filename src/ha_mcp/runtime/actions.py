@@ -15,6 +15,7 @@ from .action_constants import (
 )
 from .action_params import ActionParameters
 from .action_projection import ActionProjection
+from .service_outcome import create_service_outcome_unknown_error
 from .websocket_policy import validate_ws_request
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,9 +96,16 @@ class ServiceCallTools(ActionParameters, ActionProjection, BackendTools):
             self.context,
         )
         if result.get("unknown_outcome"):
-            return self._build_timeout_response(
-                domain, service, entity_id, data, return_response=return_response
+            failure = ToolFailure(
+                "SERVICE_CALL_FAILED",
+                "The service write outcome is unknown; it may have taken effect.",
+                status="outcome_unknown",
             )
+            failure.data = create_service_outcome_unknown_error(
+                failure,
+                context={"domain": domain, "service": service, "entity_id": entity_id},
+            )
+            raise failure
         return self._build_component_call_response(
             result,
             domain=domain,

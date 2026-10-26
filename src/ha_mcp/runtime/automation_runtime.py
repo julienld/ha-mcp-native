@@ -14,6 +14,7 @@ from ha_mcp.tool_api import ToolFailure
 
 from .automation_config import AutomationConfigMethods
 from .errors import raise_classified, raise_failure
+from .service_outcome import record_service_failure
 
 logger = logging.getLogger(__name__)
 _RUNTIME_ERRORS = (
@@ -275,10 +276,8 @@ class AutomationRuntimeTools(AutomationConfigMethods):
                 exc,
             )
             response["enabled_requested"] = enabled
-            response["enabled_applied"] = False
-            response.setdefault("warnings", []).append(
-                "Automation config was written, but the requested enabled state "
-                f"could not be applied: {exc}"
+            record_service_failure(
+                response, exc, field="enabled_applied", entity_id=entity_id
             )
             return
         response["enabled"] = enabled
@@ -313,9 +312,8 @@ class AutomationRuntimeTools(AutomationConfigMethods):
             logger.warning(
                 "Actions not run for %s after config write: %s", entity_id, exc
             )
-            response["actions_triggered"] = False
-            response.setdefault("warnings", []).append(
-                f"The requested change was applied, but the actions could not be run: {exc}"
+            record_service_failure(
+                response, exc, field="actions_triggered", entity_id=entity_id
             )
             return
         response["actions_triggered"] = True

@@ -1,19 +1,21 @@
-"""Keep WebSocket service failures distinct from HTTP responses."""
+"""Compatibility exports for the shared service-attempt error types."""
 
-from .rest_client import HomeAssistantAPIError
+from ..errors import (
+    HomeAssistantCommandOutcomeUnknown,
+    HomeAssistantServiceAPIOutcomeUnknown,
+    HomeAssistantServiceAuthOutcomeUnknown,
+    HomeAssistantServiceConnectionOutcomeUnknown,
+    HomeAssistantWebSocketServiceAuthError,
+    HomeAssistantWebSocketServiceError,
+    is_service_outcome_unknown,
+)
 
-
-class HomeAssistantWebSocketServiceError(HomeAssistantAPIError):
-    """A service-adapter failure with an optional authoritative Core error code.
-
-    The inherited 400 preserves existing service-error handling. It is synthetic,
-    so write-outcome consumers must use the native code instead of that status.
-    """
-
-    def __init__(self, message: str, *, code: object) -> None:
-        super().__init__(
-            f"API error: 400 - {message}",
-            status_code=400,
-            response_data={"message": message},
-        )
-        self.code = code if isinstance(code, str) else None
+__all__ = [
+    "HomeAssistantCommandOutcomeUnknown",
+    "HomeAssistantServiceConnectionOutcomeUnknown",
+    "HomeAssistantServiceAPIOutcomeUnknown",
+    "HomeAssistantServiceAuthOutcomeUnknown",
+    "HomeAssistantWebSocketServiceAuthError",
+    "HomeAssistantWebSocketServiceError",
+    "is_service_outcome_unknown",
+]
