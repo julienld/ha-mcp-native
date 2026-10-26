@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .core_registry import _call_no_arg, _iter_states, _substrate_unavailable
+from .core_registry import _call_no_arg, _substrate_unavailable
 from .core_state import service_names as _overview_services
 
 # All ws_* modules log through the websocket_api logger, so one logger
@@ -167,11 +167,12 @@ def reference_data(hass: HomeAssistant, include_states: bool = True) -> dict[str
 
     A drifted service registry (``hass.services.async_services()`` raised / renamed
     → non-``Mapping``) or state machine (``hass.states.async_all`` absent / renamed)
-    RAISES ``HomeAssistantError`` (→ server command-error fallback to the legacy
-    REST ``get_services()`` / ``get_states()`` pair) rather than returning empty
-    catalogs — which would make EVERY reference emit a false "not found" warning,
-    where the legacy failure mode is skip-validation. A genuinely-empty (but
-    present) substrate still returns its empty result.
+    raises ``HomeAssistantError``; state enumeration errors propagate unchanged.
+    Both trigger the server command-error fallback to the legacy REST
+    ``get_services()`` / ``get_states()`` pair rather than returning empty catalogs
+    — which would make EVERY reference emit a false "not found" warning, where the
+    legacy failure mode is skip-validation. A genuinely-empty (but present)
+    substrate still returns its empty result.
     """
     if not isinstance(
         _call_no_arg(getattr(hass, "services", None), "async_services"), Mapping
@@ -180,9 +181,10 @@ def reference_data(hass: HomeAssistant, include_states: bool = True) -> dict[str
     entity_ids: list[str] = []
     if include_states:
         states_obj = getattr(hass, "states", None)
-        if not callable(getattr(states_obj, "async_all", None)):
+        get_states = getattr(states_obj, "async_all", None)
+        if not callable(get_states):
             raise _substrate_unavailable("state machine")
-        for state in _iter_states(hass):
+        for state in get_states():
             entity_id = getattr(state, "entity_id", None)
             if entity_id:
                 entity_ids.append(entity_id)
