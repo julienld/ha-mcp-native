@@ -16,6 +16,13 @@ from .test_native_engine_backend import native as native
 
 
 class _CoreGroup:
+    """Boolean-only cache model, not live Core or a full group implementation.
+
+    Core 2026.10.0 and 2026.10.4 group/entity.py caches the aggregate; writing
+    the state does not recompute it. group/__init__.py's service changes mode
+    after member updates and publishes without invalidating that cache.
+    """
+
     def __init__(
         self, world, object_id, *, name=None, members=(), icon=None, mode=False
     ):
@@ -28,6 +35,7 @@ class _CoreGroup:
         self.created_by_service = True
         self.extra_state_attributes = {"order": 0}
         self.context = None
+        self._state = "unknown"
 
     def async_set_context(self, context):
         self.context = context
@@ -35,6 +43,8 @@ class _CoreGroup:
     def async_update_tracked_entity_ids(self, members):
         self.tracking = tuple(dict.fromkeys(members))
         self._changed("entities")
+        self.async_update_group_state()
+        self.async_write_ha_state()
 
     def set_name(self, value):
         self.name = value
@@ -45,17 +55,20 @@ class _CoreGroup:
         self._changed("icon")
 
     def async_update_group_state(self):
-        self.world.calls.append("aggregate")
+        values = [self.world.member_states[member] for member in self.tracking]
+        self._state = ("on" if self.mode(values) else "off") if values else "unknown"
+        self._changed("aggregate")
 
     def async_write_ha_state(self):
         self.world.states[self.entity_id] = {
             "entity_id": self.entity_id,
-            "state": "on",
+            "state": self._state,
             "attributes": {
                 "friendly_name": self.name,
                 "entity_id": list(self.tracking),
                 "icon": self.icon,
             },
+            "context": {"user_id": self.context.user_id if self.context else None},
         }
         self._changed("publish")
 
@@ -81,6 +94,7 @@ class _CoreComponent:
         for owner in entities:
             world.rows[owner.entity_id] = owner
             world.initial_contexts.append(owner.context)
+            owner.async_update_group_state()
             owner.async_write_ha_state()
         if world.fail_create:
             if isinstance(world.fail_create, BaseException):
@@ -116,9 +130,11 @@ async def _call_group_service(
     else:
         owner.async_set_context(context)
         if "entities" in payload:
-            owner.tracking = tuple(payload["entities"])
+            owner.async_update_tracked_entity_ids(payload["entities"])
         if "add_entities" in payload:
-            owner.tracking = tuple(set(owner.tracking) | set(payload["add_entities"]))
+            owner.async_update_tracked_entity_ids(
+                set(owner.tracking) | set(payload["add_entities"])
+            )
         for key in ("name", "icon"):
             if key in payload:
                 setattr(owner, key, payload[key])
@@ -136,6 +152,7 @@ def groups(native, monkeypatch):
     world = SimpleNamespace(
         rows={},
         states={},
+        member_states={"light.a": True, "light.b": False},
         calls=[],
         service_calls=[],
         initial_contexts=[],
@@ -239,10 +256,99 @@ async def test_native_compound_update_uses_one_service_and_reads_back(groups):
     assert not result.is_error and owner.name == "Updated"
     assert set(owner.tracking) == {"light.a", "light.b"} and owner.mode is all
     assert owner.icon == "mdi:lightbulb-group"
-    assert world.calls == ["publish"]
+    assert world.states[owner.entity_id]["state"] == "off"
     assert (
         len(world.service_calls) == 1 and world.service_calls[0][1].user_id == "actor"
     )
+
+
+@pytest.mark.parametrize("all_on, expected", [(True, "off"), (False, "on")])
+async def test_mode_update_recomputes_cached_state_without_a_member_event(
+    groups: Any, all_on: bool, expected: str
+) -> None:
+    world, manager, engine, Group = groups
+    owner = Group("native", members=["light.a", "light.b"], mode=not all_on)
+    world.rows[owner.entity_id] = owner
+    owner.async_update_group_state()
+    owner.async_write_ha_state()
+    assert world.states[owner.entity_id]["state"] != expected
+
+    async def authorize(actor: CallContext) -> None:
+        if world.service_calls:
+            await asyncio.sleep(0)
+            owner.async_set_context(SimpleNamespace(user_id="member-event"))
+
+    manager.backend.authorize.side_effect = authorize
+    result = await engine.call(
+        "ha_config_set_group",
+        {"object_id": "native", "all_on": all_on, "wait": False},
+        CallContext("actor"),
+    )
+
+    assert not result.is_error, result.data
+    assert (owner.mode is all) is all_on
+    assert world.states[owner.entity_id]["state"] == expected
+    assert world.states[owner.entity_id]["context"]["user_id"] == "actor"
+    assert len(world.service_calls) == 1
+
+
+@pytest.mark.parametrize("change", ["owner", "component", "value", "actor", "policy"])
+async def test_refresh_rechecks_identity_values_and_admission_after_authorization_wait(
+    groups: Any, change: str
+) -> None:
+    world, manager, engine, Group = groups
+    owner = Group("native", members=["light.a", "light.b"])
+    world.rows[owner.entity_id] = owner
+    replacement = Group("native", name="External")
+
+    async def authorize(actor: CallContext) -> None:
+        if not world.service_calls:
+            return
+        await asyncio.sleep(0)
+        if change == "owner":
+            world.rows[owner.entity_id] = replacement
+        elif change == "component":
+            manager.hass.data["native-group-component"] = _CoreComponent(world)
+        elif change == "value":
+            owner.name = "External"
+        elif change == "actor":
+            raise PermissionError("Actor revoked after Core accepted the write")
+        else:
+            engine.read_only = True
+
+    manager.backend.authorize.side_effect = authorize
+    result = await engine.call(
+        "ha_config_set_group",
+        {"object_id": "native", "all_on": True, "wait": False},
+        CallContext("actor"),
+    )
+
+    assert result.is_error and result.status == "outcome_unknown", result.data
+    assert len(world.service_calls) == 1
+    assert "aggregate" not in world.calls
+    assert replacement.name == "External"
+
+
+@pytest.mark.parametrize("failure", [OSError, asyncio.CancelledError])
+async def test_failed_refresh_is_unknown_without_replaying_the_service(
+    groups: Any, failure: type[BaseException]
+) -> None:
+    world, _, engine, Group = groups
+    world.rows["group.native"] = Group("native", members=["light.a", "light.b"])
+
+    def fail_refresh(owner: Any, field: str) -> None:
+        if field == "aggregate":
+            raise failure("Core refresh interrupted after changing cached state")
+
+    world.callback = fail_refresh
+    result = await engine.call(
+        "ha_config_set_group",
+        {"object_id": "native", "all_on": True, "wait": False},
+        CallContext("actor"),
+    )
+
+    assert result.is_error and result.status == "outcome_unknown", result.data
+    assert len(world.service_calls) == 1 and world.calls.count("aggregate") == 1
 
 
 async def test_service_replacing_owner_reports_unknown_without_changing_replacement(
@@ -362,16 +468,28 @@ async def test_core_cancelled_after_effect_is_returned_as_unknown(groups, action
     assert world.calls.count("create" if action == "set" else "remove") == 1
 
 
-async def test_two_cancellations_keep_the_group_lock_until_core_drains(groups):
+@pytest.mark.parametrize("phase", ["create", "refresh"])
+async def test_two_cancellations_keep_the_group_lock_until_core_drains(
+    groups: Any, phase: str
+) -> None:
     from custom_components.ha_mcp_tools.native_operations.groups import NativeGroups
 
-    world, manager, _, _ = groups
+    world, manager, _, Group = groups
     service = NativeGroups(
         manager.hass, CallContext("actor"), authorize=manager.backend.authorize
     )
-    world.block_create = True
+    world.block_create = phase == "create"
+    if phase == "refresh":
+        world.rows["group.native"] = Group("native", members=["light.a", "light.b"])
+
+        async def hold_refresh(actor: CallContext) -> None:
+            if world.service_calls:
+                world.create_started.set()
+                await world.create_release.wait()
+
+        manager.backend.authorize.side_effect = hold_refresh
     first = asyncio.create_task(
-        service.set({"object_id": "native", "entities": ["light.a"]}, wait=False)
+        service.set({"object_id": "native", "all": True}, wait=False)
     )
     await world.create_started.wait()
     first.cancel()
@@ -382,15 +500,14 @@ async def test_two_cancellations_keep_the_group_lock_until_core_drains(groups):
     )
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    kept_lock = not second.done() and world.calls.count("create") == 1
+    kept_lock = not second.done() and len(world.service_calls) == 1
     world.create_release.set()
     with pytest.raises(asyncio.CancelledError):
         _ = await first
     result = await second
     assert kept_lock and result["success"]
-    assert (
-        world.calls.count("create") == 1 and world.rows["group.native"].name == "second"
-    )
+    assert len(world.service_calls) == 2
+    assert world.rows["group.native"].name == "second"
 
 
 async def test_empty_group_and_existing_replacement_report_actual_action(groups):

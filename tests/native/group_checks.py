@@ -41,6 +41,7 @@ async def exercise_groups(checks: Any, base: str, common: dict[str, Any]) -> Non
     assert changed["success"], changed
     after = await checks.control("group_probe")
     assert after["owner"]["all"] is True and after["state"] == "off", after
+    assert after["user_id"] == after["request_user_id"], after
     listed = await checks.call("ha_config_list_groups")
     row = next(row for row in listed["groups"] if row["object_id"] == target)
     assert row["all"] is True and set(row["entity_ids"]) == set(members), listed
@@ -66,6 +67,7 @@ async def exercise_groups(checks: Any, base: str, common: dict[str, Any]) -> Non
     assert restored["safety_backup"] and restored["runtime_only"], restored
     after = await checks.control("group_probe")
     assert after["owner"] == before["owner"] and after["state"] == "on", after
+    assert after["user_id"] == after["request_user_id"], after
     checks.passed("native_group_UI_diff_restore_safety_and_nullable_icon_clear")
 
     await checks.call("ha_config_remove_group", {"object_id": target})

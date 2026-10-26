@@ -16,12 +16,21 @@ def describe_group(hass: HomeAssistant) -> dict[str, Any]:
         "entity_id": ENTITY_ID,
         "state": state.state if state is not None else None,
         "user_id": state.context.user_id if state is not None else None,
+        "member_states": {
+            entity_id: member.state
+            if (member := hass.states.get(entity_id)) is not None
+            else None
+            for entity_id in owner.tracking
+        }
+        if owner is not None
+        else {},
         "owner": {
             "type": type(owner).__name__,
             "name": owner.name,
             "icon": owner.icon,
             "members": list(owner.tracking),
             "all": owner.mode is all,
+            "state": owner.state,
         }
         if owner is not None
         else None,

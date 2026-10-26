@@ -178,12 +178,21 @@ class NativeGroups:
             if clear_icon:
                 acknowledged["icon"] = before["icon"] if before else None
             records.assert_group_values(actual, acknowledged)
-            if clear_icon and actual.icon is not None:
+            # Core 2026.10.0/2026.10.4 group.set updates mode after membership,
+            # then publishes the cached state without recalculating it:
+            # homeassistant/components/group/__init__.py, groups_service_handler.
+            # Waiting cannot fix a mode-only update without a member event.
+            refresh_mode = owner is not None and "all" in fields
+            if refresh_mode or (clear_icon and actual.icon is not None):
                 await admit_registry_write(self.actor, self.authorize)
                 self._same_owner(component, entity_id, actual)
                 records.assert_group_values(actual, acknowledged)
                 actual.async_set_context(context)
-                actual.set_icon(None)
+                if clear_icon:
+                    actual.set_icon(None)
+                    self._guard_callback(component, entity_id, actual)
+                if refresh_mode:
+                    actual.async_update_group_state()
                 self._guard_callback(component, entity_id, actual)
                 actual.async_write_ha_state()
                 self._guard_callback(component, entity_id, actual)
