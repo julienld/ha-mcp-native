@@ -101,6 +101,7 @@ def fetch_text(url: str) -> str:
 
 
 def make_window(latest: str, versions: dict[str, str]) -> dict[str, Any]:
+    """Python values are source build hints; only the image attests its runtime."""
     selected = select_versions(latest, versions)
     if set(selected) != set(versions):
         raise ValueError(
@@ -120,7 +121,12 @@ def make_window(latest: str, versions: dict[str, str]) -> dict[str, Any]:
         "versions": versions,
         "matrix": {
             "include": [
-                {"core": core, "python": versions[core], "arch": arch, "os": runner}
+                {
+                    "core": core,
+                    "python_source": versions[core],
+                    "arch": arch,
+                    "os": runner,
+                }
                 for core in selected
                 for arch, runner in ARCHITECTURES.items()
             ]
@@ -235,7 +241,7 @@ def main() -> None:
         with Path(output).open("a", encoding="utf-8") as stream:
             stream.write("matrix=" + json.dumps(window["matrix"]) + "\n")
             stream.write(f"latest={window['latest']}\nminimum={window['minimum']}\n")
-            stream.write(f"python={window['versions'][window['latest']]}\n")
+            stream.write(f"python_source={window['versions'][window['latest']]}\n")
     if options.check_floor:
         check_floor(options.repository, window, revision=options.revision)
 

@@ -84,9 +84,11 @@ async def test_assist_resource_read_respects_global_readonly_and_core_loaded_sta
     refused = await call_exposed(
         manager, "ha_config_list_dashboard_resources", {}, context
     )
-    assert refused["isError"] is True and owner.loads == 0
+    assert refused.error is True and refused.data["isError"] is True
+    assert owner.loads == 0
     owner.loaded = True
     allowed = await call_exposed(
         manager, "ha_config_list_dashboard_resources", {}, context
     )
-    assert allowed.get("isError") is not True and owner.loads == 0
+    assert allowed.error is False and allowed.data.get("isError") is not True
+    assert owner.loads == 0

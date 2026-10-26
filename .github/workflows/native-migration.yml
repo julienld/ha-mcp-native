@@ -15,6 +15,12 @@ on:
       - '.github/workflows/core-window.yml'
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Qualification to run (HACS owners never publishes)'
+        required: true
+        type: choice
+        options: [native, hacs_owners]
+        default: native
       published_tag:
         description: 'Existing public native release tag to qualify from its unchanged manifest URL'
         required: false
@@ -24,16 +30,48 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-migration-${{ github.ref }}
+  group: native-migration-${{ github.ref }}-${{ inputs.target || 'native' }}-${{ inputs.published_tag || 'candidate' }}
   cancel-in-progress: true
 
 jobs:
+  select-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      route: ${{ steps.select.outputs.route }}
+    steps:
+      - name: Validate the requested qualification before starting jobs
+        id: select
+        env:
+          TARGET: ${{ inputs.target || 'native' }}
+          PUBLISHED_TAG: ${{ inputs.published_tag }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          target, tag = os.environ["TARGET"], os.environ["PUBLISHED_TAG"]
+          if target not in {"native", "hacs_owners"}:
+              raise SystemExit("Unknown qualification target")
+          if target == "hacs_owners" and tag:
+              raise SystemExit("published_tag is only valid with target=native")
+          route = "published" if tag else target
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"route={route}\n")
+          PY
+
+  hacs_owners:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'hacs_owners' }}
+    uses: ./.github/workflows/native-hacs-owner-qualification.yml
+
   core-window:
-    if: ${{ !inputs.published_tag }}
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
     uses: ./.github/workflows/core-window.yml
 
   unit:
-    if: ${{ !inputs.published_tag }}
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -69,8 +107,8 @@ jobs:
 
   package:
     name: Native HTTP bench (current stable, amd64)
-    needs: core-window
-    if: ${{ !inputs.published_tag }}
+    needs: [select-qualification, core-window]
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -121,7 +159,8 @@ jobs:
         run: docker rm -f ha-mcp-native-migration 2>/dev/null || true
 
   published:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.published_tag != '' }}
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'published' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

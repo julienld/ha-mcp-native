@@ -7,8 +7,8 @@ on:
         value: ${{ jobs.resolve.outputs.matrix }}
       latest:
         value: ${{ jobs.resolve.outputs.latest }}
-      python:
-        value: ${{ jobs.resolve.outputs.python }}
+      python_source:
+        value: ${{ jobs.resolve.outputs.python_source }}
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
     outputs:
       matrix: ${{ steps.window.outputs.matrix }}
       latest: ${{ steps.window.outputs.latest }}
-      python: ${{ steps.window.outputs.python }}
+      python_source: ${{ steps.window.outputs.python_source }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -87,7 +87,7 @@ jobs:
           if-no-files-found: error
 
   contract:
-    name: Installable Core ${{ matrix.core }} / ${{ matrix.arch }} / Python ${{ matrix.python }}
+    name: Installable Core ${{ matrix.core }} / ${{ matrix.arch }} / image Python
     needs: [resolve, package]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -98,7 +98,7 @@ jobs:
       UV_EXCLUDE_NEWER: '7 days'
       HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ matrix.core }}
       EXPECTED_CORE: ${{ matrix.core }}
-      EXPECTED_PYTHON: ${{ matrix.python }}
+      PYTHON_SOURCE_HINT: ${{ matrix.python_source }}
       EXPECTED_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,24 +108,26 @@ jobs:
         with:
           name: core-window-candidate
           path: dist/native
-      - name: Verify the actual image Core, Python and architecture
-        run: |
-          docker run --rm -e EXPECTED_CORE -e EXPECTED_PYTHON -e EXPECTED_ARCH --entrypoint python "$HA_IMAGE_GHCR" -c '
-          import importlib.metadata, os, platform
-          actual = {"core": importlib.metadata.version("homeassistant"), "python": platform.python_version(), "arch": {"x86_64": "amd64", "aarch64": "aarch64"}.get(platform.machine(), platform.machine())}
-          print(actual)
-          assert actual == {key: os.environ["EXPECTED_" + key.upper()] for key in actual}, actual
-          '
-      - name: Qualify Core-managed installation and native plus legacy runtime contracts
+      - name: Resolve the immutable Core image and preserve its receipt
+        id: image
         run: |
           mkdir -p tests/native/out
-          docker run --rm -e UV_EXCLUDE_NEWER -v "$PWD:/work" -w /work --entrypoint python "$HA_IMAGE_GHCR" -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY"
+          docker pull "$HA_IMAGE_GHCR"
+          image_id=$(docker image inspect "$HA_IMAGE_GHCR" --format '{{.Id}}')
+          docker image inspect "$image_id" > tests/native/out/image-inspect.json
+          echo "id=$image_id" >> "$GITHUB_OUTPUT"
+      - name: Qualify Core-managed installation and native plus legacy runtime contracts
+        env:
+          IMAGE_ID: ${{ steps.image.outputs.id }}
+        run: |
+          docker run --rm -e UV_EXCLUDE_NEWER -v "$PWD:/work" -w /work --entrypoint python "$IMAGE_ID" -m tests.native.minimal_qualification --assets dist/native --work-directory /tmp/native-minimal --output tests/native/out/minimal-install.json --repository "$GITHUB_REPOSITORY" --image-receipt tests/native/out/image-inspect.json --expected-core "$EXPECTED_CORE" --expected-arch "$EXPECTED_ARCH" --python-source "$PYTHON_SOURCE_HINT"
       - name: Preserve version and installation evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: core-contract-HA${{ matrix.core }}-${{ matrix.arch }}
           path: |
+            tests/native/out/image-inspect.json
             tests/native/out/minimal-install.json
             tests/native/out/minimal-install.log
             dist/native/native-build.json

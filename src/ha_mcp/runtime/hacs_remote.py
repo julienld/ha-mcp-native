@@ -68,7 +68,7 @@ async def cached_repository(
     if row is None:
         raise ToolFailure(
             "RESOURCE_NOT_FOUND",
-            f"Repository {identifier!r} is not in the loaded {domain} catalog",
+            f"Repository {identifier!r} not found in the loaded {domain} catalog",
             status="not_started",
         )
     return row, {

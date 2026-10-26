@@ -2302,7 +2302,7 @@ class TestLifecycle:
 
         with pytest.raises(
             es.EmbeddedServerError,
-            match=r"requires Home Assistant 2026\.8\.0 or newer",
+            match=r"requires Home Assistant 2026\.10\.0 or newer",
         ) as exc:
             await mgr.async_start()
 

@@ -60,6 +60,8 @@ def download_asset(repository: str, asset: dict, destination: Path) -> None:
 
 def verify_bundle(directory: Path, repository: str, tag: str, revision: str) -> dict:
     proof = json.loads((directory / "native-build.json").read_bytes())
+    if not isinstance(proof, dict):
+        raise ValueError("Release provenance must be a JSON object")
     contract = assets.release_contract(proof, tag, revision, repository=repository)
     if proof.get("qualification_only") is not False:
         raise ValueError("Qualification-only or unclassified builds cannot be released")
@@ -139,7 +141,7 @@ def verify_recorded(directory: Path, recorded: Path) -> None:
 
 def release_revision(proof: dict) -> str:
     revision = proof.get("release_revision", proof["revision"])
-    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("Invalid release source stamp revision")
     return revision
 

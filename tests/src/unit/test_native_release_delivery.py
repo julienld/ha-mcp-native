@@ -44,6 +44,19 @@ def test_delivery_refuses_another_source_before_publication(delivery, bundle):
         delivery.verify_bundle(output, proof["repository"], proof["tag"], "c" * 40)
 
 
+def test_delivery_rejects_non_object_provenance(delivery, bundle):
+    output, proof = bundle
+    (output / "native-build.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        delivery.verify_bundle(output, proof["repository"], proof["tag"], "a" * 40)
+
+
+@pytest.mark.parametrize("revision", [None, 123, [], "not-a-commit"])
+def test_delivery_rejects_an_invalid_release_revision(delivery, revision):
+    with pytest.raises(ValueError, match="stamp revision"):
+        delivery.release_revision({"revision": "a" * 40, "release_revision": revision})
+
+
 def test_mirror_extracts_exact_published_bytes_without_restamping(
     delivery, bundle, tmp_path
 ):

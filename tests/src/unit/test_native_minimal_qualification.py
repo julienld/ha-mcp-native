@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import platform
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,6 +19,14 @@ from tests.native.minimal_support import changes, sanitize
 
 @pytest.fixture
 def core_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nrequires-python = ">=3.13,<3.15"\n'
+        '[tool.uv]\nexclude-newer = "7 days"\n'
+        'exclude-newer-package = {certifi = "2026-10-21T00:00:00Z"}\n'
+    )
+    monkeypatch.setattr(minimal_qualification, "ROOT", checkout)
     package = tmp_path / "image/homeassistant"
     package.mkdir(parents=True)
     origin = package / "__init__.py"
@@ -57,11 +66,25 @@ def core_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         ),
     )
     monkeypatch.setattr(minimal_qualification.venv, "EnvBuilder", Mock())
+    monkeypatch.setattr(
+        minimal_qualification, "attest_runtime", Mock(return_value={"verified": True})
+    )
+    monkeypatch.setattr(
+        minimal_qualification,
+        "datetime",
+        SimpleNamespace(now=lambda _: datetime(2026, 10, 26, tzinfo=UTC)),
+    )
     world.run = Mock()
     monkeypatch.setattr(minimal_qualification, "run_logged", world.run)
     world.output = tmp_path / "proof.json"
     world.qualify = lambda: minimal_qualification.qualify(
-        tmp_path / "assets", tmp_path / "work", world.output
+        tmp_path / "assets",
+        tmp_path / "work",
+        world.output,
+        image_receipt=tmp_path / "image.json",
+        expected_core=world.core,
+        expected_arch="amd64",
+        python_source="3.14.5",
     )
     return world
 
@@ -116,6 +139,37 @@ def test_minimal_lane_records_the_interpreter_supplied_by_the_image(
     assert proof["interpreter"]["executable"] == sys.executable
     assert proof["interpreter"]["version"] == sys.version
     assert proof["interpreter"]["architecture"] == platform.machine()
+
+
+def test_missing_runtime_receipt_stops_before_bootstrap(
+    core_image: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        minimal_qualification,
+        "attest_runtime",
+        Mock(side_effect=FileNotFoundError("image receipt")),
+    )
+    with pytest.raises(FileNotFoundError, match="receipt"):
+        core_image.qualify()
+    core_image.run.assert_not_called()
+    assert not json.loads(core_image.output.read_text())["complete"]
+
+
+def test_security_exception_reaches_native_install_but_not_old_certifi_bootstrap(
+    core_image: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UV_EXCLUDE_NEWER", "7 days")
+    monkeypatch.delenv("UV_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("UV_NO_CONFIG", raising=False)
+    core_image.qualify()
+    bootstrap, seed, native = core_image.run.call_args_list
+    assert "UV_CONFIG_FILE" not in bootstrap.kwargs["env"]
+    assert "certifi==2026.7.22" in seed.args[0]
+    assert "UV_CONFIG_FILE" not in seed.kwargs["env"]
+    assert Path(native.kwargs["env"]["UV_CONFIG_FILE"]).is_file()
+    assert native.kwargs["env"]["UV_EXCLUDE_NEWER"] == "7 days"
+    proof = json.loads(core_image.output.read_text())
+    assert proof["native_install_policy"]["exception_active"]
 
 
 def test_core_worker_does_not_discover_checkout_uv_policy(tmp_path, monkeypatch):

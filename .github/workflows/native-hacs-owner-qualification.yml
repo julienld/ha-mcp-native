@@ -2,6 +2,7 @@ name: Native HACS owner qualification (manual)
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -23,12 +24,13 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: '0.13.4'
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
           python-version: '3.14'
       - name: Build unpublished qualification artifacts from this committed SHA
         env:
           CANDIDATE_VERSION: 9.0.0.dev${{ github.run_number }}
-          CANDIDATE_TAG: qualification-hacs-${{ github.run_id }}
+          CANDIDATE_TAG: native-ci-hacs-${{ github.run_id }}
         run: |
           uv run --locked -s scripts/core_window.py --output core-window.json
           uv run --locked -s scripts/native_release.py --revision "$GITHUB_SHA" --version "$CANDIDATE_VERSION" --tag "$CANDIDATE_TAG" --github "$GITHUB_REPOSITORY" --core-window core-window.json --qualification-only

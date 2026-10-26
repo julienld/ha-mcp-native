@@ -13,7 +13,9 @@ import os
 import platform
 import subprocess
 import sys
+import tomllib
 import venv
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -22,6 +24,8 @@ from urllib.request import url2pathname
 from scripts.native_published_assets import REPOSITORY
 
 from .minimal_support import sanitize, save
+from .minimal_uv_policy import native_install_environment
+from .runtime_attestation import attest_runtime
 
 CERTIFI_BASELINE = "2026.7.22"
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,10 +72,35 @@ def run_logged(command: list[str], *, env: dict[str, str], log: Path) -> None:
 
 
 def qualify(
-    assets: Path, work: Path, output: Path, *, repository: str = REPOSITORY
+    assets: Path,
+    work: Path,
+    output: Path,
+    *,
+    image_receipt: Path,
+    expected_core: str,
+    expected_arch: str,
+    python_source: str,
+    repository: str = REPOSITORY,
 ) -> None:
     if sys.platform != "linux":
         raise RuntimeError("Run qualification with the Linux Core image's Python")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    proof: dict[str, Any] = {
+        "mode": "minimal_Core_local_paired_artifacts",
+        "complete": False,
+    }
+    save(output, proof)
+    proof["runtime_attestation"] = attest_runtime(
+        image_receipt,
+        expected_core=expected_core,
+        expected_arch=expected_arch,
+        python_source=python_source,
+        requires_python=tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]["requires-python"],
+    )
+    save(output, proof)
+    print(json.dumps(proof["runtime_attestation"], indent=2), flush=True)
     core = importlib.util.find_spec("homeassistant")
     if core is None or core.origin is None:
         raise RuntimeError(
@@ -101,23 +130,24 @@ def qualify(
     log = output.with_suffix(".log")
     log.write_text("", encoding="utf-8")
     directory = work / "venv"
-    proof: dict[str, Any] = {
-        "mode": "minimal_Core_local_paired_artifacts",
-        "complete": False,
-        "core_version": core_version,
-        "uv_version": uv_version,
-        "interpreter": {
-            "executable": sys.executable,
-            "version": sys.version,
-            "implementation": sys.implementation.name,
-            "architecture": platform.machine(),
-        },
-        "bootstrap_constraints": str(constraints),
-        "bootstrap_constraints_sha256": hashlib.sha256(
-            constraints.read_bytes()
-        ).hexdigest(),
-        "old_certifi_seed": CERTIFI_BASELINE,
-    }
+    proof.update(
+        {
+            "core_version": core_version,
+            "uv_version": uv_version,
+            "interpreter": {
+                "executable": sys.executable,
+                "version": sys.version,
+                "implementation": sys.implementation.name,
+                "architecture": platform.machine(),
+            },
+            "bootstrap_constraints": str(constraints),
+            "bootstrap_constraints_sha256": hashlib.sha256(
+                constraints.read_bytes()
+            ).hexdigest(),
+            "old_certifi_seed": CERTIFI_BASELINE,
+            "bootstrap_policy": "pip_Core_baseline_under_image_constraints_then_old_certifi_seed; uv_cutoff_applies_to_native_install",
+        }
+    )
     save(output, proof)
     try:
         venv.EnvBuilder(with_pip=True, system_site_packages=False).create(directory)
@@ -152,6 +182,11 @@ def qualify(
             env=env,
             log=log,
         )
+        install_env, proof["native_install_policy"] = native_install_environment(
+            env, work, ROOT / "pyproject.toml", now=datetime.now(UTC)
+        )
+        save(output, proof)
+        print(json.dumps(proof["native_install_policy"], indent=2), flush=True)
         run_logged(
             [
                 str(python),
@@ -166,7 +201,7 @@ def qualify(
                 "--repository",
                 repository,
             ],
-            env=env,
+            env=install_env,
             log=log,
         )
     except BaseException as error:
@@ -185,8 +220,21 @@ def main() -> None:
     parser.add_argument("--work-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repository", default=REPOSITORY)
+    parser.add_argument("--image-receipt", type=Path, required=True)
+    parser.add_argument("--expected-core", required=True)
+    parser.add_argument("--expected-arch", required=True)
+    parser.add_argument("--python-source", required=True)
     args = parser.parse_args()
-    qualify(args.assets, args.work_directory, args.output, repository=args.repository)
+    qualify(
+        args.assets,
+        args.work_directory,
+        args.output,
+        repository=args.repository,
+        image_receipt=args.image_receipt,
+        expected_core=args.expected_core,
+        expected_arch=args.expected_arch,
+        python_source=args.python_source,
+    )
 
 
 if __name__ == "__main__":

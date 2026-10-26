@@ -98,7 +98,7 @@ def test_one_channel_snapshot_excludes_future_tags_and_records_each_python(resol
     assert window["generations"] == ["2026.10", "2026.11"]
     assert len(window["matrix"]["include"]) == 6
     for row in window["matrix"]["include"]:
-        assert row["python"] == window["versions"][row["core"]]
+        assert row["python_source"] == window["versions"][row["core"]]
         assert row["os"] == resolver.ARCHITECTURES[row["arch"]]
 
 

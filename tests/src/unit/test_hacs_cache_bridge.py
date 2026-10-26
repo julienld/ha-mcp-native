@@ -21,6 +21,7 @@ bridge = importlib.import_module(
 def registered(hacs, monkeypatch):
     fake = _FakeWSApi()
     monkeypatch.setattr(wsapi, "websocket_api", fake)
+    monkeypatch.setattr(bridge, "websocket_api", fake)
     # Register the entire surface, exactly as both entry setup paths do.
     wsapi.async_register_commands(hacs.hass)
     return fake.registered["ha_mcp_tools/hacs_cache"]
@@ -76,6 +77,7 @@ def test_registration_without_a_store_never_imports_optional_owners(hacs, monkey
     monkeypatch.setattr(builtins, "__import__", guarded)
     fake = _FakeWSApi()
     monkeypatch.setattr(wsapi, "websocket_api", fake)
+    monkeypatch.setattr(bridge, "websocket_api", fake)
     wsapi.async_register_commands(hacs.hass)
     assert "ha_mcp_tools/hacs_cache" in fake.registered
     assert "hacs_cache" in wsapi.CAPABILITIES
