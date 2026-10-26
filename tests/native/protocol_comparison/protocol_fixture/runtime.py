@@ -23,6 +23,19 @@ DOMAIN = "protocol_fixture"
 ENTITY = "sensor.protocol_fixture"
 
 
+def _manager_entry(hass: Any, manager: Any) -> Any:
+    # U2's EmbeddedServerManager has no public entry; NativeServerManager does.
+    entry = (
+        manager.entry if hasattr(manager, "entry") else getattr(manager, "_entry", None)
+    )
+    if (
+        entry is None
+        or hass.config_entries.async_get_entry(entry.entry_id) is not entry
+    ):
+        raise ValueError("runtime_entry_owner_mismatch")
+    return entry
+
+
 def runtime_proof(hass: Any) -> dict[str, Any]:
     import ha_mcp
     from custom_components import ha_mcp_tools
@@ -35,7 +48,7 @@ def runtime_proof(hass: Any) -> dict[str, Any]:
         marker = (package / "_vendor" / name / "VENDORED").read_text().splitlines()[0]
         versions[name] = marker.split("==", 1)[1]
     manager = hass.data.get("ha_mcp_tools", {}).get("manager")
-    entry = getattr(manager, "entry", None)
+    entry = _manager_entry(hass, manager)
     observed_runtime = "native" if hasattr(manager, "engine") else "legacy"
     component_hash = tree_digest(component)
     package_hash = tree_digest(package)
@@ -58,7 +71,7 @@ def runtime_proof(hass: Any) -> dict[str, Any]:
         "ha_mcp_version": importlib.metadata.version("ha-mcp"),
         "private_versions": versions,
         "private_sdk_loaded": "ha_mcp._vendor.mcp" in sys.modules,
-        "entry_runtime": entry.options.get("runtime_mode", "legacy") if entry else None,
+        "entry_runtime": entry.options.get("runtime_mode", "legacy"),
     }
 
 
@@ -97,7 +110,7 @@ class FixtureView(HomeAssistantView):
 async def set_read_only(hass: Any, enabled: bool) -> None:
     """Use the real persisted policy and entry lifecycle, not an engine patch."""
     manager = hass.data["ha_mcp_tools"]["manager"]
-    entry_id = manager.entry.entry_id
+    entry_id = _manager_entry(hass, manager).entry_id
     target = Path(hass.config.path(".ha_mcp/feature_flags.json"))
 
     def change() -> None:
