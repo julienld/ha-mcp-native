@@ -773,12 +773,9 @@ class HomeAssistantClient:
         payload: dict[str, Any],
         return_response: bool,
     ) -> list[dict[str, Any]] | dict[str, Any]:
-        """Call a service for a non-admin token, in ``call_service``'s return shape.
+        """Call a service over WS, avoiding REST's non-admin 401/IP-ban side effect."""
+        from .service_errors import HomeAssistantWebSocketServiceError
 
-        Over REST an admin-only service answers a non-admin with a 401 that
-        ``http.ban`` counts; over WebSocket the refusal is only an error
-        (#2546). WebSocket reports no changed states, so that list is empty.
-        """
         reply = await self.send_websocket_message(
             {
                 "type": "call_service",
@@ -790,16 +787,16 @@ class HomeAssistantClient:
         )
         if not reply.get("success"):
             error = str(reply.get("error", "Service call failed"))
-            if error.removeprefix("Command failed: ") == "Unauthorized":
+            code = reply.get("error_code")
+            if code == "unauthorized" or (
+                code == "home_assistant_error"
+                and error.removeprefix("Command failed: ") == "Unauthorized"
+            ):
                 raise HomeAssistantAdminRequiredError(
                     f"Service {domain}.{service} is admin-only in Home Assistant "
                     "and this token's user is not an administrator"
                 )
-            raise HomeAssistantAPIError(
-                f"API error: 400 - {error}",
-                status_code=400,
-                response_data={"message": error},
-            )
+            raise HomeAssistantWebSocketServiceError(error, code=code)
         if return_response:
             result = reply.get("result") or {}
             return {"changed_states": [], "service_response": result.get("response")}

@@ -461,7 +461,11 @@ async def test_unknown_status_service_calls_let_one_401_out(client):
 
     client.httpx_client.request = AsyncMock(side_effect=slow_401)
     client.send_websocket_message = AsyncMock(
-        return_value={"success": False, "error": "Command failed: Unauthorized"}
+        return_value={
+            "success": False,
+            "error": "Command failed: Unauthorized",
+            "error_code": "home_assistant_error",
+        }
     )
     results = await asyncio.gather(
         *(client.call_service("automation", "reload") for _ in range(4)),
@@ -478,7 +482,11 @@ async def test_401_on_a_service_for_a_cached_admin_falls_back_to_websocket(clien
     client._current_user = AsyncMock(return_value=_current_user(True))
     client.httpx_client.request = AsyncMock(return_value=_response(401))
     client.send_websocket_message = AsyncMock(
-        return_value={"success": False, "error": "Command failed: Unauthorized"}
+        return_value={
+            "success": False,
+            "error": "Command failed: Unauthorized",
+            "error_code": "home_assistant_error",
+        }
     )
     for _ in range(2):
         with pytest.raises(HomeAssistantAdminRequiredError):
