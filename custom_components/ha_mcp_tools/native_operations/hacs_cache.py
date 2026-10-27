@@ -4,9 +4,15 @@ from typing import Any
 
 from ha_mcp.tool_api import CallContext
 
-from .hacs_access import HacsAccess, repository_image
-from .marketplace_access import MarketplaceAccess, store_domain
-from .registry_access import registry_json
+from . import hacs_access, marketplace_access, registry_access
+
+# Legacy can reload ha_mcp while these component owners retain their classes.
+CACHE_FAILURES = (
+    hacs_access.ToolFailure,
+    marketplace_access.ToolFailure,
+    registry_access.ToolFailure,
+    PermissionError,
+)
 
 
 async def cached_store_info(
@@ -16,24 +22,21 @@ async def cached_store_info(
 
     async def authorize(actor: CallContext) -> None:
         user = await hass.auth.async_get_user(actor.user_id)
-        if (
-            user is None
-            or not user.is_active
-            or not user.is_admin
-            or user.system_generated
-        ):
-            raise PermissionError("An active human administrator is required")
+        if user is None or not user.is_active or not user.is_admin:
+            raise PermissionError("An active administrator is required")
 
     access_type = (
-        MarketplaceAccess if store_domain(hass) == "marketplace" else HacsAccess
+        marketplace_access.MarketplaceAccess
+        if marketplace_access.store_domain(hass) == "marketplace"
+        else hacs_access.HacsAccess
     )
     access = await access_type.open(hass, CallContext(user_id), authorize)
     repository = access.find(repository_id)
-    before = repository_image(repository)
+    before = hacs_access.repository_image(repository)
     result = {
         "store": access.domain,
         "repository": access.project(repository),
         "cache": access.cache(repository),
     }
     await access.observe(repository, before)
-    return registry_json(result)
+    return registry_access.registry_json(result)

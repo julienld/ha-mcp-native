@@ -139,6 +139,9 @@ disable tools rather than a non-admin token.
 The native component requires an active, non-system-generated administrator
 and invokes Core owners in process. Its Engine validates the caller or selected
 owner explicitly; a Home Assistant `Context` is attribution, not authorization.
+The shared read-only HACS/Marketplace cache WebSocket bridge instead follows
+Core's administrator gate, including active Supervisor system administrators.
+This read does not admit the caller as a Native runtime owner.
 Read-only mode, enabled tools, approvals and entity visibility remain HA-MCP
 controls. The distinct caller identities in native `ha_auth` support attribution
 and ownership of approvals/operations; they do not create isolated tenants for

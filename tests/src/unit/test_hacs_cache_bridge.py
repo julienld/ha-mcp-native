@@ -29,15 +29,16 @@ def registered(hacs, monkeypatch):
 
 @pytest.mark.parametrize("provider", ["hacs", "marketplace"])
 @pytest.mark.parametrize("topology", ["tools", "server"])
+@pytest.mark.parametrize("system_generated", [False, True])
 def test_shared_cache_handler_reads_without_runtime_or_tools_services(
-    request, registered, provider, topology
+    request, registered, provider, topology, system_generated
 ):
     store = request.getfixturevalue(provider)
     store.hass.data["ha_mcp_tools"] = {"entry_type": topology}
     store.hass.auth = SimpleNamespace(
         async_get_user=AsyncMock(
             return_value=SimpleNamespace(
-                is_active=True, is_admin=True, system_generated=False
+                is_active=True, is_admin=True, system_generated=system_generated
             )
         )
     )
@@ -61,6 +62,27 @@ def test_cache_handler_requires_admin_before_reading_owner(hacs, registered):
     connection = _FakeConnection(is_admin=False, user_id="viewer")
     with pytest.raises(_Unauthorized):
         registered(hacs.hass, connection, {"id": 1, "repository_id": "1"})
+
+
+def test_cache_handler_preserves_owner_errors_after_library_reload(
+    hacs, registered, monkeypatch
+):
+    import ha_mcp.tool_api
+
+    hacs.hass.auth = SimpleNamespace(
+        async_get_user=AsyncMock(
+            return_value=SimpleNamespace(
+                is_active=True, is_admin=True, system_generated=False
+            )
+        )
+    )
+    replacement = type("ReplacementToolFailure", (Exception,), {})
+    monkeypatch.setattr(ha_mcp.tool_api, "ToolFailure", replacement)
+    connection = _FakeConnection(user_id="human")
+    connection.send_error = Mock()
+    registered(hacs.hass, connection, {"id": 1, "repository_id": "missing"})
+    assert not connection.results
+    assert connection.send_error.call_args.args[1] == "RESOURCE_NOT_FOUND"
 
 
 def test_registration_without_a_store_never_imports_optional_owners(hacs, monkeypatch):
