@@ -166,7 +166,7 @@ async def test_tools_panel_keeps_native_mixed_reads_available_in_read_only_mode(
         with pytest.raises(ToolFailure, match="Writes are disabled"):
             await manager.engine.call(name, {"action": "write"}, actor)
     assert handler.await_count == 2
-    from ha_mcp.settings_ui import _SETTINGS_HTML
+    import ha_mcp.settings_ui as shared
 
     from ._js_harness import extract_script_body, run_script
     from .test_settings_ui_js_behavior import (
@@ -177,7 +177,7 @@ async def test_tools_panel_keeps_native_mixed_reads_available_in_read_only_mode(
     )
 
     panel = run_script(
-        extract_script_body(_SETTINGS_HTML),
+        extract_script_body(shared._SETTINGS_HTML),
         initial_html=MIN_DOM,
         fetch_map={
             **DEFAULT_FETCHES,

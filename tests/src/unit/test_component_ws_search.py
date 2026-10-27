@@ -40,12 +40,12 @@ import pytest
 
 from ._component_ws_fakes import (
     _FakeConnection,
+    _FakeWSApi,
     _Unauthorized,
     register_empty_surface,
 )
-from ._component_ws_fakes import (
-    _FakeWSApi as _FakeWSApi,
-)
+
+__all__ = ["_FakeWSApi"]
 
 # Force the REAL voluptuous into sys.modules (sibling unit modules stub it with
 # a MagicMock at import time); the schema/registration tests need a real one.

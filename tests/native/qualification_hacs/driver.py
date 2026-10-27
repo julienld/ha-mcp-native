@@ -113,6 +113,7 @@ async def main(phase: str, topology: str) -> None:
                         if response.status_code < 500:
                             break
                     except httpx.ConnectError:
+                        # Core may not listen yet after restart; readiness is bounded.
                         pass
                     await asyncio.sleep(0.5)
             credentials = {

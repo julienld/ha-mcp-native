@@ -92,6 +92,7 @@ def _local_evidence() -> InstallationEvidence:
             editable = direct.get("dir_info", {}).get("editable") is True
             direct_reference = bool(direct.get("url"))
         except (ValueError, AttributeError):
+            # Malformed optional metadata cannot establish a direct/editable owner.
             pass
     prefix = Path(sys.prefix)
     return InstallationEvidence(

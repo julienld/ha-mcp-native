@@ -1640,14 +1640,14 @@ class EmbeddedServerManager:
                     # deterministically releases the socket for the next
                     # bring-up.
                     uv_server.should_exit = True
-                    return await serve_task
+                    await serve_task
                 else:
                     stop_task.cancel()
                     with suppress(asyncio.CancelledError):
                         _ = await stop_task
                     # Surface a server that exited on its own (bind failure,
                     # etc.).
-                    return serve_task.result()
+                    serve_task.result()
         finally:
             # CLI parity: the HTTP runner's shutdown path releases the served
             # stack's HA connections; this in-process runner must too, on this

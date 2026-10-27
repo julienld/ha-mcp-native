@@ -78,7 +78,7 @@ async def _embedded_precheck(client: Any, *, safe_mode: bool) -> list[str]:
     try:
         return restart_precheck_warnings(recorder, backup, safe_mode=safe_mode)
     except ToolFailure as error:
-        raise_tool_error(error.data)
+        return raise_tool_error(error.data)
 
 
 async def restart_home_assistant(

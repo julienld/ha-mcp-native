@@ -347,6 +347,7 @@ def wait_fixture(
                         validate_runtime(observed, expected)
                         return
             except httpx.TransportError:
+                # Readiness probes tolerate transient reads only until the deadline.
                 pass
             time.sleep(1)
     raise TimeoutError("fixture_not_ready")

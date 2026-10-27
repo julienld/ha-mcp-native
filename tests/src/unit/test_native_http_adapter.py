@@ -73,12 +73,15 @@ def test_native_http_adapter(
     env["HA_MCP_CONFIG_DIR"] = str(tmp_path)
     if python_writer:
         env["AIOHTTP_NO_EXTENSIONS"] = "1"
+    program = (
+        "import asyncio,sys; from importlib import import_module; "
+        "asyncio.run(import_module('tests.src.unit.' + sys.argv[1]).run(sys.argv[2]))"
+    )
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import asyncio,sys; from importlib import import_module; "
-            "asyncio.run(import_module('tests.src.unit.' + sys.argv[1]).run(sys.argv[2]))",
+            program,
             probe,
             case,
         ],
