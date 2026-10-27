@@ -14,15 +14,14 @@ Feature Flag: Set ENABLE_SECURITY_POLICY_TOOL=true to enable this tool.
 """
 
 import logging
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any, Literal
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..policy.editing import PolicyCaller, get_policy, set_policy
-from .coercion import JSON_STRING_COERCION
+from ..runtime.security_policy_tools import SecurityPolicyFacade
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -41,7 +40,7 @@ FEATURE_FLAG = "ENABLE_SECURITY_POLICY_TOOL"
 _POLICY_CALLER = PolicyCaller("ha_manage_security_policy", "get", "set")
 
 
-class SecurityPolicyTools:
+class LegacySecurityPolicyTools:
     """Read/write access to the tool security policy document."""
 
     def __init__(self, client: Any, server: Any) -> None:
@@ -52,82 +51,12 @@ class SecurityPolicyTools:
         # reach the queue's contents.
         self._server = server
 
-    @tool(
-        name="ha_manage_security_policy",
-        tags={"System"},
-        annotations=write_hints(
-            "Manage Security Policy",
-            destructive=True,
-            idempotent=False,
-            open_world=False,
-        ),
-    )
-    @log_tool_usage
-    async def ha_manage_security_policy(
+    async def manage(
         self,
-        action: Annotated[
-            Literal["get", "set"],
-            Field(
-                description=(
-                    "get: read the whole policy document. set: replace it "
-                    "with the supplied one."
-                )
-            ),
-        ],
-        policy: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "set: the full policy object "
-                    "{rule_effect, wait_seconds, approval_ttl_minutes, "
-                    "event_decisions_enabled, rules, version}. rule_effect "
-                    "'require_approval' (default): a matching rule gates the "
-                    "call; 'allow': a matching rule approves the call and "
-                    "every other call requires approval"
-                ),
-            ),
-        ] = None,
-        expected_version: Annotated[
-            int | None,
-            Field(
-                default=None,
-                description=(
-                    "set: the version from your last get, for "
-                    "optimistic-concurrency safety (else the policy's own "
-                    "version field is used)"
-                ),
-            ),
-        ] = None,
+        action: Literal["get", "set"],
+        policy: dict[str, Any] | None = None,
+        expected_version: int | None = None,
     ) -> dict[str, Any]:
-        """Manage the tool security policy that gates high-stakes tool calls behind user approval.
-
-        When NOT to use: this tool cannot see or decide pending approval
-        requests — listing, approving, and denying them is developer-mode
-        only (ha_dev_manage_server). For ordinary Home Assistant entity,
-        automation, or dashboard work use the ha_config_* tools.
-
-        When to use: to read the current policy, to add or remove per-tool
-        approval rules and their matching conditions, to switch the rule list
-        between gating and approving the calls it matches, and to change the
-        approval wait time or how long an approval is remembered.
-
-        Caveats: set replaces the WHOLE document, so send back an edited
-        copy of what get returned, not a fragment. An omitted field is not
-        left alone, it reverts to its default: dropping
-        event_decisions_enabled switches off approving from Home Assistant
-        events, and the response says so in a warning when it does, while
-        dropping rule_effect from an allow list is refused. Writes are
-        version-guarded: a concurrent edit is rejected instead of
-        silently overwritten. Rule edits apply to the running server
-        immediately and can remove approval gates. Whether this tool itself
-        is registered is a separate setting that takes effect on restart.
-
-        EXAMPLES:
-        ha_manage_security_policy("get")
-        ha_manage_security_policy("set", policy={"wait_seconds": 60, "approval_ttl_minutes": 5, "event_decisions_enabled": False, "rules": [{"tool_name": "ha_call_service"}], "version": 3})
-        """
         try:
             if action == "get":
                 return await get_policy(self._server)
@@ -136,13 +65,30 @@ class SecurityPolicyTools:
             )
         except ToolError:
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - legacy error classifier
             exception_to_structured_error(
                 e,
                 context={"action": action},
                 suggestions=["Check server logs for details"],
             )
-            return None  # unreachable; explicit for CodeQL
+            return None
+
+
+class SecurityPolicyTools(SecurityPolicyFacade, LegacySecurityPolicyTools):
+    def __init__(self, client: Any, server: Any) -> None:
+        LegacySecurityPolicyTools.__init__(self, client, server)
+        SecurityPolicyFacade.__init__(self, self)
+
+    ha_manage_security_policy = tool(
+        name="ha_manage_security_policy",
+        tags={"System"},
+        annotations=write_hints(
+            "Manage Security Policy",
+            destructive=True,
+            idempotent=False,
+            open_world=False,
+        ),
+    )(log_tool_usage(legacy_errors(SecurityPolicyFacade.ha_manage_security_policy)))
 
 
 def register_security_policy_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

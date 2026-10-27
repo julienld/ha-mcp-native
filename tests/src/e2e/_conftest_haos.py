@@ -41,6 +41,7 @@ from haos_runtime import (
 
 # Import test constants
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from qualification_artifacts import native_runtime_selected
 from test_constants import TEST_PASSWORD, TEST_TOKEN, TEST_USER
 
 from ._conftest_embedded import (
@@ -132,6 +133,12 @@ def _prepare_haos_image(
     base_image_path: Path, inaddon: bool, haos_embedded: bool, haos_stdio: bool
 ) -> Path:
     """Set up the per-worker qcow2 overlay and stage all pre-boot mutations."""
+    if native_runtime_selected() and (
+        not haos_embedded or not os.environ.get("E2E_NATIVE_ARTIFACTS")
+    ):
+        raise RuntimeError(
+            "Native HAOS requires the embedded backend and paired artifacts"
+        )
     # Per-worker port + overlay setup for pytest-xdist parallel HAOS
     # (#1350). Single-worker runs short-circuit and reuse the base
     # image path unchanged.
@@ -172,7 +179,12 @@ def _prepare_haos_image(
     # embedded-server E2E (#1527) exercises the PR's own src/ha_mcp when it
     # enables the entry. Best-effort — a failure only affects that one test.
     # Must run before boot (offline qcow2 edit), like the refreshers above.
-    stage_embedded_server_wheel_in_qcow2(image_path, TEST_TOKEN)
+    if assets := os.environ.get("E2E_NATIVE_ARTIFACTS"):
+        from haos_candidate import stage_candidate_in_qcow2
+
+        stage_candidate_in_qcow2(image_path, Path(assets), TEST_TOKEN)
+    else:
+        stage_embedded_server_wheel_in_qcow2(image_path, TEST_TOKEN)
     # haos_embedded lane only: the WHOLE suite runs through the in-process
     # server, so deliver the same settings overrides the container
     # ``embedded`` backend injects — feature flags (yaml editing, filesystem
@@ -485,6 +497,12 @@ def _bringup_haos_out_of_process_server(
                 "runtime log in the HAOS diagnostics artifact for the "
                 f"{HA_MCP_SERVER_DOMAIN} config-entry state."
             )
+        if native_runtime_selected():
+            from haos_candidate import attest_native_runtime
+
+            attest_native_runtime(
+                base_url, token, Path(os.environ["E2E_NATIVE_ARTIFACTS"])
+            )
     return addon_mcp_url, embedded_webhook_url
 
 
@@ -503,7 +521,11 @@ def _dump_haos_session_logs(base_url: str, token: str, inaddon: bool) -> None:
     # = 120s before boot_haos_qemu's own SIGTERM/SIGKILL kicks
     # in. Without per-call timeout an indefinitely-hanging
     # supervisor would stall session teardown forever.
-    log_dest = Path("/tmp/haos-diagnostics")
+    # One directory per xdist worker, each of which boots its own VM: a shared
+    # file name kept only the last worker's logs, not the failing one's.
+    log_dest = Path("/tmp/haos-diagnostics") / os.environ.get(
+        "PYTEST_XDIST_WORKER", "master"
+    )
     log_dest.mkdir(parents=True, exist_ok=True)
     log_endpoints = [
         (

@@ -166,6 +166,15 @@ jobs:
         # Priority: GitHub App token > RELEASE_TOKEN (PAT) > GITHUB_TOKEN
         token: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
+    - name: Install uv for the Core release guard
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        # renovate: datasource=github-releases depName=astral-sh/uv
+        version: "0.13.4"
+
+    - name: Require the current Core window before releasing
+      run: uv run --locked -s scripts/core_window.py --check-floor --output "$RUNNER_TEMP/release-core-window.json"
+
     - name: Python Semantic Release
       id: semantic
       uses: python-semantic-release/python-semantic-release@b700dbeb1f431a0fcc30a79f3f0869407fe07278 # v10.7.0
@@ -178,6 +187,24 @@ jobs:
         force: ${{ inputs.force && 'patch' || '' }}
         # Don't create GitHub release here - we'll create a draft below
         vcs_release: "false"
+
+    - name: Prepare the paired native release assets
+      if: steps.semantic.outputs.released == 'true'
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        VERSION: ${{ steps.semantic.outputs.version }}
+      run: |
+        git submodule update --init --recursive
+        uv run --locked -s scripts/native_release_delivery.py prepare \
+          --repository "$GITHUB_REPOSITORY" --version "$VERSION" --tag "v$VERSION" \
+          --revision "$(git rev-parse "v$VERSION^{commit}")" --assets "$RUNNER_TEMP/native-release"
+
+    - name: Retain native assets for an interrupted draft recovery
+      if: steps.semantic.outputs.released == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: native-release-${{ steps.semantic.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/native-release
 
     - name: Create draft GitHub release
       if: steps.semantic.outputs.released == 'true'
@@ -198,11 +225,11 @@ jobs:
           echo "Release v${VERSION}" > release_notes.md
         fi
 
-        # A draft until the last step of this job publishes it.
-        gh release create "$TAG" \
-          --title "$TAG" \
-          --notes-file release_notes.md \
-          --draft
+        # Upload and read back all paired assets before the release is visible.
+        uv run --locked -s scripts/native_release_delivery.py publish \
+          --repository "$GITHUB_REPOSITORY" --tag "$TAG" \
+          --revision "$(git rev-parse "$TAG^{commit}")" --assets "$RUNNER_TEMP/native-release" \
+          --notes release_notes.md --draft-only
 
         echo "✓ Created draft release $TAG"
 
@@ -259,7 +286,11 @@ jobs:
       run: |
         # Last, so a failed changelog push or stable-tag update leaves a draft
         # instead of a public release with no PyPI or Docker publish behind it.
-        gh release edit "v${{ steps.semantic.outputs.version }}" --draft=false
+        TAG="v${{ steps.semantic.outputs.version }}"
+        uv run --locked -s scripts/native_release_delivery.py publish \
+          --repository "$GITHUB_REPOSITORY" --tag "$TAG" \
+          --revision "$(git rev-parse "$TAG^{commit}")" --assets "$RUNNER_TEMP/native-release" \
+          --notes release_notes.md
 
   # Build and push addon Docker images
   build-addon:

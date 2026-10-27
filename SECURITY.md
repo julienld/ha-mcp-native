@@ -16,7 +16,9 @@ accurate reports and helps us triage quickly.
 An authenticated MCP client (one that has the secret URL or completed the OAuth
 flow) is a **trusted principal**. ha-mcp does not attempt to defend against a
 malicious or compromised MCP client — that is equivalent to defending against a
-malicious user who has your Home Assistant long-lived access token.
+malicious user holding the Home Assistant authority granted to the server. In
+remote/legacy deployments that authority is the configured access token; in the
+native component it is the admitted human administrator or configured owner.
 
 Consequences:
 - Prompt injection that reaches an MCP client is the **client's responsibility**
@@ -75,9 +77,11 @@ behind a TLS-terminating reverse proxy (see
 [OAuth Mode](#oauth-mode--beta-warning) below). Deployment guidance:
 [development reference → Docker](docs/agents/development.md#docker).
 
-By default the HTTP entrypoints bind to `0.0.0.0` so they are reachable from
-other machines on the LAN. To restrict to the local machine, set
+By default the standalone HTTP entrypoints bind to `0.0.0.0` so they are
+reachable from other machines on the LAN. To restrict to the local machine, set
 `MCP_HOST=127.0.0.1` (or use `-p 127.0.0.1:8086:8086` at the Docker layer).
+The native component uses only Home Assistant's HTTP listener; these server
+bind/port settings do not create a native listener.
 
 ### Host/Origin validation (DNS-rebinding guard) is off by default
 
@@ -102,9 +106,12 @@ standard/OAuth HTTP modes, the landing page shares the secret path) — and the
 loopback settings sidecar enforces its own Host/Origin allow-list independent
 of this setting.
 
-Operators who front ha-mcp differently can re-enable the guard by setting
+Operators of the standalone or legacy server can re-enable the guard by setting
 `FASTMCP_HTTP_HOST_ORIGIN_PROTECTION=true` and pinning
 `FASTMCP_HTTP_ALLOWED_HOSTS` / `FASTMCP_HTTP_ALLOWED_ORIGINS`.
+The native adapter currently supplies `host_origin_protection=False` explicitly;
+it uses HA's HTTP/proxy handling and the authentication gates below rather than
+those standalone environment controls.
 
 ### Standard mode is single-tenant
 
@@ -114,11 +121,11 @@ there is no per-client authorization or isolation. Reports that assume "client A
 shouldn't be able to see client B's data" don't apply to standard mode; that
 isolation model only exists in OAuth mode (scoped per HA token).
 
-### ha-mcp does not add or restrict Home Assistant permissions
+### Home Assistant authority and tool restrictions
 
-ha-mcp uses the long-lived access token the operator provides. That token's
-permissions in Home Assistant are what they are. If the configured token is an
-admin token, ha-mcp can perform admin-level operations. Reports stating "ha-mcp
+Remote and legacy servers use the long-lived access token the operator
+provides. That token's permissions in Home Assistant are what they are. If the
+configured token is an admin token, ha-mcp can perform admin-level operations. Reports stating "ha-mcp
 can do X" where X is permitted by the configured token are not vulnerabilities —
 they are the intended behavior. ha-mcp expects an administrator's token;
 non-admin tokens are not officially supported but still work, with
@@ -128,6 +135,17 @@ toward an IP ban, so ha-mcp refuses those locally and calls services over
 WebSocket, where a refusal is not counted.
 To limit what an agent can do, use ha-mcp's tool security policies or
 disable tools rather than a non-admin token.
+
+The native component requires an active, non-system-generated administrator
+and invokes Core owners in process. Its Engine validates the caller or selected
+owner explicitly; a Home Assistant `Context` is attribution, not authorization.
+The shared read-only HACS/Marketplace cache WebSocket bridge instead follows
+Core's administrator gate, including active Supervisor system administrators.
+This read does not admit the caller as a Native runtime owner.
+Read-only mode, enabled tools, approvals and entity visibility remain HA-MCP
+controls. The distinct caller identities in native `ha_auth` support attribution
+and ownership of approvals/operations; they do not create isolated tenants for
+the shared instance, settings, saved code or backup history.
 
 ### Entity visibility enforce mode is best-effort concealment
 
@@ -169,9 +187,11 @@ hidden entity's state without naming its entity_id cannot be caught. On enforced
 scannable paths, a matching hidden entity's data is not returned. Existence
 concealment is best-effort: per-tool not-found shapes vary, so a prober comparing
 errors may infer that an id is hidden rather than absent. The boundary covers
-Home Assistant entity data, not physical-world imagery: a visible camera stays
-readable (`ha_get_camera_image`) and could incidentally show a display that
-renders a hidden entity's state — hide that camera when its view is sensitive.
+Home Assistant entity data, not physical-world imagery. On the legacy path, a
+visible camera stays readable (`ha_get_camera_image`) and could incidentally
+show a display that renders a hidden entity's state — hide that camera when its
+view is sensitive. Native camera calls refuse unfilterable pixels when
+visibility enforcement has active hiding rules.
 Enforce mode is not a defense against an adversarial prompt author deliberately
 trying to exfiltrate a hidden entity's state, nor a substitute for Home
 Assistant's permission model; restrict what the configured token can reach in
@@ -179,9 +199,9 @@ HA for a hard boundary.
 
 ### OAuth Bearer token design
 
-In OAuth mode, access and refresh tokens are HMAC-signed, stateless Bearer
-tokens. The token payload contains the user's Home Assistant long-lived access
-token (LLAT). This is **by design**:
+In the standalone `ha-mcp-oauth` mode, access and refresh tokens are HMAC-signed,
+stateless Bearer tokens. The token payload contains the user's Home Assistant
+long-lived access token (LLAT). This is **by design**:
 
 - The LLAT is the authorization boundary. Revoking it in Home Assistant
   immediately invalidates all derived tokens — that is the intended revocation
@@ -202,17 +222,32 @@ token (LLAT). This is **by design**:
 
 The consent form explains this revocation path. Reports about token opacity
 (the LLAT being visible inside the token) will be closed as by-design.
+This design is distinct from the component's `ha_auth` and `legacy`
+authentication modes described next.
 
 ### In-process server (`ha_mcp_tools` in-process server entry)
 
-The `ha_mcp_tools` component's **in-process MCP server** config entry can run the
-ha-mcp server in-process inside Home Assistant and expose it through a Home
-Assistant webhook (see [docs/in-process-server.md](docs/in-process-server.md)).
-A new entry starts with the webhook disabled and the server port bound to
-loopback; the setup form and the entry options let an administrator enable
-remote access with one of three authentication postures (**Authentication
-mode**), or LAN access to the port. Entries created before setup offered that
-choice keep the webhook on in `none` mode with LAN binding.
+The canonical `ha_mcp_tools` server runtime is **native**. Its FastMCP lifespan
+runs on Home Assistant's event loop, and the existing HA HTTP listener serves
+its webhook requests through an ASGI adapter. It opens no additional listener
+or server thread/subprocess and makes no HA REST/WebSocket loopback calls.
+Native tools invoke Core owners directly or through small domain services,
+under a shared Engine's admission and operation ownership.
+
+New server entries select native execution and start with the webhook disabled.
+The administrator selects an active human administrator as owner and may enable
+the webhook using one of the three authentication modes below. With the webhook
+disabled, native MCP has no direct-port endpoint; Assist and the administrator
+settings panel can still use the runtime. The legacy runtime keeps its separate
+listener, worker thread and HA client. Existing entries without `runtime_mode`
+retain that runtime and their options until explicitly changed. Migration does
+not enable a disabled webhook or preserve a legacy direct-port URL by opening a
+second listener. HA-hosted webhook/OAuth URLs and entry identities remain stable.
+See the [native compatibility contract](docs/native-migration/compatibility.md)
+and [in-process server guide](docs/in-process-server.md).
+
+Runtime `native`/`legacy` and authentication `none`/`ha_auth`/`legacy` are separate
+settings: selecting **legacy OAuth** does not select the legacy server runtime.
 
 - **Secret webhook URL (`none`).** The webhook id is a high-entropy
   random string and *is* the credential — the same secret-URL trust model as
@@ -231,43 +266,60 @@ choice keep the webhook on in `none` mode with LAN binding.
   a 400 page and no redirect, so the Home Assistant origin is not an open
   redirector. The list ships with the common clients' published callbacks. It is stored on the
   server entry and edited on its Configure screen or in the admin-only
-  sidebar panel; dynamic client registration cannot add to it.
+  sidebar panel; dynamic client registration cannot add to it. An
+  administrator can turn the list off with **Allow any OAuth callback URL**,
+  which accepts any `https` or loopback `http` callback without userinfo or a
+  fragment and so makes that endpoint an open redirector again; it is off by
+  default.
+  On the native runtime this capability acts as the configured administrator
+  owner, who must remain active and authorized. Possession of the URL does not
+  supply an independent per-client Home Assistant identity.
 - **Home Assistant account (`ha_auth`).** Home Assistant Core is the OAuth
   authorization server: the entry serves the discovery documents and
   validates inbound Bearer tokens against Home Assistant's own auth, so access
   is gated by a Home Assistant login — and restricted to **administrator**
-  users. The server acts with its own administrator token (the caller's
-  bearer is never forwarded), so accepting any valid login would grant every
-  household member admin-equivalent control; non-admin, inactive, and
-  system-generated users are rejected. This is distinct from the beta OAuth mode
+  users. Non-admin, inactive and system-generated users are rejected. Native
+  execution uses the authenticated user's identity and validates the Bearer
+  again during admission; it creates no internal administrator LLAT. The legacy
+  server instead acts with its own administrator token after the same inbound
+  administrator gate. This is distinct from the beta OAuth mode
   below — no bespoke authorization server or self-issued token is involved, and
   revoking the user's Home Assistant token/session revokes access.
   The component-scoped authorize/token/revoke endpoints front Core's own
-  `/auth/*` (a browser redirect, a server-side token forward, and an RFC 7009
-  revocation forward) so the URLs clients cache are the component's — Core
-  remains the authorization authority and performs its own validation on every
-  request. Revocation is fronted because the refresh token the client holds is
+  `/auth/*` so the URLs clients cache are the component's. Authorization
+  redirects into Core. Exchanges requiring no translation redirect the client
+  to Core as well. For translated code/refresh forms, the native runtime calls
+  the installed TokenView's grant methods with the original incoming request
+  and separately translated form. Core retains its code store, single-use and
+  PKCE checks, client binding, user/provider checks and failed-login handling;
+  the original request preserves the client's address. Native revocation calls
+  Core's token registry directly. The legacy runtime retains its HTTP relay
+  for these translated requests. Neither native grant handling nor revocation
+  falls back to a local HTTP request if its Core owner is unavailable.
+
+  Revocation is fronted because the refresh token the client holds is
   a signed envelope naming the identity Core bound the grant to, and Core
   answers 200 for a token it does not recognise: posting the envelope to Core
   directly would report a revocation that never happened. The scoped endpoint
   is anonymous exactly as Core's own is (RFC 7009 authorizes the bearer of the
-  token, not a client identity). It makes no outbound request for a token that
-  is not one of its own envelopes; a prefixed one is forwarded even when its
+  token, not a client identity). A plain Core token redirects to Core's
+  revocation endpoint; a prefixed envelope is unwrapped even when its
   signature does not verify, which is what keeps revocation working after the
   signing key rotates (removing and re-adding the integration mints a new one).
   That grants a forger nothing: possession is the only authorization a
   revocation needs, and Core's revocation endpoint is anonymous and idempotent,
   so an unverified body could just as well have been posted to Core directly.
   The refresh path is the strict one — an envelope whose signature it cannot
-  verify is answered locally and never forwarded. For URL-shaped client
+  verify is answered locally and never submitted to Core. For URL-shaped client
   identities Core would reject (cross-origin Client ID Metadata Document
   clients), the component validates the CIMD document itself per the MCP
   2026-07-28 requirements (https-only fetch with no redirects, 10 KiB cap,
   exact `client_id` round-trip, `redirect_uris` match, loopback/IP-literal
-  hosts refused) and forwards a same-origin-shaped client_id. This grants
+  hosts refused) and translates to a same-origin-shaped client_id. This grants
   nothing new: Core already accepts any self-asserted redirect-origin
   client_id, so a validated translation authorizes only what a client could
-  claim directly; anything failing validation is forwarded unchanged. The
+  claim directly; anything failing validation retains its original identity
+  for Core's own rejection. The
   anonymous registration endpoint mints stateless public-client ids
   (HMAC-signed, embedding the registered redirect URIs — no server-side
   registration store); access still requires completing Core's admin login.
@@ -275,16 +327,15 @@ choice keep the webhook on in `none` mode with LAN binding.
   component serves on its scoped endpoints (`/api/ha_mcp_tools/oauth/authorize`
   + `/token`, which discovery advertises) and additionally at the Home
   Assistant root (`/authorize` + `/token`) as an alias for metadata-ignoring
-  clients, for
-  OAuth-only MCP clients that HA Core's native OAuth cannot serve (Google Gemini
-  Spark's cross-origin Client-ID-Metadata-Document redirect, GitHub Copilot
-  CLI's dynamic registration). The credential is a **static `client_id` +
+  clients. This retains a shared-credential compatibility posture for OAuth
+  clients. The credential is a **static `client_id` +
   `client_secret`** the component generates (or the admin overrides), plus a
   signing key — all persisted in the config entry. Its security properties:
   - **The client secret is the boundary.** Anyone holding the `client_id` +
     `client_secret` can complete the flow and mint tokens; there is no
-    per-user identity. Access is **admin-equivalent** — the same server
-    administrator token backs it as the other modes. Keep the secret secret.
+    per-user identity. Access is **admin-equivalent**: the configured human
+    administrator owner backs native execution, and the server's administrator
+    token backs the legacy runtime. Keep the secret secret.
   - **Self-issued Bearer tokens**, HMAC-signed and stateless, carrying
     `{kind, iat, exp, jti, cid}` — **no** Home Assistant LLAT (unlike the beta
     OAuth mode in "OAuth Bearer token design" above; that section's
@@ -342,9 +393,9 @@ administrator-only Configure screen of the entry; the log and notifications
 never carry it. New entries start with the
 webhook off, and a local-only option removes it entirely.
 
-The server reaches Home Assistant with an administrator's long-lived access
-token (#2427): one the administrator pastes, or one the component issues at
-setup from the login of a local-only account the administrator created for the
+The legacy server runtime reaches Home Assistant with an administrator's
+long-lived access token (#2427): one the administrator pastes, or one the
+component issues at setup from the login of a local-only account the administrator created for the
 server. The component never creates an account. It revokes a token it issued
 when the token is switched or the entry removed, and leaves a pasted token
 alone. The login skips that account's multi-factor step, but only an
@@ -354,20 +405,56 @@ missing, revoked or non-administrator credential stops the server and files a
 repair that asks for a replacement, rather than minting a new administrator.
 The token is stored in the config entry and handed to the server in memory
 (never through the Home Assistant process environment). Disabling the config
-entry stops the server; removing it deletes only an account an older release
-created, never an account the user created, and revokes only a token the
-component issued, never a pasted one. As with
-standard mode, that token's Home Assistant permissions define what the server can
-do.
+entry stops the server, and so does turning off the entry's **Access** switch
+(#2801), which closes the webhook, the direct port and the conversation-agent
+LLM API while the entry stays loaded. The switch is disabled by default, and as
+a configuration entity it is not exposed to Assist by default. It does not
+revoke Home Assistant credentials a `ha_auth` client already holds: those work
+against Home Assistant's own API regardless of the switch, and against the
+server again once access is back on. Removing the entry deletes only an account
+an older release created, never an account the user created, and revokes only a
+token the component issued, never a pasted one. As with standard mode, that
+token's Home Assistant permissions define what the server can do.
+
+Native execution does not use those stored server credentials. Older fields
+can remain for rollback, and the existing ownership rules still govern their
+cleanup when an entry is removed. A new native entry stores the selected owner
+ID instead of issuing a server LLAT. In `none` and legacy-OAuth modes the
+configured owner must remain active and an administrator; in `ha_auth` mode
+the authenticated caller must meet those requirements. Disabling or unloading
+the entry stops admission and drains its owned work. A disconnected HTTP waiter
+does not cancel an already owned mutation or make an uncertain result safe to
+retry.
+
+MCP, Assist and native custom-code `call_tool` share the Engine's authorization,
+read-only, enabled-tool and approval controls. Native mutation owners recheck
+admission after preparation and before dispatch. Assist exposure is checked
+again at invocation and during admission, including nested calls. Anonymous
+Assist contexts receive no administrator fallback. Exported Assist API IDs,
+schemas and full/search settings are preserved by a transport-neutral rich
+projection and a separate Core adapter, without an internal MCP client or
+patching Core's global LLM API. Imported Core LLM tools retain their original
+validators and actor context, and revalidate their selected API/tool owner
+before dispatch. Assist cannot carry tool images; image-only calls are refused,
+while completed operations can retain structured outcomes with an image warning.
+
+The native backend does not execute arbitrary WebSocket handlers or fabricate
+transport requests. Unmapped raw commands and custom code's `api_get`,
+`api_post` and `ws_send` report unsupported capabilities; saved source remains
+available and portable nested calls use `call_tool`. These restrictions do not
+change the trusted-client threat model or turn code mode into an adversarial
+code sandbox.
 
 The component also adds an admin-only **settings panel** to the Home Assistant
-sidebar that reverse-proxies the server's web settings UI over Home Assistant's
-own HTTP. Because a browser cannot attach a Bearer token to a panel view, access
+sidebar, served over Home Assistant's own HTTP. Because a browser cannot attach
+a Bearer token to a panel view, access
 is gated by a short-lived, HttpOnly session cookie that an authenticated
-**administrator** obtains through Home Assistant, and every proxied request
-re-validates that the session still maps to an active admin. The loopback secret
-path is never exposed to the browser and no token or secret is placed in a URL;
-the proxy returns 503 whenever the server is not running.
+**administrator** obtains through Home Assistant, and every request revalidates
+that the session still maps to an active admin. Native requests call local
+settings handlers; legacy requests reverse-proxy the separate server. The
+legacy listener's secret path is never exposed to the browser and panel session
+credentials are not placed in URLs; the panel returns 503 when its runtime is
+unavailable.
 
 ### Webhook Proxy app (`ha_mcp_webhook_proxy`)
 

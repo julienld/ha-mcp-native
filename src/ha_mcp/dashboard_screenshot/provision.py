@@ -31,7 +31,7 @@ import httpx
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ..errors import ErrorCode, create_error_response
-from ..tools.helpers import raise_tool_error
+from ..utils.tool_errors import raise_tool_error
 from .theme_guard import EngineCredential, addon_credential_from_options
 
 logger = logging.getLogger(__name__)

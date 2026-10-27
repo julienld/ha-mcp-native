@@ -618,7 +618,7 @@ class TestPreFlowGateMenuChoiceThreading:
         # raise so the breadcrumb path is exercised.
         import logging
 
-        from ha_mcp.tools.config_helpers import flow as helpers_mod
+        from ha_mcp.runtime.flows import helpers as helpers_mod
 
         async def _raises(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("simulated fetch-helper bug")
@@ -629,7 +629,7 @@ class TestPreFlowGateMenuChoiceThreading:
             _raises,
         )
 
-        caplog.set_level(logging.DEBUG, logger="ha_mcp.tools.config_helpers.flow")
+        caplog.set_level(logging.DEBUG, logger="ha_mcp.runtime.flows.helpers")
 
         ctx = await _flow_helper_error_context(AsyncMock(), "filter")
 

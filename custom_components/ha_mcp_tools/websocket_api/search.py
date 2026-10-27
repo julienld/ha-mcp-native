@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from ..core_registry import _registry_enrichment as _registry_enrichment
 from ..search_locations import (
     add_location_metadata,
     add_registry_failures,
@@ -19,6 +20,7 @@ from .constants import (
     CONFIG_SEARCH_TYPES,
     DEFAULT_LIMIT,
     FLOW_HELPER_DOMAINS,
+    FUZZY_THRESHOLD,
     SEARCH_TYPE_AUTOMATION,
     SEARCH_TYPE_ENTITY,
     SEARCH_TYPE_HELPER,
@@ -27,18 +29,12 @@ from .constants import (
 )
 from .flow_domains import HELPER_FLOWS_DEGRADED_WARNING, _flow_helper_domains
 from .registry import (
-    _area_name,
-    _device_dict_repr,
-    _effective_area_for_entry,
-    _floor_name_for_area,
     _iter_states,
-    _label_names,
     _reg_entity,
     _RegistryView,
     _resolve_registries,
-    _unambiguous_device_entries,
 )
-from .search_config import _search_config_surface, _search_helpers
+from .search_config import _observe_candidate, _search_config_surface, _search_helpers
 from .search_score import _apply_hidden_penalty, _text_tier, _tokenize
 from .secrets import (
     SCRUB_DEGRADED_MATCH_WARNING,
@@ -62,6 +58,10 @@ def _do_search(  # noqa: PLR0915
     flow_domains: frozenset[str] = FLOW_HELPER_DOMAINS,
     custom_domains: frozenset[str] = frozenset(),
     helper_flows_degraded: bool = False,
+    stored_configs: dict[str, dict[str, dict[str, Any]]] | None = None,
+    record_visible: Callable[[dict[str, Any]], bool] | None = None,
+    record_collector: Callable[[dict[str, Any]], None] | None = None,
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> dict[str, Any]:
     """Unified in-process search. Pure over ``hass`` — the WS wrapper is thin.
 
@@ -135,7 +135,14 @@ def _do_search(  # noqa: PLR0915
             area_filter=location.area_ids if location else None,
             state_filter=state_filter,
             include_membership=membership_requested,
+            fuzzy_threshold=fuzzy_threshold,
         )
+        if record_collector is not None or record_visible is not None:
+            scored_entities = [
+                rec
+                for rec in scored_entities
+                if _observe_candidate(rec, record_collector, record_visible)
+            ]
         # Opt-in visibility filter: a hard exclude applied BEFORE counts/pagination,
         # exactly where the legacy path drops ``visibility_hidden`` entities at the
         # top of ``_match_exact_search_entity`` (independent of ``include_hidden``,
@@ -208,6 +215,13 @@ def _do_search(  # noqa: PLR0915
                     partial_reasons=partial_reasons,
                     diagnostics=diagnostics,
                     secret_values=secret_values,
+                    stored_configs=stored_configs.get(domain)
+                    if stored_configs is not None
+                    else None,
+                    require_storage_proof=stored_configs is not None,
+                    record_visible=record_visible,
+                    record_collector=record_collector,
+                    fuzzy_threshold=fuzzy_threshold,
                 )
             )
     if SEARCH_TYPE_HELPER in search_types:
@@ -222,6 +236,9 @@ def _do_search(  # noqa: PLR0915
                 secret_values=secret_values,
                 flow_domains=flow_domains,
                 custom_domains=custom_domains,
+                record_visible=record_visible,
+                record_collector=record_collector,
+                fuzzy_threshold=fuzzy_threshold,
             )
         )
 
@@ -307,7 +324,9 @@ def _sort_key(rec: dict[str, Any]) -> str:
     return str(rec.get("entity_id") or rec.get("id") or rec.get("name") or "")
 
 
-async def _search_prep(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
+async def _search_prep(
+    hass: HomeAssistant, msg: dict[str, Any], *, include_scrub_status: bool = False
+) -> dict[str, Any]:
     """Async pre-step for ``search``: load the secret-scrub set off the loop, and
     for a helper search ask Core which domains are helper flows
     (:func:`_flow_helper_domains`).
@@ -324,14 +343,18 @@ async def _search_prep(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, An
     scrub_surfaces = (*CONFIG_SEARCH_TYPES, SEARCH_TYPE_HELPER)
     if not any(st in search_types for st in scrub_surfaces):
         return {"secret_values": frozenset()}
-    if SEARCH_TYPE_HELPER not in search_types:
+    if SEARCH_TYPE_HELPER not in search_types and not include_scrub_status:
         values = await hass.async_add_executor_job(_load_secret_values, hass)
         return {"secret_values": values}
     values, degraded = await hass.async_add_executor_job(_load_secret_scrub, hass)
     return {
         "secret_values": values,
         "secret_scrub_degraded": degraded,
-        **await _flow_helper_domains(hass),
+        **(
+            await _flow_helper_domains(hass)
+            if SEARCH_TYPE_HELPER in search_types
+            else {}
+        ),
     }
 
 
@@ -348,6 +371,7 @@ def _search_entities(
     area_filter: set[str] | None,
     state_filter: str | None,
     include_membership: bool = False,
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> list[dict[str, Any]]:
     """Score every state against the query over the joined registry view."""
     results: list[dict[str, Any]] = []
@@ -373,7 +397,12 @@ def _search_entities(
             score: int | None = _apply_hidden_penalty(100, rec["_hidden"])
             match_type = "match_all"
         else:
-            tier = _text_tier(query_lower, rec["_match_texts"], fuzzy=not exact)
+            tier = _text_tier(
+                query_lower,
+                rec["_match_texts"],
+                fuzzy=not exact,
+                threshold=fuzzy_threshold,
+            )
             if tier is None:
                 continue
             score = _apply_hidden_penalty(tier, rec["_hidden"])
@@ -463,60 +492,6 @@ def _get_match_type_tier(
     if query_lower in fname:
         return "partial_name"
     return "fuzzy_match"
-
-
-def _registry_enrichment(view: _RegistryView, entity_id: str) -> dict[str, Any]:
-    """Join one entity_id with the entity/device/area/floor/label registries.
-
-    The shared registry read behind BOTH the search record (:func:`_entity_record`)
-    and the ``entity_enrich`` / ``exposure`` commands, so the area/floor/label-name
-    resolution lives in exactly one place. Resolves the entity's aliases plus its
-    area / floor / label NAMES (device-inherited when the entity itself carries
-    none), keyed off the entity registry — no ``State`` object required, so a
-    registry-only (stateless) entity is enriched too. Returns the public
-    enrichment fields (``area`` / ``floor`` / ``labels`` / ``aliases``) alongside
-    the internal ``_area_id`` / ``_hidden`` / ``_dev_texts`` the scorer consumes.
-    """
-    reg = _reg_entity(view, entity_id)
-    # String entries only: HA core's aliases can carry the COMPUTED_NAME
-    # sentinel (entity_registry.ComputedNameType._singleton, "the computed
-    # entity name is an alias"). Blind str() published it as a literal
-    # "ComputedNameType._singleton" alias on every carrying entity — fake data
-    # in results AND a scored match_text. The name it stands for is already
-    # matched via ``friendly``, so dropping the sentinel loses nothing.
-    aliases = (
-        sorted(a for a in (getattr(reg, "aliases", None) or []) if isinstance(a, str))
-        if reg
-        else []
-    )
-    area_id = _effective_area_for_entry(view, reg) if reg else None
-    device_id = getattr(reg, "device_id", None) if reg else None
-    labels = set(getattr(reg, "labels", None) or []) if reg else set()
-    hidden = bool(getattr(reg, "hidden_by", None)) if reg else False
-
-    dev = (
-        _unambiguous_device_entries(view).get(device_id)
-        if isinstance(device_id, str) and device_id
-        else None
-    )
-    dev_texts: list[str] = []
-    if dev is not None:
-        dev_row = _device_dict_repr(dev) or {}
-        labels |= set(dev_row.get("labels") or [])
-        for attr in ("name_by_user", "name", "manufacturer", "model"):
-            val = dev_row.get(attr)
-            if val:
-                dev_texts.append(str(val))
-
-    return {
-        "area": _area_name(view, area_id),
-        "floor": _floor_name_for_area(view, area_id),
-        "labels": _label_names(view, labels),
-        "aliases": aliases,
-        "_area_id": area_id,
-        "_hidden": hidden,
-        "_dev_texts": dev_texts,
-    }
 
 
 def _entity_record(

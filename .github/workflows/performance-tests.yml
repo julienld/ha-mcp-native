@@ -36,7 +36,7 @@ env:
   PYTHON_VERSION: "3.13"
   UV_CACHE_DIR: /tmp/.uv-cache
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-  HA_IMAGE_GHCR: "ghcr.io/home-assistant/home-assistant:2026.10.2"
+  HA_IMAGE_GHCR: "ghcr.io/home-assistant/home-assistant:2026.10.4"
   # Disable Testcontainers' Ryuk reaper: it has been reported to leave
   # zombie containers on GHA runners (see #366, Ilya0527 2026-05-18).
   # The E2E fixture in tests/src/e2e/conftest.py relies instead on the
@@ -90,7 +90,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}
@@ -115,6 +115,7 @@ jobs:
         exit $exit_code
       env:
         HAMCP_ENV_FILE: "tests/.env.test"
+        HACS_FRONTEND_GITHUB_TOKEN: ${{ github.token }}
 
     - name: Upload performance results
       if: always()

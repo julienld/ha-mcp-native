@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_mcp import backup_manager as bm
-from ha_mcp.tools import config_entry_flow
+from ha_mcp.runtime import snapshot_flow_restore as config_entry_flow
 
 from .test_template_deleted_recovery import recovery as recovery
 from .test_template_helper_backup import _record, _response

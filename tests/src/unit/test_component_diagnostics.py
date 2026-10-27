@@ -22,11 +22,15 @@ import custom_components.ha_mcp_tools.embedded_server as eserver  # noqa: E402
 import custom_components.ha_mcp_tools.embedded_setup as esetup  # noqa: E402
 from custom_components.ha_mcp_tools.const import (  # noqa: E402
     CONF_ENTRY_TYPE,
+    DATA_ACCESS_ENABLED,
     DATA_ACCESS_TOKEN,
+    DATA_ADMIN_TOKEN,
     DATA_BRINGUP_TASK,
     DATA_DCR_SIGNING_KEY,
+    DATA_ISSUED_TOKEN_ID,
     DATA_LAST_PIP_SPEC,
     DATA_MANAGER,
+    DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
     DATA_OAUTH_CLIENT_SECRET,
     DATA_OAUTH_SIGNING_KEY,
@@ -66,6 +70,9 @@ SECRET_DATA = {
         DATA_SERVER_USER_ID,
         DATA_REFRESH_TOKEN_ID,
         DATA_ACCESS_TOKEN,
+        DATA_ADMIN_TOKEN,
+        DATA_ISSUED_TOKEN_ID,
+        DATA_NATIVE_OWNER_ID,
         DATA_LAST_PIP_SPEC,
     )
 }
@@ -129,6 +136,14 @@ def _server_entry(
     options: dict[str, Any] | None = None, data: dict[str, Any] | None = None
 ) -> Any:
     return _entry({CONF_ENTRY_TYPE: ENTRY_TYPE_SERVER, **(data or {})}, options)
+
+
+async def test_native_manager_is_reported_running_without_a_legacy_package_override():
+    entry = _server_entry({"runtime_mode": "native", "pip_spec": "ha-mcp-dev==0.1.0"})
+    hass = FakeHass([entry], data={DATA_MANAGER: SimpleNamespace(is_running=True)})
+    result = await diag.async_get_config_entry_diagnostics(hass, entry)
+    assert result["server"]["running"] is True
+    assert result["server"]["package_override_set"] is False
 
 
 @pytest.fixture(autouse=True)
@@ -368,11 +383,14 @@ async def test_server_summary_reports_configured_options() -> None:
         OPT_EXTERNAL_URL: "https://ha.example.com",
     }
 
-    result = await _diagnostics(FakeHass([_server_entry(options)]))
+    entry = _server_entry(options, {DATA_ACCESS_ENABLED: False})
+
+    result = await _diagnostics(FakeHass([entry]))
 
     assert result["server"] == {
         "installed_server_version": "8.7.0",
         "package_override_set": True,
+        "access_enabled": False,
         "running": False,
         "bring_up_in_progress": False,
         "startup_error": None,
@@ -421,6 +439,7 @@ async def test_server_summary_defaults_for_unset_options(pip_spec: Any) -> None:
     server = (await _diagnostics(FakeHass([_server_entry(options)])))["server"]
 
     assert server["package_override_set"] is False
+    assert server["access_enabled"] is True
     assert server["webhook_enabled"] is True
     assert server["webhook_auth"] == WEBHOOK_AUTH_NONE
     assert server["external_url_set"] is False

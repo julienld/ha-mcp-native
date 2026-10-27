@@ -223,26 +223,6 @@ class TestLoopbackDerivation:
     instance with ``http.ssl_certificate`` configured, killing every HA
     round-trip while the MCP handshake kept working."""
 
-    def test_no_api_object_falls_back_to_constant(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = None
-        assert es._derive_loopback_url(hass) == ("http://127.0.0.1:8123", None)
-
-    def test_ssl_enabled_derives_https_with_verify_off(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=8123, use_ssl=True)
-        assert es._derive_loopback_url(hass) == ("https://127.0.0.1:8123", False)
-
-    def test_custom_port_is_honored(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=8444, use_ssl=False)
-        assert es._derive_loopback_url(hass) == ("http://127.0.0.1:8444", None)
-
-    def test_unusable_port_falls_back_to_8123(self, tmp_path):
-        hass = _make_hass(tmp_path)
-        hass.config.api = SimpleNamespace(port=object(), use_ssl=True)
-        assert es._derive_loopback_url(hass) == ("https://127.0.0.1:8123", False)
-
     def test_manager_derives_when_no_override(self, tmp_path):
         hass = _make_hass(tmp_path)
         hass.config.api = SimpleNamespace(port=8443, use_ssl=True)
@@ -1067,7 +1047,7 @@ class TestDistHelpers:
 
         args = calls["args"]
         assert "--target" in args
-        assert args[args.index("--target") + 1] == "/config/deps"
+        assert args[args.index("--target") + 1] == os.path.abspath("/config/deps")
         assert "--python" not in args
 
     def test_uninstall_nonzero_exit_is_swallowed(self, monkeypatch):
@@ -1201,13 +1181,12 @@ class TestSafeInvalidateCaches:
     def test_prunes_stale_entries_then_retries(self, monkeypatch):
         calls = self._raise_once(monkeypatch)
         sys.path_importer_cache.clear()
-        sys.path_importer_cache["/abs/deps/dir"] = object()  # abs + live → kept
+        live_path = os.path.abspath("/abs/deps/dir")
+        sys.path_importer_cache[live_path] = object()  # abs + live → kept
         sys.path_importer_cache[self._EDITABLE_KEY] = None  # non-abs None → pruned
         sys.path_importer_cache[""] = None  # relative None → pruned
-        # Non-absolute key with a LIVE (non-None) finder: the None disjunct is
-        # False here, so ONLY the ``not os.path.isabs`` disjunct can prune it —
-        # this independently exercises the abspath branch (a real editable
-        # placeholder has a live finder, not None).
+        # A live non-absolute finder exercises only the not-isabs branch;
+        # real editable placeholders can have a live finder, not None.
         sys.path_importer_cache["rel/not/absolute"] = object()
 
         es._safe_invalidate_caches()
@@ -1216,7 +1195,7 @@ class TestSafeInvalidateCaches:
         assert self._EDITABLE_KEY not in sys.path_importer_cache
         assert "" not in sys.path_importer_cache
         assert "rel/not/absolute" not in sys.path_importer_cache
-        assert "/abs/deps/dir" in sys.path_importer_cache
+        assert live_path in sys.path_importer_cache
 
     def test_propagates_non_keyerror(self, monkeypatch):
         def _boom():
@@ -1294,7 +1273,7 @@ class TestThreadEnvStaging:
         )
         captured = {}
 
-        async def _fake_serve(_token, _stop_event):
+        async def _fake_serve(_token, _stop_event, _stop_requested):
             for key in (
                 "HOMEASSISTANT_URL",
                 "HOMEASSISTANT_TOKEN",
@@ -1339,7 +1318,7 @@ class TestThreadEnvStaging:
             "http://ha.local:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
         )
         # _serve raised on the ha_mcp.server import → captured, thread didn't hang.
         assert mgr._thread_exc is not None
@@ -1368,7 +1347,7 @@ class TestThreadEnvStaging:
             "https://127.0.0.1:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
             verify_ssl=False,
         )
 
@@ -1540,7 +1519,7 @@ class TestThreadEnvStaging:
     def test_thread_crash_is_captured_not_raised(self, tmp_path, monkeypatch):
         mgr, _hass, _entry = _manager(tmp_path)
 
-        async def _boom(_token, _stop_event):
+        async def _boom(_token, _stop_event, _stop_requested):
             raise RuntimeError("serve failed")
 
         monkeypatch.setattr(mgr, "_serve", _boom)
@@ -1943,7 +1922,7 @@ class TestReadinessProbe:
 
         mgr, _hass, _entry = _manager(tmp_path)
 
-        async def _exit_now(access_token, stop_event):
+        async def _exit_now(access_token, stop_event, stop_requested):
             raise SystemExit(3)
 
         monkeypatch.setattr(mgr, "_serve", _exit_now)
@@ -2323,7 +2302,7 @@ class TestLifecycle:
 
         with pytest.raises(
             es.EmbeddedServerError,
-            match=r"requires Home Assistant 2026\.8\.0 or newer",
+            match=r"requires Home Assistant 2026\.10\.0 or newer",
         ) as exc:
             await mgr.async_start()
 
@@ -2797,7 +2776,7 @@ class TestImportingWorkerRegistry:
         monkeypatch.setattr(es, "_IMPORTING_WORKERS", {threading.current_thread()})
         seen: list[bool] = []
 
-        async def _probe(access_token, stop_event):
+        async def _probe(access_token, stop_event, stop_requested):
             seen.append(threading.current_thread() in es._IMPORTING_WORKERS)
             raise SystemExit(3)
 
@@ -2816,7 +2795,7 @@ class TestImportingWorkerRegistry:
         mgr, _hass, _entry = _manager(tmp_path)
         monkeypatch.setattr(es, "_IMPORTING_WORKERS", {threading.current_thread()})
 
-        async def _boom(access_token, stop_event):
+        async def _boom(access_token, stop_event, stop_requested):
             raise RuntimeError("boom mid-import")
 
         monkeypatch.setattr(mgr, "_serve", _boom)
@@ -2837,7 +2816,7 @@ class TestImportingWorkerRegistry:
 
         mgr_a, _hass_a, _entry_a = _manager(tmp_path)
 
-        async def _hold(access_token, stop_event):
+        async def _hold(access_token, stop_event, stop_requested):
             # threading.Event so the MAIN thread can release a coroutine
             # running on worker A's own loop; run_in_executor keeps the
             # worker loop unblocked while waiting.

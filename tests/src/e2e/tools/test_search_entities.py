@@ -17,6 +17,7 @@ from ..utilities.assertions import (
     safe_call_tool,
 )
 from ..utilities.scene_fragments import is_structural_scene_fragment
+from ..utilities.seeded_search_area import seeded_search_area
 from ..utilities.topology import component_surface_available
 from ..utilities.wait_helpers import wait_for_tool_result
 
@@ -2219,51 +2220,11 @@ class TestSearchEntitiesSeededAreasIssue1170:
 
     @pytest.fixture
     async def seeded_bedroom(self, mcp_client):
-        """Assign 4 entities of 3 different domains to the seeded
-        ``bedroom`` area, then unassign on teardown.
-
-        Cleanup is wrapped in try/finally so an unexpected fixture-body
-        failure (e.g. wait_for_tool_result timing out) still unwinds the
-        seed-area assignments — otherwise subsequent tests inherit the
-        leaked assignment.
-        """
-        try:
-            for eid, area_id in self.SEED_ASSIGNMENTS:
-                try:
-                    await mcp_client.call_tool(
-                        "ha_set_entity", {"entity_id": eid, "area_id": area_id}
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    pytest.skip(f"Seed entity {eid} unavailable: {exc}")
-            # Wait until all 4 are visible in the bedroom area
-            expected = {eid for eid, _ in self.SEED_ASSIGNMENTS}
-            await wait_for_tool_result(
-                mcp_client,
-                tool_name="ha_search",
-                arguments={"area_filter": "bedroom", "limit": 50},
-                predicate=lambda d: expected.issubset(
-                    {r.get("entity_id") for r in d.get("data", d).get("entities", [])}
-                ),
-                description="all seed assignments visible under bedroom",
-            )
-            yield {
-                "area_id": "bedroom",
-                "entity_ids": [eid for eid, _ in self.SEED_ASSIGNMENTS],
-            }
-        finally:
-            # Cleanup runs even on pytest.skip or fixture-body exceptions.
-            # ha_set_entity requires at least one update field, so we set
-            # area_id to empty-string (which the tool maps to "no area")
-            # rather than None.
-            for eid, _ in self.SEED_ASSIGNMENTS:
-                try:
-                    await mcp_client.call_tool(
-                        "ha_set_entity", {"entity_id": eid, "area_id": ""}
-                    )
-                except Exception as exc:  # noqa: BLE001  # pragma: no cover — cleanup best-effort
-                    logger.warning(
-                        f"Cleanup of area assignment for {eid} failed: {exc}"
-                    )
+        """Give four seed entities legal own-area assignments, then restore them."""
+        async with seeded_search_area(
+            mcp_client, [eid for eid, _ in self.SEED_ASSIGNMENTS], "bedroom"
+        ) as prepared:
+            yield prepared
 
     @pytest.mark.asyncio
     async def test_area_only_returns_all_assigned_domains(

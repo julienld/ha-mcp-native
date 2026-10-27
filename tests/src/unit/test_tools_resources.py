@@ -19,7 +19,6 @@ from ha_mcp.tools.tools_resources import (
     _decode_legacy_worker_url,
     _detect_ha_config_yaml,
     _is_data_url,
-    register_resources_tools,
 )
 
 
@@ -529,7 +528,9 @@ class TestHaConfigListDashboardResources:
             retained_counts.append(sum(1 for d in decoded_page if d is not None))
             return real_process(page, decoded_page, include)
 
-        monkeypatch.setattr(tools_resources, "_process_resource_list", _spy)
+        monkeypatch.setattr(
+            "ha_mcp.runtime.resource_values._process_resource_list", _spy
+        )
 
         result = await list_tool(include_content=True, limit=1, offset=1)
 
@@ -1263,31 +1264,6 @@ class TestHaConfigDeleteDashboardResource:
         result = json.loads(str(exc_info.value))
         assert result["success"] is False
         assert result["error"]["code"] == "RESOURCE_NOT_FOUND"
-
-
-class TestToolRegistration:
-    """Test tool registration."""
-
-    def test_registers_three_tools(self):
-        """Test that exactly three tools are registered (list, set, delete)."""
-        mcp = MagicMock()
-        registered = []
-        mcp.add_tool = lambda method: registered.append(method.__name__)
-
-        register_resources_tools(mcp, MagicMock())
-
-        assert "ha_config_list_dashboard_resources" in registered
-        assert "ha_config_set_dashboard_resource" in registered
-        assert "ha_config_delete_dashboard_resource" in registered
-        assert "ha_config_set_inline_dashboard_resource" not in registered
-        assert len(registered) == 3
-
-    def test_set_tool_has_destructive_hint(self):
-        """Test set tool has destructiveHint."""
-        tools = ResourceTools(MagicMock())
-        # Access the __fastmcp__ metadata set by @tool decorator
-        metadata = tools.ha_config_set_dashboard_resource.__fastmcp__
-        assert metadata.annotations.destructive_hint is True
 
 
 class TestConstants:

@@ -334,6 +334,12 @@ class _ProxyView(HomeAssistantView):
         if cfg is None:
             return web.Response(status=503, text="The MCP server is not running")
 
+        if (native := cfg.get("native_manager")) is not None:
+            response: web.StreamResponse = await native.settings_ui.handle(
+                request, path
+            )
+            return response
+
         target = f"{cfg['target_url']}/{path}"
         if request.query_string:
             target = f"{target}?{request.query_string}"
@@ -694,7 +700,9 @@ async function showApp() {{
     if (!timer) {{
       showMessage(
         "The in-process MCP server is starting or is not running yet. " +
-          "This view will refresh automatically. If it does not start, " +
+          "This view will refresh automatically. If the server's Access " +
+          "switch is off, turn it on (enable it on the HA-MCP Server " +
+          "device first if it is disabled); if it does not start, " +
           "Settings - System - Repairs says what it needs."
       );
     }}

@@ -37,11 +37,6 @@ if not env_path.exists():
     # Fallback to default .env
     env_path = project_root / ".env"
 
-# Load the environment file (silently, since env vars may come from other sources)
-if env_path.exists():
-    load_dotenv(env_path)
-
-
 # The app options declared by both flavors, and by the dev flavor only.
 _ALL_FLAVORS = AppOption()
 _DEV_FLAVOR = AppOption(flavors=("dev",))
@@ -559,6 +554,21 @@ class Settings(BaseSettings):
         Field(False, alias="REDACT_SECRETS")
     )
 
+    # App option names to redact like ``format: password`` fields, for apps
+    # whose schema ships a secret as a plain string (#2843). Format: see
+    # ``redaction._listed_entries``. Consulted only while ``redact_secrets``
+    # is on; the UI nests it under that toggle. Restart-required because the
+    # app reads its options only at start, though other installs apply it live.
+    redact_app_option_keys: Annotated[
+        str,
+        Setting(
+            surface="advanced",
+            section="redact_keys",
+            app=_ALL_FLAVORS,
+            restart_required=True,
+        ),
+    ] = Field("", alias="REDACT_APP_OPTION_KEYS")
+
     # Mandatory best-practice skills — server-side master switch for the
     # write-tool skill_content delivery feature (issue #1182). When True
     # (default), the six write tools (automations / scripts / scenes /
@@ -878,7 +888,7 @@ class Settings(BaseSettings):
         return _one_of(cls, "backup_hint", v.lower())
 
     model_config = SettingsConfigDict(
-        # Absolute, and the same file load_dotenv already resolved above. A
+        # Absolute, and the same file get_settings loads for standalone use. A
         # relative ".env" here would be a second, independent read that
         # pydantic-settings resolves against the process's working directory —
         # so HAMCP_ENV_FILE would not govern it, and a stray .env in whatever
@@ -892,4 +902,8 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Get application settings."""
+    # Model introspection is also used inside Core. Only explicit standalone
+    # settings initialization may populate the process environment from .env.
+    if env_path.exists():
+        load_dotenv(env_path)
     return Settings()  # type: ignore[call-arg]

@@ -50,7 +50,7 @@ STABLE_HAOS_VERSION = "18.3"
 # renovate: datasource=custom.ha-supervisor-stable depName=home-assistant/supervisor
 STABLE_SUPERVISOR_VERSION = "2026.10.3"
 # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-STABLE_CORE_VERSION = "2026.10.2"
+STABLE_CORE_VERSION = "2026.10.4"
 
 HAOS_VERSION = os.environ.get("HAOS_BUILD_OS_VERSION", STABLE_HAOS_VERSION)
 if re.fullmatch(r"[0-9]+\.[0-9]+(?:\.rc[0-9]+)?", HAOS_VERSION) is None:
@@ -2370,7 +2370,7 @@ def _stage_embedded_server_integration(staging: Path) -> None:
                 "discovery_keys": {},
                 "domain": HA_MCP_SERVER_DOMAIN,
                 "entry_id": HA_MCP_SERVER_ENTRY_ID,
-                "minor_version": 1,
+                "minor_version": 2,  # past the one-time pip_spec clear
                 "modified_at": "2025-09-07T23:56:28.040747+00:00",
                 "options": {
                     # Overwritten with the checkout wheel by the _conftest_haos.py HAOS

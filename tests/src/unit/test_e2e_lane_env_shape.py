@@ -171,6 +171,7 @@ _CBETA = "e2e-beta-tests.yml"
 # lanes must NOT name a backend, or they run the embedded topology instead of
 # the plain-container one they exist to cover.
 _NO_TOOLS_LANES: dict[tuple[str, str], dict[str, str]] = {
+    ("native-e2e.yml", "native-server-only"): {"E2E_BACKEND": "embedded"},
     (_PR, "e2e-validation-no-component"): {},
     (_PR, "e2e-validation-embedded-server-only"): {"E2E_BACKEND": "embedded"},
     (_E2E, "e2e-tests-no-component"): {},
@@ -188,6 +189,7 @@ _NO_TOOLS_LANES: dict[tuple[str, str], dict[str, str]] = {
 # E2E_NO_TOOLS_ENTRY, a pair stops being a comparison and a beta lane stops
 # covering the topology it was built to run on beta images.
 _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
+    ("native-e2e.yml", "native-e2e"),
     (_PR, "e2e-validation"),
     (_PR, "e2e-validation-embedded"),
     (_PR, "e2e-validation-update-path"),
@@ -198,6 +200,8 @@ _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
     (_HAOS, "haos-e2e-embedded"),
     (_HAOS, "haos-e2e-inaddon"),
     (_HAOS, "haos-e2e-stdio"),
+    ("haos-native.yml", "haos-native"),
+    ("native-continuity.yml", "continuity"),
     (_BETA, "haos-e2e-inaddon-beta"),
     (_BETA, "haos-e2e-embedded-beta"),
     (_CBETA, "e2e-tests"),
@@ -210,6 +214,7 @@ _ORDINARY_LANES: tuple[tuple[str, str], ...] = (
 # that needs the full list. (The HAOS lanes already carry --maxfail=0 for their
 # own triage reasons, stated in their step comments.)
 _AUDIT_LANES: tuple[tuple[str, str], ...] = (
+    ("native-e2e.yml", "native-server-only"),
     (_PR, "e2e-validation-no-component"),
     (_PR, "e2e-validation-embedded-server-only"),
     (_E2E, "e2e-tests-no-component"),
@@ -253,6 +258,7 @@ _E2E_SUITE_TARGET = re.compile(r"(?:tests/)?src/e2e/([^\s\"']*)")
 # workflow restructure, a renamed input) fails here rather than reporting an
 # empty sweep as full coverage.
 _MIN_DISCOVERED_LANES = 23
+_PYTEST_INVOCATION = re.compile(r"\buv run(?: --(?:frozen|locked|no-sync))* pytest\b")
 
 
 def _job(workflow: str, job_id: str) -> dict[str, Any]:
@@ -272,7 +278,8 @@ def _pytest_step(workflow: str, job_id: str) -> dict[str, Any]:
     steps = [
         step
         for step in job.get("steps", [])
-        if isinstance(step, dict) and "uv run pytest" in str(step.get("run", ""))
+        if isinstance(step, dict)
+        and _PYTEST_INVOCATION.search(str(step.get("run", "")))
     ]
     assert len(steps) == 1, (
         f"{workflow}::{job_id} must have exactly one pytest step, found "
@@ -306,7 +313,7 @@ def _job_pytest_run(workflow: str, job_id: str) -> str:
         _uncommented(str(step.get("run", "")))
         for step in _job(workflow, job_id).get("steps", [])
         if isinstance(step, dict)
-        and "uv run pytest" in _uncommented(str(step.get("run", "")))
+        and _PYTEST_INVOCATION.search(_uncommented(str(step.get("run", ""))))
     )
 
 
@@ -405,7 +412,7 @@ def _discover_e2e_lanes(directory: Path | None = None) -> set[tuple[str, str]]:
                 if not isinstance(step, dict):
                     continue
                 run = str(step.get("run", ""))
-                if "uv run pytest" in run and _E2E_TARGET.search(run):
+                if _PYTEST_INVOCATION.search(run) and _E2E_TARGET.search(run):
                     discovered.add((workflow, job_id))
                     break
     return discovered

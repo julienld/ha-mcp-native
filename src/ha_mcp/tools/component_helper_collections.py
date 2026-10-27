@@ -13,6 +13,10 @@ import time
 import weakref
 from typing import Any, NoReturn
 
+from ha_mcp.backends.legacy import legacy_errors_sync
+from ha_mcp.runtime.helper_removal_storage import removal_reply as _removal_reply
+from ha_mcp.runtime.storage_targets import raise_not_stored as _raise_not_stored
+
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantCommandNotSent,
@@ -312,41 +316,7 @@ async def stored_helper_target(
     return target, entity, reason
 
 
-def raise_not_stored(
-    helper_type: str, target: str, name: str | None = None
-) -> NoReturn:
-    """A bare id names a stored item only, never an entity by its name."""
-    suggestions = [
-        f"Find its id or entity_id with "
-        f"ha_config_list_helpers(helper_type='{helper_type}')"
-    ]
-    if name:
-        suggestions.append(
-            f"If you meant to create a new helper named {name!r}, "
-            "omit helper_id (or pass action='create')"
-        )
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.ENTITY_NOT_FOUND,
-            f"No stored {helper_type} has the id '{target}', and it is no "
-            f"{helper_type} entity_id. An id without '{helper_type}.' is a "
-            "storage id; name a helper by its entity with the full entity_id.",
-            context={"helper_type": helper_type, "target": target},
-            suggestions=suggestions,
-        )
-    )
+raise_not_stored = legacy_errors_sync(_raise_not_stored)
 
 
-def removal_reply(
-    response: dict[str, Any], entity: str | None, reason: str | None
-) -> dict[str, Any]:
-    """A removal's reply without a guessed entity, saying why it has none."""
-    if entity is None:
-        response["message"] = (
-            f"Successfully deleted {response['helper_type']}: {response['target']}."
-        )
-        response.setdefault("warnings", []).append(
-            f"{response['helper_type']} {response['target']} was deleted, but "
-            f"{reason}, so its entity is not named and the removal was not waited on."
-        )
-    return response
+removal_reply = _removal_reply

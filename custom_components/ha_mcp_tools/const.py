@@ -25,6 +25,9 @@ DOMAIN = "ha_mcp_tools"
 # ``websocket_api.constants.CAPABILITIES``).
 COMPONENT_VERSION = "8.7.0"
 
+CONFIG_ENTRY_VERSION = 1
+CONFIG_ENTRY_MINOR_VERSION = 3
+
 # Config-entry discriminator (``entry.data[CONF_ENTRY_TYPE]``). A missing value
 # means "tools" so the pre-existing services entry keeps working across the
 # component update with no migration.
@@ -43,7 +46,10 @@ SERVER_ENTRY_TITLE = "HA-MCP Server"
 # version so the requirement cannot resolve there, and
 # that requirement gates the whole integration before any entry's config flow
 # runs, so a lower runtime floor here would promise what the load cannot keep.
-MIN_EMBEDDED_HOME_ASSISTANT_VERSION = "2026.8.0"
+MIN_EMBEDDED_HOME_ASSISTANT_VERSION = "2026.10.0"
+# Native execution is exercised separately on this exact upstream installation
+# minimum and the supported monthly trains; dependency alignment is not parity.
+MIN_NATIVE_HOME_ASSISTANT_VERSION = "2026.10.0"
 
 # Allowed directories for file operations (relative to config dir).
 # "blueprints" is read-only BY DEFAULT — in ALLOWED_READ_DIRS but not
@@ -337,13 +343,10 @@ OPT_REGENERATE_SECRETS = "regenerate_secrets"
 # server through Home Assistant; only the direct server port (+ the
 # admin-only sidebar panel, which proxies over loopback) remains.
 OPT_ENABLE_WEBHOOK = "enable_webhook"
-# Conversation-agent LLM API (#1745): when False, the toolset is not
-# registered as a Home Assistant LLM API, so it never appears in any
-# conversation agent's "Control Home Assistant" selector. On by default —
-# registering the API only makes it selectable; nothing is exposed until a
-# user picks it on an agent.
+# Both Core LLM bridges are optional and independent; fresh entries enable neither.
 OPT_ENABLE_LLM_API = "enable_llm_api"
-DEFAULT_ENABLE_LLM_API = True
+DEFAULT_ENABLE_LLM_API = False
+OPT_ENABLE_NATIVE_LLM_IMPORT = "enable_native_llm_import"
 # Which exposure shape(s) the LLM API offers to conversation agents:
 # ``tool_search`` (default) registers a compact API — pinned tools plus
 # search/execute meta-tools — the shape context-limited models need; ``full``
@@ -360,6 +363,9 @@ OPT_ENABLE_STARTUP_NOTIFICATION = "enable_startup_notification"
 # When False, the admin-only "HA-MCP" sidebar settings panel is not registered;
 # the server's options stay reachable on the entry's Configure screen.
 OPT_ENABLE_SIDEBAR_PANEL = "enable_sidebar_panel"
+# When True, the server's access switch (#2801) is forced off at the entry's
+# first setup in each Home Assistant run instead of keeping its stored state.
+OPT_ACCESS_OFF_AFTER_RESTART = "access_off_after_restart"
 # One-shot Configure field: an administrator's long-lived access token to
 # switch the server to (#2427). The options flow validates it and writes it
 # straight into entry.data (_adopt_token); it is never stored in options or
@@ -369,6 +375,9 @@ OPT_ADMIN_TOKEN_REPLACEMENT = "admin_token_replacement"
 # (#2427). Absent = DEFAULT_OAUTH_REDIRECT_ALLOWLIST; a saved list, even an
 # empty one, replaces it. Read per request, so a change needs no reload.
 OPT_OAUTH_REDIRECT_ALLOWLIST = "oauth_redirect_allowlist"
+# When True, the none-mode /authorize accepts any well-formed callback instead
+# of only the allowlist: the administrator's choice to turn the list off.
+OPT_OAUTH_ALLOW_ANY_CALLBACK = "oauth_allow_any_callback"
 # The common OAuth clients' published callbacks. Clients whose callback is
 # unique per app or connector need their own entry: ChatGPT apps on
 # chatgpt.com/connector/oauth/<id>, and Copilot Studio's per-connector
@@ -417,6 +426,14 @@ DATA_OAUTH_SIGNING_KEY = "oauth_signing_key"
 # 2.0.0 gain one on their first reload after upgrade.
 DATA_DCR_SIGNING_KEY = "dcr_signing_key"
 DATA_SERVER_USER_ID = "server_user_id"
+DATA_NATIVE_OWNER_ID = "native_owner_user_id"
+# Native transport limits apply per config entry, without another listener.
+OPT_NATIVE_HTTP_LIMIT = "native_http_limit"
+OPT_NATIVE_STREAM_SECONDS = "native_stream_seconds"
+OPT_NATIVE_IMPORT_APIS = "native_import_apis"
+OPT_RUNTIME_MODE = "runtime_mode"
+RUNTIME_NATIVE = "native"
+RUNTIME_LEGACY = "legacy"
 DATA_REFRESH_TOKEN_ID = "refresh_token_id"
 # A long-lived access token of an administrator, supplied by the user (#2427).
 # The server runs with it; entries from older releases may instead carry the
@@ -430,12 +447,25 @@ DATA_ACCESS_TOKEN = "access_token"
 # pip-spec override) force an actual reinstall on the next start instead
 # of hitting the requirements manager's is-installed shortcut.
 DATA_LAST_PIP_SPEC = "last_pip_spec"
+# State of the server's access switch (#2801). Absent means on, so installs
+# from before the switch keep serving.
+DATA_ACCESS_ENABLED = "access_enabled"
 # hass.data[DOMAIN] sub-keys for the server runtime. Distinct from the tools
 # entry's sub-keys ("caller_token" / "allowed_paths") so both entry types can
 # share hass.data[DOMAIN] without collision.
 DATA_MANAGER = "manager"
 DATA_WEBHOOK = "webhook"
 DATA_BRINGUP_TASK = "bringup_task"
+# Server entry ids already set up in this Home Assistant run, so
+# OPT_ACCESS_OFF_AFTER_RESTART applies at an entry's first setup (startup, or
+# enabling an entry that was disabled at startup) but not on a reload.
+DATA_STARTED_ENTRIES = "started_entries"
+# Serializes the server entry's setup, its unload and the access switch (see
+# embedded_entry).
+DATA_ACCESS_LOCK = "access_lock"
+# Server entry ids unloaded and not set up again, so a switch-on queued behind
+# the unload starts nothing.
+DATA_UNLOADED_ENTRIES = "unloaded_entries"
 # Snapshot of entry.options taken at setup so the update listener reloads only
 # on a genuine options change — the background bring-up persists ids/token/pip
 # spec to entry.data, and those writes must not trigger a self-reload.

@@ -72,6 +72,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.13"
   UV_CACHE_DIR: /tmp/.uv-cache
+  E2E_NATIVE_ARTIFACTS: ${{ github.workspace }}/dist/haos-qualification
   # libguestfs defaults to libvirt which isn't running on GitHub-hosted
   # runners (per-user libvirtd socket missing for the unprivileged
   # runner UID). Direct backend bypasses libvirt and uses QEMU directly.
@@ -231,6 +232,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         # On a cache miss (or a forced rebuild) the qcow2 is built locally;
         # its download (~1.5 GB xz) + decompress (~7 GB qcow2) + boot +
@@ -276,13 +283,18 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install test dependencies
         run: uv sync --all-extras --dev
+
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
@@ -460,6 +472,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         # On a cache miss (or a forced rebuild) the qcow2 is built locally; its
         # download (~1.5 GB xz) + decompress (~7 GB qcow2) + boot + addon-install
@@ -503,7 +521,7 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
@@ -511,10 +529,15 @@ jobs:
       - name: Install test dependencies
         run: uv sync --all-extras --dev
 
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
+
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
 
-      - name: Run full E2E suite against the HAOS embedded server
+      - name: Run selected E2E contracts through the HAOS server
         # HAOS_TEST_MODE=embedded flips conftest.py's HAOS dispatch into the
         # embedded branch: pre-boot it stages the feature-flag override next to
         # the wheel staging, then the session fixture enables the baked-disabled
@@ -694,6 +717,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         # On a cache miss (or a forced rebuild) the qcow2 is built locally;
         # its download (~1.5 GB xz) + decompress (~7 GB qcow2) + boot +
@@ -745,13 +774,18 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install test dependencies
         run: uv sync --all-extras --dev
+
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
@@ -958,6 +992,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
         run: |
@@ -986,13 +1026,18 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install test dependencies
         run: uv sync --all-extras --dev
+
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
@@ -1159,6 +1204,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         # On a cache miss (or a forced rebuild) the qcow2 is built locally; its
         # download (~1.5 GB xz) + decompress (~7 GB qcow2) + boot + addon-install
@@ -1204,7 +1255,7 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
@@ -1212,10 +1263,15 @@ jobs:
       - name: Install test dependencies
         run: uv sync --all-extras --dev
 
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
+
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
 
-      - name: Run full E2E suite against the HAOS embedded server (no tools entry)
+      - name: Run selected E2E contracts through the HAOS server (no tools entry)
         # HAOS_TEST_MODE=embedded flips conftest.py's HAOS dispatch into the
         # embedded branch: pre-boot it stages the feature-flag override next to
         # the wheel staging, then the session fixture enables the baked-disabled
@@ -1401,6 +1457,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify runner resources
+        run: |
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          lscpu
+          free -h
+          df -h /tmp
       - name: Free disk space for the local build
         # On a cache miss (or a forced rebuild) the qcow2 is built locally;
         # its download (~1.5 GB xz) + decompress (~7 GB qcow2) + boot +
@@ -1453,13 +1515,18 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.13.0"
+          version: "0.13.4"
 
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install test dependencies
         run: uv sync --all-extras --dev
+
+      - name: Build paired checkout candidate for Core installation
+        run: |
+          uv run python -c "from pathlib import Path; from tests.qualification_artifacts import build_candidate_artifacts; build_candidate_artifacts(Path.cwd(), Path('dist/haos-qualification'))"
+
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2

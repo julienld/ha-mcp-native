@@ -46,7 +46,9 @@ def _sep_normalized(text: str) -> str:
     return " ".join(_tokenize(text))
 
 
-def _text_tier(query_lower: str, texts: Any, *, fuzzy: bool) -> int | None:
+def _text_tier(
+    query_lower: str, texts: Any, *, fuzzy: bool, threshold: int = FUZZY_THRESHOLD
+) -> int | None:
     """Entity tier: 100 (exact), 80 (substring), fuzzy ratio (>=threshold), or None.
 
     Mirrors the server's ``_match_exact_search_entity`` (100/80) over the entity
@@ -72,7 +74,7 @@ def _text_tier(query_lower: str, texts: Any, *, fuzzy: bool) -> int | None:
             best_ratio = ratio
     if best_substring is not None:
         return best_substring
-    if fuzzy and best_ratio >= FUZZY_THRESHOLD:
+    if fuzzy and best_ratio >= threshold:
         return best_ratio
     return None
 
@@ -100,7 +102,9 @@ def _tier_one_text(
     return None, 0
 
 
-def _name_tier(query_lower: str, texts: Any, *, exact: bool) -> int | None:
+def _name_tier(
+    query_lower: str, texts: Any, *, exact: bool, threshold: int = FUZZY_THRESHOLD
+) -> int | None:
     """Config-name tier: substring => 100 (not 80), else fuzzy ratio or None.
 
     Config name matches are binary 100/0 in the server's exact path
@@ -120,7 +124,7 @@ def _name_tier(query_lower: str, texts: Any, *, exact: bool) -> int | None:
                 return 100
             ratio = _calc_ratio(query_lower, text_lower)
             best_ratio = max(best_ratio, ratio)
-    if not exact and best_ratio >= FUZZY_THRESHOLD:
+    if not exact and best_ratio >= threshold:
         return best_ratio
     return None
 
@@ -133,6 +137,7 @@ def _config_score(
     *,
     exact: bool,
     secret_values: frozenset[str] = frozenset(),
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> tuple[int, bool, bool] | None:
     """Score a config surface: (total, match_in_name, match_in_config) or None.
 
@@ -140,11 +145,20 @@ def _config_score(
     mode floors at :data:`FUZZY_THRESHOLD`. ``secret_values`` scrubs the body
     match corpus (see :func:`_search_in_dict_exact`).
     """
-    name_score = _name_tier(query_lower, [entity_id, name], exact=exact) or 0
-    config_score = _config_body_score(
-        query_lower, config_dict, exact=exact, secret_values=secret_values
+    name_score = (
+        _name_tier(
+            query_lower, [entity_id, name], exact=exact, threshold=fuzzy_threshold
+        )
+        or 0
     )
-    threshold = 100 if exact else FUZZY_THRESHOLD
+    config_score = _config_body_score(
+        query_lower,
+        config_dict,
+        exact=exact,
+        secret_values=secret_values,
+        fuzzy_threshold=fuzzy_threshold,
+    )
+    threshold = 100 if exact else fuzzy_threshold
     total = max(name_score, config_score)
     if total < threshold:
         return None
@@ -157,6 +171,7 @@ def _config_body_score(
     *,
     exact: bool,
     secret_values: frozenset[str] = frozenset(),
+    fuzzy_threshold: int = FUZZY_THRESHOLD,
 ) -> int:
     """Match the query against a config body's keys/values.
 
@@ -180,7 +195,7 @@ def _config_body_score(
     for qt in query_tokens:
         for dt in doc_tokens:
             best = max(best, _calc_ratio(qt, dt))
-    return best if best >= FUZZY_THRESHOLD else 0
+    return best if best >= fuzzy_threshold else 0
 
 
 def _search_in_dict_exact(
@@ -221,7 +236,7 @@ def _leaf_exact_score(
         if data in secret_values:
             return 0
         return 100 if query_lower in data.lower() else 0
-    if data is not None:
+    if data is not None and (isinstance(data, bool) or str(data) not in secret_values):
         return 100 if query_lower in str(data).lower() else 0
     return 0
 
@@ -245,5 +260,7 @@ def _collect_string_leaves(
     elif isinstance(data, str):
         if data not in secret_values:
             out.append(data)
-    elif data is not None:
+    elif data is not None and (
+        isinstance(data, bool) or str(data) not in secret_values
+    ):
         out.append(str(data))

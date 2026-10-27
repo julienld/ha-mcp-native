@@ -13,36 +13,26 @@ capture path (see ``ha_mcp.dashboard_screenshot.capture``).
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import ToolResult, tool
+from ha_mcp.backends.legacy import legacy_errors
+from ha_mcp.runtime.screenshot_tools import ScreenshotFacade
+from ha_mcp.runtime.screenshot_values import screenshot_result
 
 from ..dashboard_screenshot.capture import (
-    DEFAULT_HEIGHT,
-    DEFAULT_RENDER_TIMEOUT_SECONDS,
-    DEFAULT_WAIT_MS,
-    DEFAULT_WIDTH,
-    FULL_PAGE_PARAM_DESC,
-    Orientation,
-    ScreenshotFormat,
-    ViewportPreset,
     capture_dashboard_images,
     validate_capture_parameters,
 )
 from ..dashboard_screenshot.content import (
     dashboard_image_content,
-    dashboard_screenshot_metadata,
-    dashboard_screenshot_warnings,
 )
 from ..dashboard_screenshot.paths import (
     DashboardRenderTarget,
     resolve_dashboard_render_target,
 )
 from ..errors import ErrorCode, create_error_response
-from .coercion import JSON_STRING_COERCION
 from .helpers import log_tool_usage, raise_tool_error, register_tool_methods
 from .tool_hints import read_only_hints
 
@@ -58,26 +48,9 @@ def _package_screenshot_result(
 ) -> ToolResult:
     """Build the standalone native-image result with structured failures."""
     try:
-        structured_content: dict[str, Any] = {
-            "success": True,
-            "url_path": target.url_path,
-            "view_path": target.view_path,
-            "view_index": target.view_index,
-            "render_path": target.render_path,
-            "stable_addressing": target.stable,
-            "screenshot_count": len(captures),
-            "screenshots": dashboard_screenshot_metadata(captures, target.render_path),
-        }
-        if capture_failures:
-            structured_content["partial"] = True
-            structured_content["screenshot_failures"] = capture_failures
-        warnings = [
-            *target.warnings,
-            *dashboard_screenshot_warnings(captures),
-            *capture_warnings,
-        ]
-        if warnings:
-            structured_content["warnings"] = warnings
+        structured_content = screenshot_result(
+            captures, target, capture_failures, capture_warnings
+        )
         return ToolResult(
             content=dashboard_image_content(captures),
             structured_content=structured_content,
@@ -107,177 +80,31 @@ class DashboardScreenshotTools:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
-        name="ha_get_dashboard_screenshot",
-        tags={"Dashboard", "beta"},
-        annotations=read_only_hints("Get Dashboard Screenshot", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_dashboard_screenshot(
-        self,
-        dashboard_path: Annotated[
-            str | None,
-            Field(
-                description="Legacy Lovelace frontend path to render, e.g. "
-                "'lovelace/0' (default dashboard, first view), "
-                "'lovelace-home/kitchen', or 'my-dashboard'. Leading slash "
-                "optional. Prefer url_path + view_path for a stable "
-                "named view. Mutually exclusive with url_path."
-            ),
-        ] = None,
-        url_path: Annotated[
-            str | None,
-            Field(
-                description="Stable dashboard URL path, e.g. 'lovelace-home' "
-                "or 'default'. Use with view_path instead of dashboard_path."
-            ),
-        ] = None,
-        view_path: Annotated[
-            str | None,
-            Field(
-                description="Stable Lovelace views[].path value to render. "
-                "Requires url_path."
-            ),
-        ] = None,
-        width: Annotated[
-            int, Field(description="Viewport width in px.", ge=64, le=4096)
-        ] = DEFAULT_WIDTH,
-        height: Annotated[
-            int | Literal["auto"],
-            Field(
-                description="Viewport height in px (64-4096), or 'auto' for "
-                "content height. full_page=True is a compatibility alias for "
-                "'auto'."
-            ),
-        ] = DEFAULT_HEIGHT,
-        viewport_presets: Annotated[
-            list[ViewportPreset] | None,
-            Field(
-                description="Render one or more named responsive viewports in "
-                "this order: mobile (390x844), tablet (768x1024), desktop "
-                "(1280x800). Overrides width/height.",
-                min_length=1,
-                max_length=3,
-            ),
-            JSON_STRING_COERCION,
-        ] = None,
-        orientation: Annotated[
-            Orientation | None,
-            Field(
-                description="Optional responsive orientation. Swaps viewport "
-                "dimensions when needed; this does not rotate final pixels."
-            ),
-        ] = None,
-        zoom: Annotated[
-            float, Field(description="Page zoom factor (1.0 = 100%).", ge=0.1, le=5.0)
-        ] = 1.0,
-        wait_ms: Annotated[
-            int,
-            Field(
-                description="Extra render-settle time (ms) after the dashboard "
-                "reports loaded. Raise it if a chart card (ApexCharts, "
-                "mini-graph, history-graph) comes back blank.",
-                ge=0,
-                le=30000,
-            ),
-        ] = DEFAULT_WAIT_MS,
-        full_page: Annotated[
-            bool,
-            Field(
-                description=f"{FULL_PAGE_PARAM_DESC[:1].upper()}"
-                f"{FULL_PAGE_PARAM_DESC[1:]}. Uses Puppet's native auto-height "
-                "capture (currently capped at 4000 px); raise wait_ms for "
-                "lazy cards."
-            ),
-        ] = False,
-        theme: Annotated[
-            str | None,
-            Field(
-                description="Installed Home Assistant frontend theme name, applied to this render."
-            ),
-        ] = None,
-        dark_mode: Annotated[
-            bool,
-            Field(description="Render the requested theme in dark mode."),
-        ] = False,
-        language: Annotated[
-            str | None,
-            Field(description="Frontend language code, e.g. 'en' or 'de'."),
-        ] = None,
-        image_format: Annotated[
-            ScreenshotFormat,
-            Field(description="Image format: png, jpeg, webp, or bmp."),
-        ] = "png",
-        render_timeout_seconds: Annotated[
-            float,
-            Field(
-                description="HTTP render timeout in seconds.",
-                ge=1,
-                le=300,
-            ),
-        ] = DEFAULT_RENDER_TIMEOUT_SECONDS,
-    ) -> ToolResult:
-        """Get rendered images of a Home Assistant Lovelace dashboard view.
+    @property
+    def screenshots(self) -> DashboardScreenshotTools:
+        return self
 
-        When not to use: while reading or writing dashboard configuration, use
-        ha_config_get_dashboard(include_screenshot=True) or
-        ha_config_set_dashboard(return_screenshot=True) for a single workflow.
-
-        Use it for repeatable visual checks, including ordered mobile, tablet,
-        and desktop captures. Puppet reports image bytes but does not confirm
-        that the frontend accepted a requested theme or language; structured
-        metadata therefore records the values sent to the engine. A requested
-        theme or dark_mode persists on the engine account's profile; the change
-        is reported in warnings but not undone (see ha_manage_theme
-        action='set_engine_theme').
-
-        To change the Puppet engine app (add-on) itself (keep_browser_open,
-        restart), use ha_manage_app.
-        """
+    async def screenshot(self, **arguments: Any) -> ToolResult:
         target = await resolve_dashboard_render_target(
             self._client,
-            dashboard_path=dashboard_path,
-            url_path=url_path,
-            view_path=view_path,
+            dashboard_path=arguments.pop("dashboard_path"),
+            url_path=arguments.pop("url_path"),
+            view_path=arguments.pop("view_path"),
         )
-        validate_capture_parameters(
-            width=width,
-            height=height,
-            viewport_presets=viewport_presets,
-            orientation=orientation,
-            zoom=zoom,
-            wait_ms=wait_ms,
-            full_page=full_page,
-            theme=theme,
-            dark_mode=dark_mode,
-            language=language,
-            image_format=image_format,
-            render_timeout_seconds=render_timeout_seconds,
-        )
+        validate_capture_parameters(**arguments)
         try:
             capture_failures: list[dict[str, Any]] = []
             capture_warnings: list[str] = []
             captures = await capture_dashboard_images(
                 target.render_path,
-                width=width,
-                height=height,
-                viewport_presets=viewport_presets,
-                orientation=orientation,
-                zoom=zoom,
-                wait_ms=wait_ms,
-                full_page=full_page,
-                theme=theme,
-                dark_mode=dark_mode,
-                language=language,
-                image_format=image_format,
-                render_timeout_seconds=render_timeout_seconds,
+                **arguments,
                 partial_failures=capture_failures,
                 client=self._client,
                 capture_warnings=capture_warnings,
             )
         except ToolError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - preserve the public transport error envelope
             raise_tool_error(
                 create_error_response(
                     ErrorCode.INTERNAL_ERROR,
@@ -292,6 +119,12 @@ class DashboardScreenshotTools:
             capture_failures=capture_failures,
             capture_warnings=capture_warnings,
         )
+
+    ha_get_dashboard_screenshot = tool(
+        name="ha_get_dashboard_screenshot",
+        tags={"Dashboard", "beta"},
+        annotations=read_only_hints("Get Dashboard Screenshot", open_world=False),
+    )(log_tool_usage(legacy_errors(ScreenshotFacade.ha_get_dashboard_screenshot)))
 
 
 def register_dashboard_screenshot_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

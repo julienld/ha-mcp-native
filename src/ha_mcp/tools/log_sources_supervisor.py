@@ -12,6 +12,7 @@ Consolidation and Module Size.
 from typing import Any, Literal, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.runtime.log_results import supervisor_log_result
 
 from .._version import is_running_in_addon
 from ..client.rest_client import (
@@ -72,36 +73,9 @@ class SupervisorLogSourcesMixin:
         try:
             log_text = await self._client.get_addon_logs(slug, lines=fetch_lines)
 
-            lines = log_text.splitlines() if log_text else []
-
-            filters_applied: dict[str, str] = {}
-
-            if search:
-                search_lower = search.lower()
-                lines = [ln for ln in lines if search_lower in ln.lower()]
-                filters_applied["search"] = search
-
-            total_lines = len(lines)
-            # Always take the most-recent window (the tail); 'order' controls
-            # only the display direction of that window.
-            lines = lines[-effective_limit:]
-            if order == "newest":
-                lines = list(reversed(lines))
-
-            data: dict[str, Any] = {
-                "success": True,
-                "source": "supervisor",
-                "slug": slug,
-                "log": "\n".join(lines),
-                "total_lines": total_lines,
-                "returned_lines": len(lines),
-                "limit": effective_limit,
-                "order": order,
-            }
-            if filters_applied:
-                data["filters_applied"] = filters_applied
-
-            return data
+            return supervisor_log_result(
+                log_text, "supervisor", slug, effective_limit, search, order
+            )
 
         except ToolError:
             raise
@@ -295,35 +269,9 @@ class SupervisorLogSourcesMixin:
                 service, lines=fetch_lines
             )
 
-            lines = log_text.splitlines() if log_text else []
-
-            filters_applied: dict[str, str] = {}
-            if search:
-                search_lower = search.lower()
-                lines = [ln for ln in lines if search_lower in ln.lower()]
-                filters_applied["search"] = search
-
-            total_lines = len(lines)
-            # Always take the most-recent window (the tail); 'order' controls
-            # only the display direction of that window.
-            lines = lines[-effective_limit:]
-            if order == "newest":
-                lines = list(reversed(lines))
-
-            data: dict[str, Any] = {
-                "success": True,
-                "source": "system_service",
-                "slug": service,
-                "log": "\n".join(lines),
-                "total_lines": total_lines,
-                "returned_lines": len(lines),
-                "limit": effective_limit,
-                "order": order,
-            }
-            if filters_applied:
-                data["filters_applied"] = filters_applied
-
-            return data
+            return supervisor_log_result(
+                log_text, "system_service", service, effective_limit, search, order
+            )
 
         except ToolError:
             raise

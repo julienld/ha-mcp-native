@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 class TestWsCommandRoundTrip:
     """Positive path: a real one-shot WS command reaches Home Assistant."""
 
+    @pytest.mark.legacy_runtime_only
     async def test_repairs_list_issues_round_trips(self, mcp_client):
         """repairs/list_issues is a safe, read-only one-shot WS command.
 

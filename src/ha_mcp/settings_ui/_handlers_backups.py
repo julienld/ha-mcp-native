@@ -40,6 +40,10 @@ from ..config import (
     get_backup_setting_origin,
     get_global_settings,
 )
+from ..config_backup_validation import (
+    _coerce_int_field,
+    _validate_backup_payload,
+)
 from ..config_registry import SETTING_BOUNDS
 from ..errors import ErrorCode, create_error_response
 from . import _persistence, _supervisor
@@ -126,9 +130,7 @@ async def _view_backup(
 async def _diff_backup(
     server: HomeAssistantSmartMCPServer | None, request: Request
 ) -> JSONResponse:
-    import difflib
-
-    import yaml  # type: ignore[import-untyped]
+    from ..runtime.snapshot_projection import panel_diff
 
     mgr = _backup_mgr(server)
     if mgr is None:
@@ -166,28 +168,7 @@ async def _diff_backup(
             code=ErrorCode.CONNECTION_FAILED,
             status=502,
         )
-    backup_yaml = yaml.safe_dump(
-        snapshot.get("config"), default_flow_style=False, sort_keys=True
-    ).splitlines()
-    current_yaml = yaml.safe_dump(
-        current, default_flow_style=False, sort_keys=True
-    ).splitlines()
-    diff = list(
-        difflib.unified_diff(
-            backup_yaml,
-            current_yaml,
-            fromfile=f"backup:{name}",
-            tofile=f"current:{snapshot['entity_id']}",
-            lineterm="",
-        )
-    )
-    return JSONResponse(
-        {
-            "success": True,
-            "diff": "\n".join(diff),
-            "backup_present": current is not None,
-        }
-    )
+    return JSONResponse(panel_diff(name, snapshot, current))
 
 
 async def _restore_backup(
@@ -204,34 +185,10 @@ async def _restore_backup(
     except (ValueError, LookupError) as err:
         return _bad_request(str(err))
     except BackupRestoreError as err:
-        code = {
-            "snapshot_not_found": ErrorCode.RESOURCE_NOT_FOUND,
-            "invalid_snapshot": ErrorCode.VALIDATION_INVALID_PARAMETER,
-            "unsupported_domain": ErrorCode.VALIDATION_INVALID_PARAMETER,
-            "backup_capture_failed": ErrorCode.BACKUP_CAPTURE_FAILED,
-            "entry_deleted": ErrorCode.RESOURCE_NOT_FOUND,
-        }.get(err.outcome.get("reason") or "", ErrorCode.SERVICE_CALL_FAILED)
-        return JSONResponse(
-            create_error_response(
-                code,
-                str(err),
-                context={"data": err.outcome},
-                suggestions=[
-                    "Inspect the current configuration and restore outcome before retrying",
-                ]
-                + (
-                    [
-                        "Use safety_backup to inspect or restore the captured previous state"
-                    ]
-                    if err.outcome.get("safety_backup")
-                    else []
-                ),
-            ),
-            status_code={
-                ErrorCode.RESOURCE_NOT_FOUND: 404,
-                ErrorCode.VALIDATION_INVALID_PARAMETER: 400,
-            }.get(code, 409),
-        )
+        from ..runtime.snapshot_projection import restore_error
+
+        payload, status = restore_error(err)
+        return JSONResponse(payload, status_code=status)
     except MandatoryBackupError as err:
         logger.warning("Restore of %s blocked: %s", name, err.safe_cause)
         return JSONResponse(
@@ -388,70 +345,6 @@ async def _get_backup_config(
             "fields": backup_config_fields(),
         }
     )
-
-
-def _coerce_bool_field(field_name: str, raw: Any) -> tuple[Any, str | None]:
-    """Coerce a posted value to bool, accepting the JSON/HTML-form spellings."""
-    if isinstance(raw, bool):
-        return raw, None
-    if isinstance(raw, int):
-        return bool(raw), None
-    if isinstance(raw, str):
-        s = raw.strip().lower()
-        if s in ("true", "1", "yes", "on"):
-            return True, None
-        if s in ("false", "0", "no", "off"):
-            return False, None
-        return None, f"Invalid boolean for {field_name}: {raw!r}"
-    return None, f"Invalid value for {field_name}: {raw!r}"
-
-
-def _coerce_int_field(field_name: str, raw: Any) -> tuple[Any, str | None]:
-    """Coerce a posted value to a bounds-checked int (bools are rejected)."""
-    if isinstance(raw, bool) or not isinstance(raw, int | str):
-        return None, f"Invalid integer for {field_name}: {raw!r}"
-    try:
-        value = int(raw)
-    except (ValueError, TypeError):
-        return None, f"Invalid integer for {field_name}: {raw!r}"
-    bounds = SETTING_BOUNDS.get(field_name)
-    if bounds is not None and not (bounds[0] <= value <= bounds[1]):
-        return None, f"{field_name} must be {bounds[0]:g}..{bounds[1]:g}"
-    return value, None
-
-
-def _coerce_str_field(field_name: str, raw: Any) -> tuple[Any, str | None]:
-    """Coerce a posted value to a null-byte-free str."""
-    if not isinstance(raw, str):
-        return None, f"Invalid string for {field_name}: {raw!r}"
-    if "\x00" in raw:
-        return None, f"{field_name} must not contain null bytes"
-    return raw, None
-
-
-def _validate_backup_payload(payload: Any) -> tuple[dict[str, Any], str | None]:
-    """Coerce and bounds-check the POST body. Returns (clean, error_msg)."""
-    if not isinstance(payload, dict):
-        return {}, "Body must be a JSON object"
-    clean: dict[str, Any] = {}
-    for field_name, _env_name, ftype in BACKUP_OVERRIDE_FIELDS:
-        if field_name not in payload:
-            continue
-        raw = payload[field_name]
-        if ftype is bool:
-            value, err = _coerce_bool_field(field_name, raw)
-        elif ftype is int:
-            value, err = _coerce_int_field(field_name, raw)
-        elif ftype is str:
-            value, err = _coerce_str_field(field_name, raw)
-        else:
-            continue
-        if err is not None:
-            return {}, err
-        clean[field_name] = value
-    if not clean:
-        return {}, "No editable auto-backup fields in body"
-    return clean, None
 
 
 def _filter_env_pinned_backup_fields(clean: dict[str, Any]) -> list[dict[str, str]]:
@@ -654,3 +547,11 @@ def build_backups_handlers(
         "get_backup_config": get_backup_config,
         "save_backup_config": save_backup_config,
     }
+
+
+__all__ = [
+    "_coerce_int_field",
+    "apply_backup_config",
+    "backup_config_fields",
+    "build_backups_handlers",
+]

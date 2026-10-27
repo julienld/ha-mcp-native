@@ -8,6 +8,16 @@ import json
 from typing import Any
 
 
+def canonical_json(value: Any) -> str:
+    """Keep JSON value types distinct, including false/0 and true/1."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def json_values_equal(left: Any, right: Any) -> bool:
+    """Compare JSON snapshots without Python's boolean/number equivalence."""
+    return canonical_json(left) == canonical_json(right)
+
+
 def compute_config_hash(config: dict[str, Any]) -> str:
     """Compute a stable hash of a config dict for optimistic locking.
 
@@ -23,5 +33,5 @@ def compute_config_hash(config: dict[str, Any]) -> str:
     E2E tests pin this for each tool family. See issue #980 for the
     contract analysis.
     """
-    config_str = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    config_str = canonical_json(config)
     return hashlib.sha256(config_str.encode()).hexdigest()[:16]

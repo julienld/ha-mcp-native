@@ -227,6 +227,9 @@ async def test_alias_removal_uses_core_identity_and_waits_for_restore(
 
     manager._client.send_websocket_message = AsyncMock(side_effect=send)
     manager._client.delete_config_entry = AsyncMock(return_value={})
+    manager._client.get_config_entry = AsyncMock(
+        return_value={"entry_id": "template-entry", "domain": "template"}
+    )
     # The native removal path works without a component or a readable scrub source.
     monkeypatch.setattr(
         bm,

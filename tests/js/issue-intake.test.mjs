@@ -281,6 +281,7 @@ test("deleted issue authors retain their report without maintainer authority", (
   const context = makeContext(s);
   assert.equal(context.sources[0].author, "ghost");
   assert.equal(context.sources[0].maintainer, false);
+  assert.equal(makeContext(snapshot()).sources[0].author, "reporter");
 });
 
 test("bare model URLs are not autolinks but source citations remain usable", () => {
@@ -702,6 +703,11 @@ test("no report request when one is present or the issue is not a bug", () => {
   const unclear = snapshot();
   for (const s of [withReport, replied, feature, unclear])
     assert.doesNotMatch(render(result(), prepare(s, bot)), /Diagnostic report/);
+  // A report inside a comment is not shown, so it is asked for.
+  const hidden = snapshot();
+  hidden.issue.title = "[BUG] Dashboard call hangs";
+  hidden.issue.body += `\n\n<!--\n## 🚨 ${reportMarker}\n${reportVersionLine} 8.6.0\n-->`;
+  assert.match(render(result(), prepare(hidden, bot)), /### Diagnostic report/);
 });
 
 test("an untitled report with a stated error is asked for the tool output", () => {
@@ -720,7 +726,7 @@ test("the report heading matches what ha_report_issue writes", () => {
   // If the two drift apart, filed reports lose their type label and are
   // asked for a report they already contain.
   const tool = readFileSync(
-    new URL("../../src/ha_mcp/tools/bug_report_templates.py", import.meta.url),
+    new URL("../../src/ha_mcp/runtime/report_templates.py", import.meta.url),
     "utf8",
   );
   for (const heading of ["## 🚨 ", "## 🤖 ", "## 💡 "])

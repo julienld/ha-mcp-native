@@ -18,16 +18,12 @@ name: Release on tag
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-# Serialize runs: a dev pre-release tag and the stable tag that supersedes
-# it can arrive minutes apart, each starting its own run. Without
-# serialization the stable run's retire scan can list releases before the
-# dev run has published its pre-release, orphaning it until the next
-# stable release. cancel-in-progress stays false so a queued stable run
-# is never evicted.
+# Serialize publication and recovery without replacing any tag or asset.
 concurrency:
   group: release-on-tag
   cancel-in-progress: false
@@ -61,69 +57,27 @@ jobs:
             echo "Component snapshot synced from homeassistant-ai/ha-mcp." > /tmp/notes.md
           fi
 
-      - name: Create release for tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          # Check existence explicitly instead of `|| echo "release exists"`:
-          # that pattern treated EVERY create failure (auth, rate limit, bad
-          # notes file) as already-exists and reported green with no release
-          # published (review finding). Now only a genuine duplicate no-ops;
-          # a real create failure fails the job visibly.
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release exists"
-            exit 0
-          fi
-          # -dev. tags are the dev channel: the prerelease flag is what keeps
-          # them away from stable HACS users (HACS filters on it unless the
-          # repository's "Pre-release" switch entity is on) and out of
-          # GitHub's "latest" release.
-          PRERELEASE_FLAG=""
-          case "$GITHUB_REF_NAME" in
-            *-dev.*) PRERELEASE_FLAG="--prerelease" ;;
-          esac
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "$VER" -F /tmp/notes.md $PRERELEASE_FLAG
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
 
-      - name: Retire superseded dev pre-releases
-        # A stable release supersedes every dev pre-release cut before it:
-        # the component version on master only moves forward, so when the
-        # bare v<version> lands, any existing -dev. tag is for a version at
-        # or below it. HACS's newest-first scan already stops offering those
-        # builds once the stable release exists - this step just keeps the
-        # releases page and the HACS version dropdown from accumulating
-        # stale dev builds. The base-version guard (not a blanket wipe)
-        # protects a dev build for a HIGHER version that races in between.
-        if: ${{ !contains(github.ref_name, '-dev.') }}
+      - name: Fetch the recorded upstream assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VER="${GITHUB_REF_NAME#v}"
-          # Capture instead of piping into the loop: the default GHA shell
-          # has no pipefail, so a failed gh api would otherwise read as
-          # "nothing to retire" and pass silently.
-          TAGS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
-            --jq '.[] | select(.prerelease) | .tag_name')
-          # Process every tag, THEN fail if any deletion errored: aborting
-          # mid-loop (plain set -e) leaves later tags unprocessed, while
-          # `|| echo warning` would mask a persistent failure forever - the
-          # same anti-pattern the create step's history warns about. A red
-          # run here is self-healing (the release is already published and
-          # the next stable release re-runs the full scan).
-          FAILED=0
-          for TAG in $TAGS; do
-            case "$TAG" in *-dev.*) ;; *) continue ;; esac
-            BASE="${TAG#v}"
-            BASE="${BASE%%-dev.*}"
-            if [ "$(printf '%s\n%s\n' "$BASE" "$VER" | sort -V | tail -n1)" = "$VER" ]; then
-              echo "retiring superseded pre-release ${TAG}"
-              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || FAILED=1
-            else
-              echo "keeping ${TAG} (newer than ${VER})"
-            fi
-          done
-          if [ "$FAILED" -ne 0 ]; then
-            echo "::error::one or more pre-release retirements failed; the next stable release re-runs the scan"
-            exit 1
-          fi
+          uv run --locked -s scripts/native_release_delivery.py fetch-recorded \
+            --recorded native-build.json --assets "$RUNNER_TEMP/native-release"
+
+      - name: Publish the verified mirror release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run --locked -s scripts/native_release_delivery.py publish \
+            --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" \
+            --revision "$(git rev-parse HEAD)" --assets "$RUNNER_TEMP/native-release" \
+            --recorded native-build.json --notes /tmp/notes.md
+
+      # Retain historical pre-releases and tags: installed manifests pin their
+      # immutable wheel URLs, and rollback must keep the exact paired archive.

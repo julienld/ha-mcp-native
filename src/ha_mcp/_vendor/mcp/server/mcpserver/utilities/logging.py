@@ -26,8 +26,8 @@ def configure_logging(
     """
     handlers: list[logging.Handler] = []
     try:
-        from rich.console import Console
-        from rich.logging import RichHandler
+        from ha_mcp._vendor.rich.console import Console
+        from ha_mcp._vendor.rich.logging import RichHandler
 
         handlers.append(RichHandler(console=Console(stderr=True), rich_tracebacks=True))
     except ImportError:  # pragma: no cover

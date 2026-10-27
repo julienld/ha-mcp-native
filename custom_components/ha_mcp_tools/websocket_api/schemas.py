@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from .. import core_operation_schemas
 from ..const import CHANNEL_DEV, CHANNEL_STABLE
 from .constants import (
     ALL_SEARCH_TYPES,
@@ -13,7 +14,6 @@ from .constants import (
     CALL_SERVICE_DEFAULT_TIMEOUT,
     CALL_SERVICE_MAX_TIMEOUT,
     DEFAULT_LIMIT,
-    REGISTRY_KINDS,
     SERVER_ENTRY_UPDATE_MAX_PIP_SPEC,
     WS_BACKUP_PREP,
     WS_BLUEPRINT_GET,
@@ -153,7 +153,7 @@ def _helpers_list_schema() -> dict[Any, Any]:
 def _states_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_STATES,
-        vol.Required("entity_ids"): [str],
+        **core_operation_schemas.states_parameters(vol),
     }
 
 
@@ -180,36 +180,28 @@ def _device_list_schema() -> dict[Any, Any]:
 def _entity_enrich_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_ENTITY_ENRICH,
-        vol.Required("entity_ids"): [str],
+        **core_operation_schemas.entity_enrich_parameters(vol),
     }
 
 
 def _exposure_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_EXPOSURE,
-        vol.Optional("entity_id"): vol.Any(str, None),
+        **core_operation_schemas.exposure_parameters(vol),
     }
 
 
 def _config_entries_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_CONFIG_ENTRIES,
-        vol.Optional("entry_id"): vol.Any(str, None),
-        vol.Optional("domain"): vol.Any(str, None),
-        vol.Optional("include_subentry_data", default=False): bool,
+        **core_operation_schemas.config_entries_parameters(vol),
     }
 
 
 def _registry_lookup_schema() -> dict[Any, Any]:
-    # Exactly one of entity_ids / config_entry_id is meaningful; ``vol.Exclusive``
-    # rejects a request carrying BOTH (the two share the ``target`` group).
-    # Voluptuous has no clean way to express "at least one of" in a flat schema,
-    # so a request with NEITHER present is caught in ``_do_registry_lookup``
-    # instead (raises ``HomeAssistantError`` rather than a silent empty result).
     return {
         vol.Required("type"): WS_REGISTRY_LOOKUP,
-        vol.Exclusive("entity_ids", "target"): [str],
-        vol.Exclusive("config_entry_id", "target"): str,
+        **core_operation_schemas.registry_lookup_parameters(vol),
     }
 
 
@@ -239,8 +231,7 @@ def _backup_prep_schema() -> dict[Any, Any]:
 def _registries_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_REGISTRIES,
-        vol.Required("registries"): [vol.In(REGISTRY_KINDS)],
-        vol.Optional("category_scopes"): [str],
+        **core_operation_schemas.registries_parameters(vol),
     }
 
 
@@ -257,15 +248,14 @@ def _dashboards_schema() -> dict[Any, Any]:
 def _services_list_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_SERVICES_LIST,
-        vol.Optional("domain"): vol.Any(str, None),
-        vol.Optional("language", default="en"): str,
+        **core_operation_schemas.services_list_parameters(vol),
     }
 
 
 def _reference_data_schema() -> dict[Any, Any]:
     return {
         vol.Required("type"): WS_REFERENCE_DATA,
-        vol.Optional("include_states", default=True): bool,
+        **core_operation_schemas.reference_data_parameters(vol),
     }
 
 
@@ -297,31 +287,9 @@ def _server_entry_update_schema() -> dict[Any, Any]:
 
 
 def _call_service_schema() -> dict[Any, Any]:
-    # ``entity_ids`` is the set of targets to CONFIRM (the pre/post transition is
-    # built for these), not the service target itself — a caller may pass an empty
-    # list for a non-entity service (``automation.trigger`` etc.) and still get the
-    # dispatch result. ``timeout`` is capped at ``CALL_SERVICE_MAX_TIMEOUT`` so a
-    # single write frame cannot park the connection. Mutable defaults use the
-    # callable form so each validation produces a fresh ``{}`` / ``[]``.
     return {
         vol.Required("type"): WS_CALL_SERVICE,
-        vol.Required("domain"): str,
-        vol.Required("service"): str,
-        vol.Optional("service_data", default=dict): dict,
-        vol.Optional("entity_ids", default=list): [str],
-        vol.Optional("wait", default=True): bool,
-        vol.Optional("timeout", default=CALL_SERVICE_DEFAULT_TIMEOUT): vol.All(
-            vol.Any(int, float), vol.Range(min=0, max=CALL_SERVICE_MAX_TIMEOUT)
-        ),
-        vol.Optional("return_response", default=False): bool,
-        # Optional confirmation HINT (the server's ``_SERVICE_TO_STATE.get(service)``,
-        # or None): the expected primary state the waiter confirms on REACHING —
-        # skipping a multi-phase service's intermediate states and attribute-only
-        # noise — and immediate-matches for an idempotent no-op. Optional/default-None
-        # so a server that does not send it (or a non-mapped service) keeps today's
-        # any-first-event confirmation. It governs confirmation TIMING only; the
-        # returned transition is always the REAL observed one.
-        vol.Optional("expected_state"): vol.Any(str, None),
+        **core_operation_schemas.call_service_parameters(vol),
     }
 
 

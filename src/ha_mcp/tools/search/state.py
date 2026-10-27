@@ -7,8 +7,6 @@ import asyncio
 import logging
 from typing import Any
 
-from ha_mcp._vendor.fastmcp.exceptions import ToolError
-
 from ...client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantCommandError,
@@ -16,7 +14,7 @@ from ...client.rest_client import (
     HomeAssistantConnectionError,
 )
 from ...client.websocket_client import get_websocket_client
-from ...errors import create_validation_error
+from ...runtime.states import StateTools
 from ..component_api import (
     component_supports,
     get_component_caps,
@@ -25,10 +23,8 @@ from ..component_api import (
 )
 from ..helpers import (
     exception_to_structured_error,
-    raise_tool_error,
 )
 from ..response_helpers import add_timezone_metadata
-from ..response_helpers import project_entity_record as _project_entity
 from .base import SearchToolsBase
 
 logger = logging.getLogger(__name__)
@@ -48,176 +44,11 @@ def _missing_entity_exc(entity_id: str) -> HomeAssistantAPIError:
     )
 
 
-def _accumulate_state_results(
-    unique_ids: list[str],
-    results: list[dict[str, Any]],
-    parsed_fields: list[str] | None,
-    parsed_attribute_keys: list[str] | None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
-    """Process asyncio.gather results into (states dict, errors list, attr_warnings list)."""
-    states: dict[str, Any] = {}
-    errors: list[dict[str, Any]] = []
-    attr_warns: list[str] = []
-    for eid, result in zip(unique_ids, results, strict=True):
-        if result.get("success") is True and "state" in result:
-            state_record, attr_warn = _project_entity(
-                result["state"], parsed_fields, parsed_attribute_keys
-            )
-            states[eid] = state_record
-            if attr_warn and attr_warn not in attr_warns:
-                attr_warns.append(attr_warn)
-        else:
-            error_detail = result.get("error")
-            if error_detail is None:
-                error_detail = {"code": "INTERNAL_ERROR", "message": "Unknown error"}
-            errors.append(
-                {
-                    "entity_id": result.get("entity_id", eid),
-                    "error": error_detail,
-                }
-            )
-    return states, errors, attr_warns
-
-
-def _build_bulk_states_response(
-    states: dict[str, Any],
-    errors: list[dict[str, Any]],
-    attr_warns: list[str],
-    attribute_keys_no_effect: bool,
-) -> dict[str, Any]:
-    """Build the bulk-state response dict from accumulated states, errors, and warnings."""
-    response: dict[str, Any] = {
-        "success": len(states) > 0,
-        "count": len(states),
-        "states": states,
-    }
-    if attribute_keys_no_effect:
-        response.setdefault("warnings", []).append(
-            "attribute_keys was ignored because 'attributes' is not in "
-            "fields=. Add 'attributes' to fields= (or omit fields=) to "
-            "apply attribute_keys."
-        )
-    for _w in attr_warns:
-        response.setdefault("warnings", []).append(_w)
-    if errors:
-        response["errors"] = errors
-        response["error_count"] = len(errors)
-        response["suggestions"] = [
-            "Use ha_search() to find correct entity IDs for failed lookups",
-            "Verify entities exist in Home Assistant",
-        ]
-        if states:
-            response["partial"] = True
-    return response
-
-
-class StateMixin(SearchToolsBase):
+class StateMixin(StateTools, SearchToolsBase):
     """Fetches entity states for ``ha_get_state``."""
 
-    async def _get_single_entity_state(
-        self,
-        entity_id: str,
-        parsed_fields: list[str] | None,
-        parsed_attribute_keys: list[str] | None,
-        attribute_keys_no_effect: bool,
-    ) -> dict[str, Any]:
-        """Fetch and return state for a single entity ID."""
-        try:
-            result = await self._get_one_state(entity_id)
-            entity_record, attr_warn = _project_entity(
-                result, parsed_fields, parsed_attribute_keys
-            )
-            # Always wrap (include_metadata=True); callers and tests rely on
-            # the ``result["data"]`` envelope even when fields= is active.
-            wrapped = await add_timezone_metadata(self._client, entity_record)
-            # ``attribute_keys`` was specified but ``attributes`` is not in the
-            # projected ``fields=`` set. Attach the warning at the outer wrapper
-            # level (sibling of ``data``/``metadata``) — the FIELDS PROJECTION
-            # contract: ``fields=`` filters the keys of the returned record;
-            # ``warnings`` is not a record key.
-            if attribute_keys_no_effect:
-                wrapped.setdefault("warnings", []).append(
-                    "attribute_keys was ignored because 'attributes' is not in "
-                    "fields=. Add 'attributes' to fields= (or omit fields=) to "
-                    "apply attribute_keys."
-                )
-            if attr_warn:
-                wrapped.setdefault("warnings", []).append(attr_warn)
-            return wrapped
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            exception_to_structured_error(
-                e,
-                context={"entity_id": entity_id},
-                suggestions=[
-                    f"Verify entity '{entity_id}' exists in Home Assistant",
-                    "Check Home Assistant connection",
-                    "Use ha_search() to find correct entity IDs",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
-
-    async def _get_bulk_entity_states(
-        self,
-        entity_ids: list[str],
-        parsed_fields: list[str] | None,
-        parsed_attribute_keys: list[str] | None,
-        attribute_keys_no_effect: bool,
-    ) -> dict[str, Any]:
-        """Fetch states for multiple entity IDs in parallel."""
-        MAX_ENTITIES = 100
-
-        if not isinstance(entity_ids, list) or not entity_ids:
-            raise_tool_error(
-                create_validation_error(
-                    "entity_id must be a non-empty string or list of entity ID strings",
-                    parameter="entity_id",
-                )
-            )
-
-        if not all(isinstance(eid, str) for eid in entity_ids):
-            raise_tool_error(
-                create_validation_error(
-                    "All entity_id values must be strings",
-                    parameter="entity_id",
-                )
-            )
-
-        if len(entity_ids) > MAX_ENTITIES:
-            raise_tool_error(
-                create_validation_error(
-                    f"Too many entity IDs: {len(entity_ids)} exceeds maximum of {MAX_ENTITIES}",
-                    parameter="entity_id",
-                )
-            )
-
-        # Deduplicate while preserving order
-        unique_ids = list(dict.fromkeys(entity_ids))
-        if len(unique_ids) < len(entity_ids):
-            logger.debug(
-                f"Deduplicated entity_ids: {len(entity_ids)} -> {len(unique_ids)}"
-            )
-
-        try:
-            results = await self._resolve_bulk_state_results(unique_ids)
-            states, errors, attr_warns = _accumulate_state_results(
-                unique_ids, results, parsed_fields, parsed_attribute_keys
-            )
-            response = _build_bulk_states_response(
-                states, errors, attr_warns, attribute_keys_no_effect
-            )
-            return await add_timezone_metadata(self._client, response)
-
-        except ToolError:
-            raise
-        except Exception as e:
-            logger.error(f"Error getting bulk states: {e}", exc_info=True)
-            exception_to_structured_error(
-                e,
-                context={"entity_ids": entity_ids},
-            )
-            return None  # unreachable: exception_to_structured_error always raises
+    async def _timezone(self, data: dict[str, Any]) -> dict[str, Any]:
+        return await add_timezone_metadata(self._client, data)
 
     async def _fetch_single_state(self, eid: str) -> dict[str, Any]:
         """Fetch state for one entity; returns structured error dict on failure."""
@@ -348,3 +179,8 @@ class StateMixin(SearchToolsBase):
             verify_ssl=getattr(self._client, "verify_ssl", None),
         )
         return await ws.send_command("ha_mcp_tools/states", entity_ids=entity_ids)
+
+
+__all__ = [
+    "StateMixin",
+]

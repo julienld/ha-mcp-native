@@ -20,6 +20,7 @@ the job summary.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -28,7 +29,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# Findings under these path prefixes are dropped before gating. These are
+# Findings under these path prefixes are dropped before gating, with the
+# quality-only Rich exception enforced by _ignored_path. These are
 # vendored / third-party trees we do not own and ruff already excludes them
 # (see ``extend-exclude`` in pyproject.toml). Keep this in sync with that list.
 PATHS_IGNORE: tuple[str, ...] = (
@@ -42,6 +44,9 @@ PATHS_IGNORE: tuple[str, ...] = (
     "src/ha_mcp/_vendor/fastmcp/",
     "src/ha_mcp/_vendor/mcp/",
     "src/ha_mcp/_vendor/mcp_types/",
+    # Rich is also pinned third-party source. Its exception is quality-only;
+    # security and unclassified rules remain gated (see _ignored_path).
+    "src/ha_mcp/_vendor/rich/",
     # Vendored skills submodule — upstream's code, shipped as package data and
     # excluded from ruff for the same reason.
     "src/ha_mcp/resources/skills-vendor/",
@@ -182,11 +187,11 @@ ALLOWLIST: tuple[tuple[str, str, str, str, str], ...] = (
     ),
     (
         "py/ineffectual-statement",
-        "tests/src/e2e/workflows/hacs/test_auto_refresh_startup.py",
+        "tests/src/e2e/utilities/http_launcher.py",
         "This statement has no effect",
         "await task",
         "False positive on the bare 'await task' inside contextlib.suppress "
-        "in _HttpLauncher.wait_for_lifespan_started: awaiting the cancelled "
+        "in HttpLauncher.wait_for_lifespan_started: awaiting the cancelled "
         "racer IS the effect (it drives the loser of the started-vs-exited "
         "race to completion before returning).",
     ),
@@ -699,6 +704,8 @@ def _allowlist_reason(file: str, line: int, rule_id: str, message: str) -> str |
     file. It fails closed: a line the gate cannot read does not match, because a
     gate must not suppress what it cannot verify.
     """
+    if rule_id == "py/ineffectual-statement" and _protocol_declaration(file, line):
+        return "Typing Protocol method contains only Ellipsis (and an optional docstring): an interface declaration, not a discarded runtime operation."
     for rule, path, substr, code, reason in ALLOWLIST:
         if rule_id != rule or path not in file or substr not in message:
             continue
@@ -708,6 +715,108 @@ def _allowlist_reason(file: str, line: int, rule_id: str, message: str) -> str |
                 continue
         return reason
     return None
+
+
+def _typing_name(node: ast.expr, bindings: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Subscript):
+        return _typing_name(node.value, bindings)
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return f"{bindings.get(node.value.id, '')}.{node.attr}"
+    return None
+
+
+def _module_bindings(node: ast.stmt, bindings: dict[str, str]) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".")[0]
+            bindings[name] = alias.name if alias.asname else name
+    elif isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            bindings[alias.asname or alias.name] = (
+                f"{node.module}.{alias.name}" if node.level == 0 else ""
+            )
+    else:
+        names = (
+            {node.name}
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            else {
+                item.id
+                for item in ast.walk(node)
+                if isinstance(item, ast.Name)
+                and isinstance(item.ctx, (ast.Store, ast.Del))
+            }
+        )
+        names.update(
+            item.value.id
+            for item in ast.walk(node)
+            if isinstance(item, ast.Attribute)
+            and isinstance(item.value, ast.Name)
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+        )
+        for item in ast.walk(node):
+            if isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(item.name)
+            elif isinstance(item, (ast.Import, ast.ImportFrom)):
+                names.update(
+                    alias.asname or alias.name.split(".")[0] for alias in item.names
+                )
+        for name in names:
+            bindings.pop(name, None)
+
+
+def _protocol_declaration(file: str, line: int) -> bool:
+    lines = _source_lines(file)
+    if lines is None:
+        return False
+    try:
+        tree = ast.parse("\n".join(lines))
+    except SyntaxError:
+        return False
+    bindings: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and any(
+            _typing_name(base, bindings)
+            in {"typing.Protocol", "typing_extensions.Protocol"}
+            for base in node.bases
+        ):
+            for method in node.body:
+                if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                body = (
+                    method.body[1:]
+                    if ast.get_docstring(method) is not None
+                    else method.body
+                )
+                if len(body) != 1 or not isinstance(body[0], ast.Expr):
+                    continue
+                expression = body[0]
+                if (
+                    expression.lineno == line
+                    and isinstance(expression.value, ast.Constant)
+                    and expression.value.value is Ellipsis
+                ):
+                    return True
+        _module_bindings(node, bindings)
+    return False
+
+
+def _ignored_path(file: str, rule_id: str, run: dict[str, Any]) -> bool:
+    if not any(file.startswith(prefix) for prefix in PATHS_IGNORE):
+        return False
+    if not file.startswith("src/ha_mcp/_vendor/rich/"):
+        return True
+    rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+    properties: dict[str, Any] = next(
+        (rule.get("properties", {}) for rule in rules if rule.get("id") == rule_id), {}
+    )
+    tags = properties.get("tags", [])
+    return (
+        "quality" in tags
+        and "security" not in tags
+        and "security-severity" not in properties
+    )
 
 
 def _rule_id(result: dict[str, Any], run: dict[str, Any]) -> str:
@@ -742,7 +851,8 @@ def classify(
     ``gating_findings`` are (file, line, rule_id, message) tuples the gate fails
     on. ``suppressed`` are (file, line, rule_id, message, reason) tuples dropped
     by the allowlist (reported, never silent). Findings under vendored
-    ``PATHS_IGNORE`` prefixes are dropped entirely.
+    ``PATHS_IGNORE`` prefixes are dropped entirely, except Rich's quality-only
+    exclusion, which retains security rules and rules without quality metadata.
     """
     data = json.loads(sarif_path.read_text(encoding="utf-8"))
     findings: list[tuple[str, int, str, str]] = []
@@ -751,7 +861,7 @@ def classify(
         for result in run.get("results", []):
             rule_id = _rule_id(result, run)
             file, line = _location(result)
-            if any(file.startswith(prefix) for prefix in PATHS_IGNORE):
+            if _ignored_path(file, rule_id, run):
                 continue
             message = ((result.get("message") or {}).get("text") or "").strip()
             if reason := _allowlist_reason(file, line, rule_id, message):

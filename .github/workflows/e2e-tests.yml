@@ -2,15 +2,7 @@ name: E2E Tests
 
 on:
   push:
-    branches: [ main, master ]
-    paths:
-      # Only run on code changes, not documentation
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - 'Dockerfile'
-      - 'homeassistant-addon/**'
-      - '.github/workflows/e2e-tests.yml'
+    branches: [ main, master, qualify/upstream-main ]
   workflow_dispatch:
 
 # Limit GITHUB_TOKEN permissions to minimum required
@@ -21,7 +13,7 @@ env:
   PYTHON_VERSION: "3.13"
   UV_CACHE_DIR: /tmp/.uv-cache
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-  HA_IMAGE_GHCR: "ghcr.io/home-assistant/home-assistant:2026.10.2"
+  HA_IMAGE_GHCR: "ghcr.io/home-assistant/home-assistant:2026.10.4"
   # Disable Testcontainers' Ryuk reaper: it has been reported to leave
   # zombie containers on GHA runners (see #366, Ilya0527 2026-05-18).
   # The E2E fixture in tests/src/e2e/conftest.py relies instead on the
@@ -31,6 +23,9 @@ env:
   TESTCONTAINERS_RYUK_DISABLED: "true"
 
 jobs:
+  core-window:
+    uses: ./.github/workflows/core-window.yml
+
   # Comprehensive E2E validation for main branch
   e2e-tests:
     name: E2E Tests
@@ -52,7 +47,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}
@@ -135,7 +130,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}
@@ -233,7 +228,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}
@@ -317,7 +312,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}
@@ -421,7 +416,7 @@ jobs:
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       with:
         # renovate: datasource=github-releases depName=astral-sh/uv
-        version: "0.13.0"
+        version: "0.13.4"
 
     - name: Set up Python
       run: uv python install ${{ env.PYTHON_VERSION }}

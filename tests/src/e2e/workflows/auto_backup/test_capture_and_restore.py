@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from ...utilities.assertions import MCPAssertions, extract_error_message, safe_call_tool
+from ...utilities.entity_registry_backup import assert_entity_registry_backup
 from ...utilities.topology import component_surface_available
 from ...utilities.wait_helpers import wait_for_entity_state, wait_for_tool_result
 
@@ -1701,157 +1702,26 @@ class TestAreaCaptureRestore:
         )
 
 
-# ---------------------------------------------------------------- group lane
-
-
-@pytest.mark.convenience
-@pytest.mark.cleanup
-@pytest.mark.external_only
-class TestGroupCaptureRestore:
-    """Group restore is **Group 3** (service-call restore via
-    ``/api/services/group/set``). Different mechanism from the WS-update
-    family — proves the service-call payload shape works end-to-end."""
-
-    async def test_group_full_loop(
-        self, mcp_client, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _enable_auto_backup(monkeypatch)
-        suffix = uuid.uuid4().hex[:8]
-        object_id = f"e2e_bk_grp_{suffix}"
-        create = await safe_call_tool(
-            mcp_client,
-            "ha_config_set_group",
-            {
-                "object_id": object_id,
-                "name": f"E2E Backup Group {suffix}",
-                "entities": ["light.bed_light"],
-                "icon": "mdi:lightbulb-group",
-            },
-        )
-        if create.get("success") is False:
-            pytest.skip(f"group create unsupported: {create}")
-        # Group entity is created via the ``group.set`` service call —
-        # state machine registration is async and a fixed sleep is racy.
-        # Poll ``ha_config_list_groups`` until our group appears in the
-        # configured-groups list, which surfaces sooner than the
-        # ``/api/states/group.<id>`` propagation (the latter can lag by
-        # several seconds on fresh testcontainers; the previous
-        # ``ha_get_state`` poll timed out at 15 s).
-        await wait_for_tool_result(
-            mcp_client,
-            tool_name="ha_config_list_groups",
-            arguments={},
-            predicate=lambda d: any(
-                g.get("object_id") == object_id
-                for g in (d.get("groups", []) or d.get("data", {}).get("groups", []))
-            ),
-            description=f"group {object_id} in list_groups",
-            timeout=20,
-        )
-
-        edit = await safe_call_tool(
-            mcp_client,
-            "ha_config_set_group",
-            {
-                "object_id": object_id,
-                "name": f"E2E Backup Group {suffix} edited",
-                "entities": ["light.bed_light", "light.ceiling_lights"],
-            },
-        )
-        assert edit.get("success") is not False
-
-        # Decorator uses ``id_param="object_id"`` so the snapshot keys on
-        # the object_id, not the full ``group.<id>`` entity_id form.
-        backup_name = await _wait_for_backup(
-            mcp_client, domain="group", entity_id=object_id
-        )
-
-        restore = await safe_call_tool(
-            mcp_client,
-            "ha_manage_backup",
-            {"scope": "edits", "action": "restore", "backup_name": backup_name},
-        )
-        assert restore.get("success") is True
-        assert restore.get("data", {}).get("safety_backup") is not None
-
-        delete = await safe_call_tool(
-            mcp_client,
-            "ha_manage_backup",
-            {"scope": "edits", "action": "delete", "backup_name": backup_name},
-        )
-        assert delete.get("success") is True
-
-        # Cleanup
-        await safe_call_tool(
-            mcp_client, "ha_config_remove_group", {"object_id": object_id}
-        )
-
-
 # ---------------------------------------------------------------- entity lane
 
 
 @pytest.mark.convenience
 @pytest.mark.cleanup
 @pytest.mark.external_only
-class TestEntityStateCaptureRestore:
-    """Generic-entity restore is Group 3 (POST ``/api/states/<entity>``).
-    Uses an existing default-fixture entity rather than creating one;
-    ``ha_set_entity`` operates on entities provisioned by integrations,
-    not entity registry creations from scratch. The test edits an
-    attribute the testcontainer doesn't otherwise touch (``hidden``)
-    so cleanup is well-bounded."""
+class TestEntityRegistryCaptureRestore:
+    """Auto-capture/restore the registry hidden flag through the public tools.
 
-    async def test_entity_full_loop(
+    Kept external-only: _enable_auto_backup changes this pytest process, not
+    an embedded server's settings. The original 2dc server captured generic
+    state under domain='entity'; this proves the candidate's registry contract,
+    not unchanged cross-version parity of that older backup format.
+    """
+
+    async def test_entity_registry_full_loop(
         self, mcp_client, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _enable_auto_backup(monkeypatch)
-        # Use a stable testcontainer light entity. If it's missing on
-        # this rig, skip rather than fail — keeps the test honest about
-        # what it actually requires.
-        entity_id = "light.bed_light"
-        state = await safe_call_tool(
-            mcp_client, "ha_get_state", {"entity_id": entity_id}
-        )
-        if state.get("success") is False:
-            pytest.skip(f"{entity_id} not present on this HA: {state}")
-
-        # Edit — toggle the ``hidden`` flag; capture fires.
-        edit = await safe_call_tool(
-            mcp_client, "ha_set_entity", {"entity_id": entity_id, "hidden": True}
-        )
-        if edit.get("success") is False:
-            pytest.skip(f"ha_set_entity unsupported on this HA: {edit}")
-
-        try:
-            backup_name = await _wait_for_backup(
-                mcp_client, domain="entity", entity_id=entity_id, timeout=10
-            )
-        except TimeoutError:
-            # ha_set_entity may take the entity-registry path (no /api/states
-            # POST) on some HA versions; if so the entity-domain handler
-            # won't fire. Surface clearly rather than asserting wrong.
-            pytest.skip("entity-domain handler did not capture for this edit")
-            return  # unreachable: pytest.skip raises Skipped
-
-        restore = await safe_call_tool(
-            mcp_client,
-            "ha_manage_backup",
-            {"scope": "edits", "action": "restore", "backup_name": backup_name},
-        )
-        assert restore.get("success") is True
-        assert restore.get("data", {}).get("safety_backup") is not None
-
-        delete = await safe_call_tool(
-            mcp_client,
-            "ha_manage_backup",
-            {"scope": "edits", "action": "delete", "backup_name": backup_name},
-        )
-        assert delete.get("success") is True
-
-        # Best-effort cleanup — restore the un-hidden default.
-        await safe_call_tool(
-            mcp_client, "ha_set_entity", {"entity_id": entity_id, "hidden": False}
-        )
+        await assert_entity_registry_backup(mcp_client, "light.bed_light")
 
 
 # ---------------------------------------------------------------- dashboard_resource lane

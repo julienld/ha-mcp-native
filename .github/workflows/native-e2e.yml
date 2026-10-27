@@ -1,0 +1,103 @@
+name: Native full E2E qualification
+
+on:
+  push:
+    branches: [qualify/native-e2e]
+  workflow_dispatch:
+    inputs:
+      pytest_paths:
+        description: 'Test paths; empty runs the complete upstream E2E suite'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-window:
+    uses: ./.github/workflows/core-window.yml
+
+  native-e2e:
+    needs: core-window
+    name: Native E2E (HA ${{ matrix.core }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.core-window.outputs.matrix) }}
+    env: &native_test_environment
+      E2E_EXPECTED_ARCH: ${{ matrix.os == 'ubuntu-24.04-arm' && 'aarch64' || 'x86_64' }}
+      E2E_EXPECTED_CORE_VERSION: ${{ matrix.core }}
+      E2E_ATTESTATION_DIRECTORY: ${{ github.workspace }}/tests/native-attestations
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
+      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ matrix.core }}
+    steps:
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - &setup_uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+          # The test client is independent; Core's own interpreter is attested
+          # inside its image, even when its patch is not available from uv.
+          python-version: '3.13'
+      - &install_dependencies
+        name: Install locked test dependencies
+        run: uv sync --frozen --all-extras --dev
+      - &pull_image
+        name: Pull the pinned Core image
+        run: docker pull "$HA_IMAGE_GHCR"
+      - name: Exercise upstream E2E contracts through the attested native runtime
+        working-directory: tests
+        run: uv run --frozen pytest $PYTEST_PATHS -n 2 --dist loadscope --tb=short -v --maxfail=0 --junitxml=native-e2e-results.xml
+        env:
+          PYTEST_PATHS: ${{ inputs.pytest_paths || 'src/e2e/' }}
+          E2E_BACKEND: embedded
+          E2E_EMBEDDED_RUNTIME: native
+          HAMCP_ENV_FILE: tests/.env.test
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - &upload_results
+        name: Preserve complete native E2E results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ github.job }}-HA${{ matrix.core }}-${{ runner.arch }}
+          path: |
+            tests/native-e2e-results.xml
+            tests/native-attestations/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  native-server-only:
+    needs: core-window
+    name: Native E2E (server entry only, HA ${{ matrix.core }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.core-window.outputs.matrix) }}
+    env: *native_test_environment
+    steps:
+      - *checkout
+      - *setup_uv
+      - *install_dependencies
+      - *pull_image
+      - name: Exercise upstream contracts without the privileged tools entry
+        working-directory: tests
+        run: uv run --frozen pytest $PYTEST_PATHS -n 2 --dist loadscope --tb=short -v --maxfail=0 --junitxml=native-e2e-results.xml
+        env:
+          PYTEST_PATHS: ${{ inputs.pytest_paths || 'src/e2e/' }}
+          E2E_BACKEND: embedded
+          E2E_EMBEDDED_RUNTIME: native
+          E2E_NO_TOOLS_ENTRY: '1'
+          HAMCP_ENV_FILE: tests/.env.test
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - *upload_results
