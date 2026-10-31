@@ -25,7 +25,6 @@ from ._llm_api_helpers import (  # noqa: E402
     make_hass,
     tool_entry,
 )
-from .test_llm_tool_metadata import _CoreToolResult  # noqa: E402
 
 _FULL_SCHEMA = {
     "type": "object",
@@ -76,7 +75,6 @@ async def _instance(monkeypatch: pytest.MonkeyPatch, tools: list[Any]) -> Any:
 async def _search(
     monkeypatch: pytest.MonkeyPatch, args: dict[str, Any], tools: list[Any]
 ) -> Any:
-    monkeypatch.setattr(llm_api.llm, "ToolResult", _CoreToolResult, raising=False)
     instance = await _instance(monkeypatch, tools)
     search = next(t for t in instance.tools if t.name == "ha_search_tools")
     return await search.async_call(

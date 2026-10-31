@@ -17,12 +17,12 @@ import logging
 from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.runtime.radio_specs import ZIGBEE
 
 from ...errors import ErrorCode, create_error_response
 from ..component_devices import fetch_device_via_component
 from ..helpers import raise_tool_error
 from .base import (
-    ActionSpec,
     integration_not_found,
     ok,
     resolve_entry_id,
@@ -30,98 +30,9 @@ from .base import (
     ws_call,
 )
 
-logger = logging.getLogger(__name__)
+SUPPORTED = ZIGBEE
 
-SUPPORTED: dict[str, ActionSpec] = {
-    "diagnostics": ActionSpec(
-        "Per-node ZHA diagnostics: LQI, RSSI, availability, last-seen, "
-        "neighbors and routes.",
-        required=("device_id",),
-    ),
-    "network_status": ActionSpec(
-        "ZHA network settings (channel, PAN id, coordinator). Also kicks a "
-        "topology scan so the next read reflects current routes."
-    ),
-    "permit_join": ActionSpec(
-        "Open the Zigbee network for joining for `duration` seconds (default "
-        "60). Pass a device_id to permit via a specific router."
-    ),
-    "remove_device": ActionSpec(
-        "Remove (leave) a Zigbee node from the network.",
-        destructive=True,
-        required=("device_id",),
-    ),
-    "reconfigure": ActionSpec(
-        "Re-interview a Zigbee node and re-apply its bindings/reporting.",
-        required=("device_id",),
-    ),
-    "group_add": ActionSpec(
-        "Create a Zigbee group. Optional group_id and members "
-        "([{ieee, endpoint_id}, ...]).",
-        required=("group_name",),
-    ),
-    "group_remove": ActionSpec(
-        "Delete Zigbee groups by id (group_ids: list[int]).",
-        destructive=True,
-        required=("group_ids",),
-    ),
-    "group_members_add": ActionSpec(
-        "Add members ([{ieee, endpoint_id}, ...]) to a Zigbee group.",
-        required=("group_id", "members"),
-    ),
-    "group_members_remove": ActionSpec(
-        "Remove members ([{ieee, endpoint_id}, ...]) from a Zigbee group.",
-        required=("group_id", "members"),
-    ),
-    "bind": ActionSpec(
-        "Create a binding from source_ieee to target_ieee (direct device-to-"
-        "device control).",
-        required=("source_ieee", "target_ieee"),
-    ),
-    "unbind": ActionSpec(
-        "Remove the binding from source_ieee to target_ieee.",
-        destructive=True,
-        required=("source_ieee", "target_ieee"),
-    ),
-    "cluster_read": ActionSpec(
-        "Read a Zigbee cluster attribute (endpoint_id, cluster_id, attribute; "
-        "cluster_type defaults to 'in').",
-        required=("device_id", "endpoint_id", "cluster_id", "attribute"),
-    ),
-    "cluster_write": ActionSpec(
-        "Write a Zigbee cluster attribute (endpoint_id, cluster_id, attribute, "
-        "value; cluster_type defaults to 'in').",
-        destructive=True,
-        required=("device_id", "endpoint_id", "cluster_id", "attribute", "value"),
-    ),
-    "cluster_command": ActionSpec(
-        "Issue a Zigbee cluster command (endpoint_id, cluster_id, command, "
-        "command_type; cluster_type defaults to 'in'). Pass command arguments "
-        "via params — HA deprecated 'args' in favor of 'params' (both are still "
-        "accepted), so prefer params.",
-        destructive=True,
-        required=("device_id", "endpoint_id", "cluster_id", "command", "command_type"),
-    ),
-    "network_backup": ActionSpec(
-        "Create a ZHA network backup (coordinator + network key material)."
-    ),
-    "network_restore": ActionSpec(
-        "Restore a ZHA network from a backup payload.",
-        destructive=True,
-        required=("backup",),
-    ),
-    "change_channel": ActionSpec(
-        "Move the ZHA network to a new Zigbee channel (new_channel: 11-26).",
-        destructive=True,
-        required=("new_channel",),
-    ),
-    "firmware_update": ActionSpec(
-        "Install the available OTA firmware on a Zigbee node (via its update.* "
-        "entity).",
-        long_running=True,
-        required=("device_id",),
-    ),
-}
+logger = logging.getLogger(__name__)
 
 
 async def _resolve_ieee_devices(client: Any, device_id: Any) -> list[dict[str, Any]]:
