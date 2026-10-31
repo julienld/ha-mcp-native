@@ -77,6 +77,17 @@ def _client(
         },
     }
     answers.update(replies or {})
+    if (
+        replies
+        and "config/entity_registry/get" in replies
+        and "config/entity_registry/list" not in replies
+    ):
+        row = replies["config/entity_registry/get"].get("result")
+        if isinstance(row, dict) and row.get("platform") != "zone":
+            answers["config/entity_registry/list"] = {
+                "success": True,
+                "result": [*REGISTRY, row],
+            }
     known = {"zone.office": {"entity_id": "zone.office", "attributes": {}}}
     known.update(states or {})
 
@@ -121,7 +132,7 @@ def registered() -> AsyncMock:
     return AsyncMock(return_value=True)
 
 
-_FETCH_SCHEMAS = "ha_mcp.tools.config_helpers.icon_route.fetch_helper_schemas"
+_FETCH_SCHEMAS = "ha_mcp.tools.component_helper_collections.fetch_helper_schemas"
 
 
 @pytest.fixture(autouse=True)
@@ -133,23 +144,19 @@ def _no_component(removed: AsyncMock, registered: AsyncMock) -> Iterator[None]:
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "ha_mcp.tools.config_helpers.update.read_stored_helper_item",
+            "ha_mcp.tools.component_helper_collections.read_stored_helper_item",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "ha_mcp.tools.config_helpers.create.write_helper_item",
+            "ha_mcp.tools.component_helper_collections.write_helper_item",
             new=AsyncMock(return_value=None),
         ),
         patch(_FETCH_SCHEMAS, new=AsyncMock(return_value=None)),
         patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new=registered,
         ),
-        patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
-            new=AsyncMock(return_value=True),
-        ),
-        patch("ha_mcp.tools.tools_zones.wait_for_entity_removed", new=removed),
+        patch("ha_mcp.tools.ws_waiters.wait_for_entity_removed", new=removed),
     ):
         yield
 

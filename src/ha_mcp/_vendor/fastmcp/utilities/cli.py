@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
-from rich.align import Align
-from rich.console import Console, Group
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+from ha_mcp._vendor.rich.align import Align
+from ha_mcp._vendor.rich.console import Console, Group
+from ha_mcp._vendor.rich.panel import Panel
+from ha_mcp._vendor.rich.table import Table
+from ha_mcp._vendor.rich.text import Text
 
 from ha_mcp._vendor import fastmcp
 from ha_mcp._vendor.fastmcp.utilities.logging import get_logger

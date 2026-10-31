@@ -12,7 +12,7 @@ import cyclopts
 from ha_mcp._vendor import mcp_types
 import pydantic_core
 from ha_mcp._vendor.mcp import MCPError
-from rich.console import Console
+from ha_mcp._vendor.rich.console import Console
 
 from ha_mcp._vendor.fastmcp.cli.client import _build_client, resolve_server_spec
 from ha_mcp._vendor.fastmcp.client.transports.base import ClientTransport

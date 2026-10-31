@@ -15,7 +15,6 @@ from ha_mcp.client.rest_client import HomeAssistantConnectionError
 from ha_mcp.tools.config_helpers.create import _execute_create_simple_helper
 from ha_mcp.tools.config_helpers.update import (
     _execute_update_simple_helper,
-    _update_via_component,
 )
 from ha_mcp.tools.tools_zones import ZoneTools
 
@@ -231,7 +230,7 @@ class TestCreatedIconStaysClearable:
     ) -> None:
         write = AsyncMock(return_value=None)
         with (
-            patch("ha_mcp.tools.config_helpers.create.write_helper_item", write),
+            patch("ha_mcp.tools.component_helper_collections.write_helper_item", write),
             patch(_FETCH_SCHEMAS, AsyncMock(return_value=_PERSON_SCHEMAS)),
         ):
             await _execute_create_simple_helper(
@@ -264,16 +263,21 @@ class TestCreatedIconStaysClearable:
         self, helper_type: str, schemas: Any, item: Any, in_item: bool
     ) -> None:
         """The registry always takes the icon; the item only where Core has one."""
-        write = AsyncMock(return_value=None)
-        read = AsyncMock(return_value={"item": item, "item_id": "anna"})
+        write = AsyncMock(return_value={"success": True, "item": item})
+        read = AsyncMock(
+            return_value={"success": True, "item": item, "item_id": "anna"}
+        )
         with (
-            patch("ha_mcp.tools.config_helpers.update.read_stored_helper_item", read),
-            patch("ha_mcp.tools.config_helpers.update.write_helper_item", write),
+            patch(
+                "ha_mcp.tools.component_helper_collections.read_stored_helper_item",
+                read,
+            ),
+            patch("ha_mcp.tools.component_helper_collections.write_helper_item", write),
             patch(_FETCH_SCHEMAS, AsyncMock(return_value=schemas)),
         ):
-            await _update_via_component(
+            await _execute_update_simple_helper(
                 _client(), helper_type, f"{helper_type}.anna", f"{helper_type}.anna",
-                None, "mdi:account", None, None, None, {},
+                None, "mdi:account", None, None, None, False, False, {},
             )  # fmt: skip
 
         assert ("icon" in write.call_args.args[3]) is in_item
@@ -458,7 +462,9 @@ class TestCreatedIconStaysClearable:
 
     async def test_component_create_sends_the_icon_as_a_registry_field(self) -> None:
         write = AsyncMock(return_value=None)
-        with patch("ha_mcp.tools.config_helpers.create.write_helper_item", write):
+        with patch(
+            "ha_mcp.tools.component_helper_collections.write_helper_item", write
+        ):
             await ZoneTools(_client()).ha_set_zone(
                 name="Office", latitude=52.5, longitude=13.4, icon="mdi:briefcase"
             )

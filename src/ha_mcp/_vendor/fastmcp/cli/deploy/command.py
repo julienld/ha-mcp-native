@@ -10,7 +10,7 @@ from typing import Annotated, NoReturn
 
 from cyclopts import Parameter
 from pydantic import SecretStr
-from rich.status import Status
+from ha_mcp._vendor.rich.status import Status
 
 from ha_mcp._vendor import fastmcp
 from ha_mcp._vendor.fastmcp.cli.deploy.authentication import (

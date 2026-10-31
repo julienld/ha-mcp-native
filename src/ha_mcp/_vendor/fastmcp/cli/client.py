@@ -19,8 +19,8 @@ from key_value.aio.stores.filetree import (
     FileTreeV1KeySanitizationStrategy,
 )
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
-from rich.console import Console
-from rich.markup import escape as escape_rich_markup
+from ha_mcp._vendor.rich.console import Console
+from ha_mcp._vendor.rich.markup import escape as escape_rich_markup
 
 from ha_mcp._vendor.fastmcp import settings
 from ha_mcp._vendor.fastmcp.cli.discovery import DiscoveredServer, discover_servers, resolve_name
@@ -1035,7 +1035,7 @@ async def discover_command(
         console.print("  • ./mcp.json")
         return
 
-    from rich.table import Table
+    from ha_mcp._vendor.rich.table import Table
 
     # Group by source
     by_source: dict[str, list[DiscoveredServer]] = {}
