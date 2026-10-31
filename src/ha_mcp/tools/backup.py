@@ -19,12 +19,19 @@ HA restore path. Each call must explicitly pick its scope.
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
-
-from pydantic import Field
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.backends.legacy import legacy_errors, legacy_errors_sync
+from ha_mcp.runtime import backup_values as _backup_values
+from ha_mcp.runtime.backup_hints import BACKUP_HINTS
+from ha_mcp.runtime.backup_limits import BACKUP_MAX_WAIT_S as _BACKUP_MAX_WAIT_S
+from ha_mcp.runtime.backup_limits import (
+    SAFETY_BACKUP_MAX_WAIT_S as _SAFETY_BACKUP_MAX_WAIT_S,
+)
+from ha_mcp.runtime.backup_tools import BackupFacade, backup_description
 
 from ..backup_manager import (
     LEGACY_PREFIX,
@@ -71,35 +78,13 @@ from .tool_hints import write_hints
 if TYPE_CHECKING:
     from ha_mcp._vendor.fastmcp import FastMCP
 
+_pure_check_snapshot_deletable = legacy_errors_sync(
+    _backup_values._check_snapshot_deletable
+)
+
 logger = logging.getLogger(__name__)
 
-# Poll window for full HA backups. HA's own frontend imposes no timeout at
-# all on backup creation — it subscribes to `backup/subscribe_events` and
-# waits however long the job takes. Our poll-based design still needs a
-# finite bound per tool call, so this mirrors _SAFETY_BACKUP_MAX_WAIT_S (the
-# codebase's existing "generous but bounded" ceiling) rather than inventing a
-# third number.
-#
-# Two distinct problems, both fixed in the same PR, by different mechanisms:
-# the client-side abort reported in #1861 (an MCP client that received no
-# progress notifications for 300s concluded the connection was dead) is
-# fixed by the ctx.report_progress heartbeats in _poll_backup_completion,
-# not by this constant. Raising it from 300 to 1800 instead fixes *our own*
-# poll loop giving up on a legitimately >5-minute backup — the job keeps
-# running server-side after our loop times out, so a too-tight ceiling here
-# means _poll_backup_completion raises TIMEOUT_OPERATION on a backup that
-# would otherwise have succeeded. 120s before that underfit slow HA
-# instances too (#1433: poll loop exited while HA was still in
-# state="create_backup", the wrapper treated that as failure, retried, and
-# produced duplicate backups).
-_BACKUP_MAX_WAIT_S = 1800
 _BACKUP_POLL_INTERVAL_S = 2
-# The pre-restore safety backup is a *full* backup (include_database=True, plus
-# all add-ons on Supervised), unlike the fast create_backup path. A multi-GB
-# full backup on constrained hardware (~2.1 GB on a Pi 5, #1681) can run well
-# past the fast-backup window, so its completion poll gets a larger budget —
-# timing out here aborts the restore and the retry spawns another full backup.
-_SAFETY_BACKUP_MAX_WAIT_S = 1800
 # Clock-skew tolerance when filtering backup entries by date vs job-start.
 _BACKUP_DATE_FILTER_TOLERANCE_S = 5
 # Minimum spacing between in-loop MCP progress heartbeats during a backup
@@ -132,12 +117,7 @@ def _get_backup_hint_text() -> str:
     # Get hint from environment directly to avoid requiring full settings
     hint = os.getenv("BACKUP_HINT", "normal").lower()
 
-    hints = {
-        "strong": "Run this backup before the FIRST modification of the day/session. This is usually not required since most operations can be rolled back (the model fetches definitions before modifying). Users with daily backups configured should use 'normal' or 'weak' instead.",
-        "normal": "Run before operations that CANNOT be undone (e.g., deleting devices). If the current definition was fetched or can be fetched, this tool is usually not needed.",
-        "weak": "Backups are usually not required for configuration changes since most operations can be manually undone. Only run this if specifically requested or before irreversible system operations.",
-        "auto": "Run before operations that CANNOT be undone (e.g., deleting devices). If the current definition was fetched or can be fetched, this tool is usually not needed.",
-    }
+    hints = BACKUP_HINTS
     if hint not in hints:
         # Silent fallback used to be harmless; it isn't now. This value is
         # interpolated into BOTH the full and the lite ha_manage_backup
@@ -347,19 +327,7 @@ def _raise_no_default_password_error() -> NoReturn:
     )
 
 
-def _parse_backup_date(raw: Any) -> datetime | None:
-    """Parse an HA backup `date` (ISO-8601, may use `Z` suffix) to a tz-aware
-    datetime, returning None on missing/malformed input. Naive timestamps are
-    treated as UTC."""
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        dt = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
+_parse_backup_date = _backup_values._parse_backup_date
 
 
 def _build_success_response_if_found(
@@ -893,23 +861,7 @@ async def _create_safety_backup(
     return cast(str, safety_backup_id), poll_result.get("warnings", [])
 
 
-def _backup_protected(entry: dict[str, Any]) -> bool | None:
-    """Whether a ``backup/info`` entry is encrypted.
-
-    ``protected`` is a per-agent field (AgentBackupStatus), not top-level. A
-    backup is encrypted as a whole, so any agent reporting it makes the backup
-    protected; returns None when the ``agents`` map is absent/malformed or no
-    agent reports the flag (unknown rather than "unprotected").
-    """
-    agents = entry.get("agents")
-    if not isinstance(agents, dict):
-        return None
-    flags = [
-        a.get("protected")
-        for a in agents.values()
-        if isinstance(a, dict) and a.get("protected") is not None
-    ]
-    return any(flags) if flags else None
+_backup_protected = _backup_values._backup_protected
 
 
 async def _verify_backup_exists(
@@ -1195,40 +1147,7 @@ async def restore_backup(
                 )
 
 
-def _summarize_backup(entry: dict[str, Any]) -> dict[str, Any]:
-    """Project one HA ``backup/info`` entry to the fields a caller needs to
-    identify and choose a snapshot (issue #1586).
-
-    Size is reported per backup agent; we surface the largest reported size
-    across agents. Every field is ``.get`` so a schema the running HA version
-    doesn't populate yields ``None`` rather than raising.
-    """
-    agents = entry.get("agents") or {}
-    size_bytes: int | None = None
-    if isinstance(agents, dict):
-        sizes: list[int] = []
-        for a in agents.values():
-            if isinstance(a, dict):
-                size = a.get("size")
-                # Accept int or float (some agents report byte counts as float);
-                # bool is an int subclass but never a real size, so exclude it.
-                if isinstance(size, (int, float)) and not isinstance(size, bool):
-                    sizes.append(int(size))
-        if sizes:
-            size_bytes = max(sizes)
-    return {
-        "backup_id": entry.get("backup_id"),
-        "name": entry.get("name"),
-        "date": entry.get("date"),
-        "size_bytes": size_bytes,
-        # per-agent field, derived from the agents map (see _backup_protected)
-        "protected": _backup_protected(entry),
-        "database_included": entry.get("database_included"),
-        "homeassistant_included": entry.get("homeassistant_included"),
-        "homeassistant_version": entry.get("homeassistant_version"),
-        "with_automatic_settings": entry.get("with_automatic_settings"),
-        "agent_ids": list(agents.keys()) if isinstance(agents, dict) else [],
-    }
+_summarize_backup = _backup_values._summarize_backup
 
 
 async def list_backups(client: HomeAssistantClient, limit: int = 200) -> dict[str, Any]:
@@ -1292,37 +1211,7 @@ async def list_backups(client: HomeAssistantClient, limit: int = 200) -> dict[st
         return None  # unreachable: exception_to_structured_error always raises
 
 
-def _refuse_snapshot_delete(message: str, **context: Any) -> NoReturn:
-    """Raise the shared VALIDATION_INVALID_PARAMETER shape for every
-    snapshot-delete guard rejection (gate, confirm, automatic-settings, age
-    floor, newest-snapshot protection)."""
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.VALIDATION_INVALID_PARAMETER,
-            message,
-            context=context,
-        )
-    )
-
-
-def _newest_backup_id(backups: list[dict[str, Any]]) -> str | None:
-    """Return the ``backup_id`` of the single most-recent entry by date, or
-    None if no entry has a parseable date.
-
-    Entries with a missing/malformed date are excluded from consideration —
-    they can never be "the newest" — but that does not make them safe to
-    delete; ``delete_backup`` fails closed on an unparseable target date
-    separately, so an undated target can never be deleted regardless of
-    this function's result.
-    """
-    dated = [
-        (b.get("backup_id"), parsed)
-        for b in backups
-        if (parsed := _parse_backup_date(b.get("date"))) is not None
-    ]
-    if not dated:
-        return None
-    return max(dated, key=lambda pair: pair[1])[0]
+_refuse_snapshot_delete = legacy_errors_sync(_backup_values._refuse_snapshot_delete)
 
 
 async def delete_backup(
@@ -1479,54 +1368,13 @@ def _check_snapshot_deletable(
     settings: Any,
     backup_id: str,
 ) -> None:
-    """Apply the scheduled / newest / age-floor delete guards; raise to refuse."""
-    if matched.get("with_automatic_settings") is not False:
-        _refuse_snapshot_delete(
-            "Refusing to delete a scheduled (automatic) backup, or one "
-            "whose automatic/manual origin Home Assistant cannot "
-            "confirm (with_automatic_settings=None — not created by "
-            "this HA instance, or predates this metadata) — treated "
-            "as not provably manual, and therefore not deletable.",
-            backup_id=backup_id,
-        )
-
-    # Checked before the age floor below: a backup that is BOTH the
-    # newest AND too young must report "newest" (create a new one
-    # first), not "too young" — the age-floor message's remedy
-    # ("lower snapshot_delete_min_age_days") would be actively
-    # misleading advice for the newest snapshot, which stays
-    # protected at any age floor including 0.
-    newest_id = _newest_backup_id(backups)
-    if newest_id == backup_id:
-        _refuse_snapshot_delete(
-            "Refusing to delete the newest snapshot — at least one "
-            "recovery point must remain. Create a new snapshot first "
-            "if you specifically need to free this one's space.",
-            backup_id=backup_id,
-        )
-
-    min_age_days = settings.snapshot_delete_min_age_days
-    target_date = _parse_backup_date(matched.get("date"))
-    if target_date is None:
-        _refuse_snapshot_delete(
-            "Refusing to delete a backup with a missing or unparseable "
-            "date — cannot verify it clears the minimum-age floor.",
-            backup_id=backup_id,
-        )
-    cutoff = datetime.now(UTC) - timedelta(days=min_age_days)
-    # min_age_days=0 must unconditionally disable the floor, even if
-    # target_date is slightly ahead of this host's clock (clock skew
-    # vs the HA instance that stamped it) — guard explicitly rather
-    # than relying on the arithmetic reduction, which clock skew breaks.
-    if min_age_days > 0 and target_date > cutoff:
-        _refuse_snapshot_delete(
-            f"Refusing to delete a backup younger than "
-            f"snapshot_delete_min_age_days={min_age_days} days — at "
-            "least one recent recovery point must remain. Delete an "
-            "older backup, or lower snapshot_delete_min_age_days if "
-            "this recurs.",
-            backup_id=backup_id,
-        )
+    _pure_check_snapshot_deletable(
+        matched,
+        backups,
+        settings.snapshot_delete_min_age_days,
+        backup_id,
+        datetime.now(UTC),
+    )
 
 
 async def _execute_snapshot_delete(
@@ -1573,196 +1421,63 @@ async def _execute_snapshot_delete(
     }
 
 
-def register_backup_tools(
-    mcp: "FastMCP", client: HomeAssistantClient, **kwargs: Any
-) -> None:
-    """Register the polymorphic ``ha_manage_backup`` tool.
+class BackupTools(BackupFacade):
+    def __init__(self, client: HomeAssistantClient) -> None:
+        self._client = client
+        super().__init__(self._manage)
 
-    Replaces the previous ``ha_backup_create`` and ``ha_backup_restore``
-    pair (merged into one tool, separated by ``scope``). All existing
-    snapshot functionality is preserved under ``scope="snapshot"``.
-    """
-    backup_hint_text = _get_backup_hint_text()
-    manage_backup_description = f"""Manage Home Assistant backups — both full HA snapshots AND per-edit auto-backups.
-
-**Pick the scope first**, then the action. Wrong scope routes through the wrong code path:
-
-| scope | action | What it does |
-|---|---|---|
-| `snapshot` | `create` | Create a full HA tarball (config + addons, no DB by default). Can take a while on a large instance; progress heartbeats are sent while waiting. |
-| `snapshot` | `list` | List full HA tarball snapshots (id, name, date, size). Read-only — use to discover a `backup_id` or confirm a backup landed. |
-| `snapshot` | `restore` | Restore a full HA tarball. **Restarts HA.** Last-resort recovery. |
-| `snapshot` | `delete` | Delete one full HA tarball by `backup_id` (`confirm=True` required). **Disabled by default** (`enable_snapshot_delete` setting) and layered with guards even when enabled — see below. |
-| `edits` | `create` | On-demand snapshot of one entity (`domain` + `entity_id` required). Use before the user manually edits in the HA UI. Same handler path the decorator takes on writes; bypasses the `enable_auto_backup` toggle. |
-| `edits` | `list` | List per-entity auto-backups (lightweight). Filter by `domain` and/or `entity_id`. |
-| `edits` | `view` | Read one auto-backup file by name; returns YAML and parsed `config`. |
-| `edits` | `diff` | Compare one auto-backup against the entity's current config. RFC 6902 JSON-Patch + add/remove/replace counts; bounded output. Read-only — fetches the live config, makes no changes. |
-| `edits` | `restore` | Re-apply one auto-backup. Existing flow helpers (template, group, utility_meter, …) and config subentries require a fresh safety snapshot; other domains follow auto-backup settings and may proceed without one. A deleted flow helper is recreated with a new config-entry ID and its saved entity IDs are restored if unoccupied; a deleted subentry is recreated with a new subentry ID. A deleted integration config entry cannot be recreated: its snapshot holds only metadata and the enabled state. **No HA restart.** |
-| `edits` | `delete` | Delete one auto-backup by `backup_name`, or bulk-delete by filter. |
-
-**When to use which scope:**
-- Use `scope="edits"` to undo a recent automation/script/scene/dashboard/helper edit by the agent. Lightweight, fast, no restart.
-- Use `scope="snapshot"` only for system-wide recovery (botched add-on update, mass config corruption, etc.).
-
-**`scope="snapshot"` backup-hint:**
-{backup_hint_text}
-
-**`(snapshot, delete)` is off by default and layered even when enabled:** a human must
-set `enable_snapshot_delete=true` (env var, web settings UI, or add-on Supervisor
-options) — an agent cannot turn this on itself. When enabled, a delete call is still
-refused if: the target is a scheduled/automatic backup; it's younger than
-`snapshot_delete_min_age_days` (default 7, 0 disables the floor); or it's the single
-newest snapshot remaining. These guarantee at least one recovery point always
-survives an agent's own mistakes.
-
-**Human-managed backup controls:** `enable_snapshot_actions=false` (ENABLE_SNAPSHOT_ACTIONS) blocks every snapshot action, including listing. `backup_read_only=true` (BACKUP_READ_ONLY) allows edits list/view/diff and snapshot list when snapshots are enabled; it blocks explicit create/restore/delete in both scopes. Automatic pre-edit capture still follows `enable_auto_backup`. A human must change these controls in the Backups tab, app configuration, or environment; developer tools cannot change them. Global and connection Read Only Mode still restrict writes.
-
-**`enable_auto_backup` and `scope="edits"`:** the automatic-on-write capture (every wrapped tool call) is gated by `enable_auto_backup=true` — if the listing is empty, check the toggle (web settings UI or `ENABLE_AUTO_BACKUP=true` env var). The explicit `(edits, create)` action bypasses the toggle since the request is explicit; `list` / `view` / `restore` / `delete` operate on whatever's already on disk regardless of the toggle's current state.
-
-**Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.
-
-**Examples:**
-- Snapshot before risky op: `ha_manage_backup(scope="snapshot", action="create", name="Before_Big_Change")`
-- List snapshots (to discover a backup_id or confirm one landed): `ha_manage_backup(scope="snapshot", action="list")`
-- Restore full snapshot: `ha_manage_backup(scope="snapshot", action="restore", backup_id="dd7550ed")`
-- Delete an old snapshot (requires `enable_snapshot_delete=true`): `ha_manage_backup(scope="snapshot", action="delete", backup_id="dd7550ed", confirm=True)`
-- On-demand entity snapshot before a manual UI edit: `ha_manage_backup(scope="edits", action="create", domain="helper_input_boolean", entity_id="welcome_home_active")`
-- List recent auto-backups for one automation: `ha_manage_backup(scope="edits", action="list", domain="automation", entity_id="welcome_home")`
-- View an auto-backup: `ha_manage_backup(scope="edits", action="view", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Diff an auto-backup vs current state: `ha_manage_backup(scope="edits", action="diff", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Restore an auto-backup: `ha_manage_backup(scope="edits", action="restore", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Delete one auto-backup: `ha_manage_backup(scope="edits", action="delete", backup_name="...")`
-- Bulk-delete old auto-backups: `ha_manage_backup(scope="edits", action="delete", older_than_days=30)`
-"""
-
-    @mcp.tool(
-        description=manage_backup_description,
+    ha_manage_backup = tool(
         tags={"System"},
         annotations=write_hints(
             "Manage Backups", destructive=True, idempotent=False, open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_manage_backup(
-        scope: Annotated[
-            Literal["snapshot", "edits"],
-            Field(
-                description="'snapshot' for full HA tarballs; 'edits' for per-entity auto-backups."
-            ),
-        ],
-        action: Annotated[
-            Literal["create", "restore", "list", "view", "diff", "delete"],
-            Field(
-                description="Operation to perform. Valid (scope, action) combinations are listed in the tool description."
-            ),
-        ],
-        # snapshot scope params
-        name: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(snapshot.create) Tarball name. Auto-generated if not provided.",
-            ),
-        ] = None,
-        backup_id: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(snapshot.restore / snapshot.delete) Tarball ID (e.g. 'dd7550ed').",
-            ),
-        ] = None,
-        restore_database: Annotated[
-            bool,
-            Field(
-                default=False,
-                description="(snapshot.restore) Include the database in the restore; otherwise "
-                "config only.",
-            ),
-        ] = False,
-        confirm: Annotated[
-            bool,
-            Field(
-                default=False,
-                description=("(snapshot.delete) Must be True to confirm deletion."),
-            ),
-        ] = False,
-        # edits scope params
-        domain: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by domain (e.g. 'automation', 'helper_timer'). "
-                "Required for edits.create.",
-            ),
-        ] = None,
-        entity_id: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by entity ID. "
-                "Required for edits.create.",
-            ),
-        ] = None,
-        backup_name: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "(edits.view / edits.restore / edits.delete) Auto-backup filename "
-                    "(format '<domain>.<entity_id>.<timestamp>[_NN].yaml'). Not a tarball ID."
-                ),
-            ),
-        ] = None,
-        older_than_days: Annotated[
-            int | None,
-            Field(
-                default=None,
-                ge=0,
-                description="(edits.delete) Bulk-delete auto-backups older than this many days.",
-            ),
-        ] = None,
-        limit: Annotated[
-            int,
-            Field(
-                default=200,
-                ge=1,
-                le=10_000,
-                description="(edits.list / snapshot.list) Maximum number of entries to return.",
-            ),
-        ] = 200,
-        ctx: Context | None = None,
-    ) -> dict[str, Any]:
-        """Polymorphic backup tool. See the tool description for the routing matrix."""
+    )(log_tool_usage(legacy_errors(BackupFacade.ha_manage_backup)))
+
+    async def _manage(self, **arguments: Any) -> dict[str, Any]:
+        scope, action = arguments.pop("scope"), arguments.pop("action")
         _gate_combo(scope, action)
         settings = get_global_settings()
         require_backup_access(settings, scope, action)
-
         if scope == "snapshot":
             return await _dispatch_snapshot_action(
-                client,
+                self._client,
                 action,
                 scope=scope,
-                name=name,
-                backup_id=backup_id,
-                restore_database=restore_database,
-                confirm=confirm,
-                limit=limit,
-                ctx=ctx,
+                **{
+                    key: arguments[key]
+                    for key in (
+                        "name",
+                        "backup_id",
+                        "restore_database",
+                        "confirm",
+                        "limit",
+                        "ctx",
+                    )
+                },
             )
-
-        # scope == "edits"
-        mgr = get_backup_manager(client, settings)
         return await _dispatch_edits_action(
-            mgr,
+            get_backup_manager(self._client, settings),
             settings,
             action,
             scope=scope,
-            domain=domain,
-            entity_id=entity_id,
-            backup_name=backup_name,
-            older_than_days=older_than_days,
-            limit=limit,
+            **{
+                key: arguments[key]
+                for key in (
+                    "domain",
+                    "entity_id",
+                    "backup_name",
+                    "older_than_days",
+                    "limit",
+                )
+            },
         )
+
+
+def register_backup_tools(
+    mcp: "FastMCP", client: HomeAssistantClient, **kwargs: Any
+) -> None:
+    registered = mcp.add_tool(BackupTools(client).ha_manage_backup)
+    registered.description = backup_description(_get_backup_hint_text())
 
 
 async def _dispatch_snapshot_action(

@@ -54,18 +54,16 @@ def _dispatcher() -> Any:
     captured: dict[str, Any] = {}
 
     class _MockMCP:
-        def tool(self, *args: Any, **kwargs: Any) -> Any:
-            def deco(fn: Any) -> Any:
-                captured.setdefault(fn.__name__, fn)
-                return fn
-
-            return deco
+        def add_tool(self, fn: Any) -> Any:
+            captured.setdefault(fn.__name__, fn)
+            return MagicMock()
 
     register_backup_tools(_MockMCP(), MagicMock())
     fn = captured["ha_manage_backup"]
+    owner = fn.__self__
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
-    return fn
+    return fn.__get__(owner, type(owner))
 
 
 def _patched(diff_exc: BaseException) -> tuple[Any, Any]:

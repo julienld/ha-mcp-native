@@ -4,9 +4,8 @@ import json
 from typing import Any
 
 from ..errors import ErrorCode, create_error_response
+from ..runtime.dev_values import HUMAN_BACKUP_CONTROLS as _HUMAN_BACKUP_CONTROLS
 from .helpers import raise_tool_error
-
-_HUMAN_BACKUP_CONTROLS = frozenset({"enable_snapshot_actions", "backup_read_only"})
 
 
 def dev_backup_config_fields() -> list[dict[str, Any]]:

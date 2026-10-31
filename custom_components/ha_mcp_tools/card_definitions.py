@@ -896,7 +896,12 @@ async def async_get_definitions(
     return _definitions
 
 
-async def async_card_warnings(hass: HomeAssistant, config: dict[str, Any]) -> list[str]:
+async def async_card_warnings(
+    hass: HomeAssistant,
+    config: dict[str, Any],
+    *,
+    resource_items: list[dict[str, Any]] | None = None,
+) -> list[str]:
     """Advisory warnings for a saved dashboard; never fails the write."""
     try:
         async with asyncio.timeout(_CARD_WORK_SECONDS):
@@ -908,7 +913,15 @@ async def async_card_warnings(hass: HomeAssistant, config: dict[str, Any]) -> li
                 for _, card in _cards(config)
             )
             custom = (
-                await async_get_custom_cards(hass, timeout=_CUSTOM_WAIT_SECONDS)
+                await async_get_custom_cards(
+                    hass,
+                    timeout=_CUSTOM_WAIT_SECONDS,
+                    **(
+                        {"resource_items": resource_items}
+                        if resource_items is not None
+                        else {}
+                    ),
+                )
                 if uses_custom
                 else None
             )
