@@ -68,6 +68,7 @@ import json
 import sys
 
 import aiohttp
+from aiohttp.helpers import must_be_empty_body
 
 fields = sys.argv[1:]
 signature = inspect.signature(aiohttp.ClientTimeout)
@@ -83,6 +84,13 @@ json.dump(
             field: getattr(aiohttp.ClientTimeout(), field) for field in fields
         },
         "relay": {field: getattr(relay, field) for field in fields},
+        "body_policy": [
+            [method, status, must_be_empty_body(method, status)]
+            for method, status in [
+                ("GET", 200), ("HEAD", 200), ("GET", 101),
+                ("GET", 204), ("GET", 304), ("CONNECT", 200), ("CONNECT", 404),
+            ]
+        ],
     },
     sys.stdout,
 )
@@ -118,6 +126,15 @@ def real_aiohttp() -> dict[str, Any]:
         f"{completed.stderr.strip()}"
     )
     return json.loads(completed.stdout)
+
+
+def test_embedded_body_policy_stub_matches_the_public_helper(
+    real_aiohttp: dict[str, Any],
+) -> None:
+    from aiohttp.helpers import must_be_empty_body
+
+    for method, status, expected in real_aiohttp["body_policy"]:
+        assert must_be_empty_body(method, status) is expected
 
 
 def _constructor_pairs(cls: Any) -> list[list[Any]]:

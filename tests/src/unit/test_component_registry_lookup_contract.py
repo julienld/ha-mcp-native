@@ -27,7 +27,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp.tools import component_api, component_registry_lookup
+from ha_mcp.tools import (
+    component_api,
+    component_helper_collections,
+    component_registry_lookup,
+)
 from ha_mcp.tools.tools_integrations import IntegrationTools
 
 from ._component_routing_helpers import patch_ws
@@ -56,6 +60,16 @@ def _real_component_ws(hass: FakeHass) -> AsyncMock:
             return {
                 "success": True,
                 "result": wsapi._do_registry_lookup(hass, dict(kwargs)),
+            }
+        if command_type == "ha_mcp_tools/helper_item":
+            return {
+                "success": True,
+                "result": {
+                    "success": True,
+                    "item_id": "uid-real",
+                    "item": {"id": "uid-real", "name": "My Button"},
+                    "entity_id": "input_button.my_button",
+                },
             }
         raise AssertionError(f"unexpected command {command_type!r}")
 
@@ -99,6 +113,9 @@ class _ContractClient:
     async def get_entity_state(self, entity_id: str) -> dict[str, Any]:
         return {"state": "on"}
 
+    async def get_config_entry(self, entry_id: str) -> dict[str, Any]:
+        return {"entry_id": entry_id, "domain": "utility_meter"}
+
     async def delete_config_entry(self, entry_id: str) -> dict[str, Any]:
         self.deleted_entries.append(entry_id)
         return {"require_restart": False}
@@ -118,7 +135,10 @@ class _ContractClient:
             return {"success": True}
         if isinstance(msg_type, str) and msg_type.endswith("/list"):
             # No stored helper has the target as its id: the registry resolves it.
-            return {"success": True, "result": []}
+            return {
+                "success": True,
+                "result": [{"id": "uid-real", "name": "My Button"}],
+            }
         raise AssertionError(f"unexpected ws message {msg_type!r}")
 
 
@@ -151,7 +171,10 @@ async def test_flow_delete_finds_all_subentities_via_real_component(
     )
     tools = IntegrationTools(client)
 
-    with patch_ws(ws, component_registry_lookup):
+    with (
+        patch_ws(ws, component_registry_lookup),
+        patch_ws(ws, component_helper_collections),
+    ):
         resp = await tools.ha_remove_helpers_integrations(
             target="sensor.energy_peak",
             helper_type="utility_meter",
@@ -200,6 +223,7 @@ async def test_simple_delete_resolves_in_one_lookup_no_sleep(monkeypatch) -> Non
 
     with (
         patch_ws(ws, component_registry_lookup),
+        patch_ws(ws, component_helper_collections),
         patch(
             "ha_mcp.tools.tools_integrations.asyncio.sleep", new_callable=AsyncMock
         ) as sleep_mock,
@@ -238,7 +262,11 @@ async def test_an_entity_the_component_misses_is_not_deleted_by_its_object_id(
     client = _ContractClient()
     tools = IntegrationTools(client)
 
-    with patch_ws(ws, component_registry_lookup), pytest.raises(ToolError) as excinfo:
+    with (
+        patch_ws(ws, component_registry_lookup),
+        patch_ws(ws, component_helper_collections),
+        pytest.raises(ToolError) as excinfo,
+    ):
         await tools.ha_remove_helpers_integrations(
             target="input_button.my_button",
             helper_type="input_button",

@@ -1,0 +1,334 @@
+"""Bounded operation owner, independent of the lifetime of an HTTP request."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
+from typing import Any
+from uuid import uuid4
+
+from ha_mcp.renamed_tools import adapt_retired_arguments, current_tool_name
+from ha_mcp.tool_api import (
+    Backend,
+    CallContext,
+    PolicyGuard,
+    ResultFilter,
+    ToolDefinition,
+    ToolFailure,
+    ToolResult,
+)
+
+from .mutation_guard import MutationAdmission, current_admission
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class Engine:
+    """A single admission path; a disconnected waiter cannot cancel a write."""
+
+    def __init__(
+        self,
+        backend: Backend,
+        tools: Iterable[ToolDefinition] = (),
+        *,
+        read_only: bool = False,
+        max_operations: int = 32,
+        operation_timeout: float = 120,
+        drain_timeout: float = 10,
+        cancel_timeout: float = 1,
+        max_records: int = 128,
+        policy_guard: PolicyGuard | None = None,
+        result_filter: ResultFilter | None = None,
+    ) -> None:
+        if min(max_operations, operation_timeout, max_records) <= 0:
+            raise ValueError("Operation limits must be positive")
+        _validate_timeout(operation_timeout)
+        if min(drain_timeout, cancel_timeout) < 0:
+            raise ValueError("Drain limits must be nonnegative")
+        self.backend = backend
+        self.tools: dict[str, ToolDefinition] = {}
+        for definition in tools:
+            self.register(definition)
+        self.read_only = read_only
+        self.enabled_tools: set[str] | None = None
+        self.accepting = True
+        self.max_operations = max_operations
+        self.operation_timeout = operation_timeout
+        self.drain_timeout = drain_timeout
+        self.cancel_timeout = cancel_timeout
+        self.max_records = max_records
+        self.policy_guard = policy_guard
+        self.result_filter = result_filter
+        self.tasks: set[asyncio.Task[ToolResult]] = set()
+        self.operations: dict[str, dict[str, Any]] = {}
+
+    def register(self, definition: ToolDefinition) -> None:
+        if definition.name in self.tools:
+            raise ValueError(f"Duplicate tool: {definition.name}")
+        self.tools[definition.name] = definition
+
+    def _check_policy(
+        self,
+        name: str,
+        context: CallContext,
+        writes: bool,
+        *,
+        enforce_catalogue: bool = True,
+    ) -> None:
+        if not self.accepting:
+            raise ToolFailure("INTEGRATION_STOPPING", "The integration is stopping.")
+        for allowed in (
+            self.enabled_tools if enforce_catalogue else None,
+            context.allowed_tools,
+        ):
+            if allowed is not None and name not in allowed:
+                raise ToolFailure("TOOL_DISABLED", f"Tool {name!r} is not enabled.")
+        if writes and (self.read_only or context.read_only):
+            raise ToolFailure("READ_ONLY", "Writes are disabled for this caller.")
+        if context.tool_guard is not None:
+            context.tool_guard(name)
+
+    async def call(
+        self, name: str, arguments: dict[str, Any], context: CallContext
+    ) -> ToolResult:
+        await self.backend.authorize(context)
+        if not isinstance(arguments, dict):
+            raise ToolFailure("INVALID_ARGUMENTS", "Tool arguments must be an object.")
+        arguments = adapt_retired_arguments(name, arguments) or {}
+        name = current_tool_name(name)
+        definition = self.tools.get(name)
+        if definition is None:
+            raise ToolFailure("UNKNOWN_TOOL", f"Unknown tool {name!r}.")
+        self._check_policy(name, context, False)
+        validated = (
+            definition.validate(arguments) if definition.validate else dict(arguments)
+        )
+        writes = (
+            definition.writes(validated)
+            if definition.writes is not None
+            else not definition.read_only
+        )
+        return await self.call_owned(
+            name,
+            lambda: definition.handler(validated, context),
+            context,
+            writes=writes,
+            arguments=validated,
+        )
+
+    async def call_owned(
+        self,
+        name: str,
+        invoke: Callable[[], Awaitable[Any]],
+        context: CallContext,
+        *,
+        writes: bool,
+        arguments: dict[str, Any] | None = None,
+        enforce_catalogue: bool = True,
+    ) -> ToolResult:
+        """Own an invocation; admin UI may ignore catalogue visibility, never actor policy."""
+        await self.backend.authorize(context)
+        self._check_policy(name, context, writes, enforce_catalogue=enforce_catalogue)
+        timeout = self.operation_timeout
+        definition = self.tools.get(name)
+        if definition is not None and definition.operation_timeout is not None:
+            selected = definition.operation_timeout(arguments or {})
+            if selected is not None:
+                timeout = _validate_timeout(selected)
+        if len(self.tasks) >= self.max_operations:
+            raise ToolFailure("OPERATION_LIMIT", "Too many in-flight operations.")
+        operation_id = uuid4().hex
+        self.operations[operation_id] = {
+            "tool": name,
+            "user_id": context.user_id,
+            "client_id": context.client_id,
+            "status": "admitted",
+            "writes": writes,
+            "enforce_catalogue": enforce_catalogue,
+        }
+        task = asyncio.create_task(
+            self._run(
+                operation_id,
+                name,
+                invoke,
+                context,
+                writes,
+                arguments or {},
+                enforce_catalogue,
+                timeout,
+            ),
+            name=f"ha-mcp-operation-{operation_id}",
+        )
+        self.tasks.add(task)
+        task.add_done_callback(self._operation_done)
+        return await asyncio.shield(task)
+
+    def _operation_done(self, task: asyncio.Task[ToolResult]) -> None:
+        self.tasks.discard(task)
+        # Retrieve exceptions even if the HTTP waiter disconnected meanwhile.
+        if not task.cancelled():
+            task.exception()
+        self._prune_records()
+
+    async def _run(
+        self,
+        operation_id: str,
+        name: str,
+        invoke: Callable[[], Awaitable[Any]],
+        context: CallContext,
+        writes: bool,
+        arguments: dict[str, Any],
+        enforce_catalogue: bool,
+        timeout: float,
+    ) -> ToolResult:
+        record = self.operations[operation_id]
+        try:
+            async with asyncio.timeout(timeout):
+                raw = await self._invoke_authorized(
+                    name, arguments, context, writes, record, invoke, enforce_catalogue
+                )
+            result = raw if isinstance(raw, ToolResult) else ToolResult(raw)
+            status = result.status or ("failed" if result.is_error else "confirmed")
+            record["status"] = status
+            result = replace(result, status=status, operation_id=operation_id)
+        except asyncio.CancelledError:
+            record["status"] = self._failure_status(record, writes)
+            raise
+        except Exception as exc:
+            status = self._failure_status(record, writes)
+            if isinstance(exc, ToolFailure) and exc.status is not None:
+                status = exc.status
+            record["status"] = status
+            if isinstance(exc, ToolFailure):
+                data = exc.data
+            else:
+                _LOGGER.exception("Tool %s failed (%s)", name, operation_id)
+                data = {
+                    "success": False,
+                    "error": {
+                        "code": "OUTCOME_UNKNOWN"
+                        if status == "outcome_unknown"
+                        else "EXECUTION_FAILED",
+                        "message": type(exc).__name__,
+                    },
+                }
+            result = ToolResult(
+                data, is_error=True, status=status, operation_id=operation_id
+            )
+        return await self._filter_result(name, arguments, context, result)
+
+    async def _filter_result(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: CallContext,
+        result: ToolResult,
+    ) -> ToolResult:
+        if result.is_error or result.status in {"not_started", "pending", "denied"}:
+            result = replace(result, images=())
+        if self.result_filter is None:
+            return result
+        try:
+            # A completed job or timeout still needs a bounded safety projection.
+            async with asyncio.timeout(min(self.operation_timeout, 10.0)):
+                filtered = await self.result_filter(name, arguments, context, result)
+            return replace(
+                filtered,
+                status=result.status,
+                operation_id=result.operation_id,
+                images=()
+                if filtered.is_error
+                or result.status in {"not_started", "pending", "denied"}
+                else filtered.images,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Result filtering failed for %s (%s)", name, result.operation_id
+            )
+            return replace(
+                result,
+                data={
+                    "success": False,
+                    "error": {
+                        "code": "RESULT_FILTER_FAILED",
+                        "message": "The operation result could not be safely returned.",
+                    },
+                },
+                is_error=True,
+                images=(),
+            )
+
+    async def _invoke_authorized(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: CallContext,
+        writes: bool,
+        record: dict[str, Any],
+        invoke: Callable[[], Awaitable[Any]],
+        enforce_catalogue: bool,
+    ) -> Any:
+        await self.backend.authorize(context)
+        self._check_policy(name, context, writes, enforce_catalogue=enforce_catalogue)
+        if self.policy_guard is not None:
+            guarded = await self.policy_guard(name, arguments, context, writes)
+            if guarded is not None:
+                return replace(guarded, status=guarded.status or "not_started")
+            await self.backend.authorize(context)
+            self._check_policy(
+                name, context, writes, enforce_catalogue=enforce_catalogue
+            )
+        record["status"] = "executing"
+        token = current_admission.set(
+            MutationAdmission(
+                context,
+                writes,
+                lambda: self._check_policy(
+                    name, context, writes, enforce_catalogue=enforce_catalogue
+                ),
+            )
+        )
+        try:
+            return await invoke()
+        finally:
+            current_admission.reset(token)
+
+    @staticmethod
+    def _failure_status(record: dict[str, Any], writes: bool) -> str:
+        if record["status"] == "admitted":
+            return "not_started"
+        return "outcome_unknown" if writes else "failed"
+
+    def _prune_records(self) -> None:
+        for key, record in list(self.operations.items()):
+            if len(self.operations) <= self.max_records:
+                break
+            if record["status"] not in {"admitted", "executing"}:
+                del self.operations[key]
+
+    async def stop(self) -> None:
+        """Stop admission and drain; a failed drain can be attempted again."""
+        self.accepting = False
+        if not self.tasks:
+            return
+        _, pending = await asyncio.wait(set(self.tasks), timeout=self.drain_timeout)
+        for task in pending:
+            task.cancel()
+        if pending:
+            _, survivors = await asyncio.wait(pending, timeout=self.cancel_timeout)
+            if survivors:
+                raise RuntimeError("owned_operations_not_drained")
+
+
+def _validate_timeout(value: float) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("Operation timeout must be a finite positive number")
+    return float(value)

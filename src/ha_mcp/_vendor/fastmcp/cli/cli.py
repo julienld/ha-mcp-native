@@ -14,9 +14,9 @@ from typing import Annotated, Literal
 import cyclopts
 import pyperclip
 from cyclopts import Parameter
-from rich.console import Console
-from rich.markup import escape
-from rich.table import Table
+from ha_mcp._vendor.rich.console import Console
+from ha_mcp._vendor.rich.markup import escape
+from ha_mcp._vendor.rich.table import Table
 
 from ha_mcp._vendor import fastmcp
 from ha_mcp._vendor.fastmcp.cli import run as run_module
