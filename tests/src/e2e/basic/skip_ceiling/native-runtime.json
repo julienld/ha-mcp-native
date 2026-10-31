@@ -1,0 +1,9 @@
+{
+  "reason": "Three raw transport cases remain on every compatible legacy lane: one ws_command round-trip and two Z-Wave assertions on the exact WS command. Native refusals and dedicated repairs/radio tools have separate coverage.",
+  "deltas": {
+    "embedded_native": 3,
+    "embedded_no_tools_native": 3,
+    "haos_embedded_native": 3,
+    "haos_embedded_no_tools_native": 3
+  }
+}

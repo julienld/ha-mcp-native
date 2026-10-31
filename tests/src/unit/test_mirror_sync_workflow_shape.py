@@ -49,7 +49,7 @@ class TestMirrorSyncShape:
         assert "head_branch" in gate["env"]["TRIGGER_BRANCH"]
         assert '"$TRIGGER_BRANCH" != master' in gate["run"]
 
-    def test_gate_keys_on_the_jobs_that_publish_the_pin(self) -> None:
+    def test_gate_keys_on_the_jobs_that_publish_the_paired_assets(self) -> None:
         gate = _workflow(_MIRROR)["jobs"]["gate"]["steps"][0]["run"]
         jobs = {
             job["name"]
@@ -61,9 +61,9 @@ class TestMirrorSyncShape:
             if "name" in job
         }
         assert "Semantic Release" in jobs
-        assert "Publish PyPI (dev channel)" in jobs
+        assert "Create GitHub pre-release" in jobs
         assert 'job="Semantic Release"' in gate
-        assert 'job="Publish PyPI (dev channel)"' in gate
+        assert 'job="Create GitHub pre-release"' in gate
 
     def test_dev_leg_pins_the_version_the_dev_build_uploaded(self) -> None:
         # Recomputing the number in the mirror could name a build PyPI never
@@ -88,14 +88,15 @@ class TestMirrorSyncShape:
         )
         assert "dev_version.sh" not in resolve["run"]
 
-    def test_tags_only_after_pypi_serves_the_pin(self) -> None:
+    def test_tags_only_after_verifying_the_published_assets(self) -> None:
         names = _sync_step_names()
-        assert names.index("Stage snapshot") < names.index("Commit and push")
-        assert names.index("Commit and push") < names.index(
-            "Wait for the pinned server build on PyPI"
-        )
-        assert names.index("Wait for the pinned server build on PyPI") < names.index(
-            "Tag the mirror"
+        assert names.index(
+            "Fetch and verify the publisher's paired assets"
+        ) < names.index("Stage snapshot")
+        assert (
+            names.index("Stage snapshot")
+            < names.index("Commit and push")
+            < names.index("Tag the mirror")
         )
 
     def test_stable_leg_keeps_the_workflows_own_scripts(self) -> None:
@@ -110,7 +111,7 @@ class TestMirrorSyncShape:
         )
         stage = next(s for s in steps if s.get("name") == "Stage snapshot")
         assert "git checkout" not in resolve["run"]
-        assert '"$SRC/custom_components/ha_mcp_tools"' in stage["run"]
+        assert "stage-mirror" in stage["run"]
         # hacs.json's Home Assistant minimum ships with the snapshot's component.
         assert 'cp "$SRC/hacs.json" "$SRC/LICENSE" /tmp/mirror/' in stage["run"]
 
@@ -172,13 +173,14 @@ class TestMirrorSyncShape:
         assert result.returncode == 0, result.stderr
         assert f"version={expected}" in output.read_text().splitlines()
 
-    def test_snapshot_is_stamped(self) -> None:
+    def test_snapshot_uses_verified_archive_without_restamping(self) -> None:
         stage = next(
             step
             for step in _workflow(_MIRROR)["jobs"]["sync"]["steps"]
             if step.get("name") == "Stage snapshot"
         )
-        assert "scripts/stamp_component_version.py" in stage["run"]
+        assert "stage-mirror" in stage["run"]
+        assert "stamp_component_version.py" not in stage["run"]
 
 
 class TestDevVersionScript:

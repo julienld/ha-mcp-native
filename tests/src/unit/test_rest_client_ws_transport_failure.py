@@ -12,6 +12,7 @@ These tests pin the producing half of that contract; the consuming half lives
 in ``test_tools_system.py::TestHomeAssistantConnectionErrorPropagation``.
 """
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +26,7 @@ from ha_mcp.client.rest_client import (
     HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
 )
+from ha_mcp.client.websocket_client import HomeAssistantWebSocketClient
 
 
 @pytest.fixture
@@ -68,6 +70,69 @@ async def _send_with_acquire_failure(
         new=AsyncMock(side_effect=exc),
     ):
         return await client.send_websocket_message({"type": "config_entries/get"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", [HomeAssistantConnectionError, ConnectionResetError]
+)
+async def test_write_is_not_repeated_after_effect_and_403_transport_failure(
+    client: HomeAssistantClient, no_retry_sleep: Any, failure: type[Exception]
+) -> None:
+    """Proxy-looking error text after a write cannot make that write safe to replay."""
+    effects: list[dict[str, Any]] = []
+
+    async def mutate_then_disconnect(command: str, **arguments: Any) -> None:
+        assert command == "config/entity_registry/update"
+        effects.append(arguments)
+        raise failure("Connection closed after dispatch: 403 Forbidden")
+
+    ws_client = MagicMock()
+    ws_client.send_command = AsyncMock(side_effect=mutate_then_disconnect)
+    with (
+        patch(
+            "ha_mcp.client.websocket_client.get_websocket_client",
+            new=AsyncMock(return_value=ws_client),
+        ) as acquire,
+        pytest.raises(HomeAssistantConnectionError, match="403 Forbidden") as exc_info,
+    ):
+        await client.send_websocket_message(
+            {
+                "type": "config/entity_registry/update",
+                "entity_id": "light.test",
+                "name": "Updated",
+            }
+        )
+
+    assert effects == [{"entity_id": "light.test", "name": "Updated"}]
+    assert not isinstance(exc_info.value, HomeAssistantCommandNotSent)
+    acquire.assert_awaited_once()
+    no_retry_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refused_connection_can_recover_before_a_single_write(
+    client: HomeAssistantClient, no_retry_sleep: Any
+) -> None:
+    """A transient acquisition refusal must not prevent a safe first dispatch."""
+    ws_client = MagicMock()
+    ws_client.send_command = AsyncMock(return_value={"success": True, "result": None})
+    with patch(
+        "ha_mcp.client.websocket_client.get_websocket_client",
+        new=AsyncMock(
+            side_effect=[HomeAssistantConnectionError("403 Forbidden"), ws_client]
+        ),
+    ) as acquire:
+        result = await client.send_websocket_message(
+            {"type": "config/entity_registry/update", "entity_id": "light.test"}
+        )
+
+    assert result == {"success": True, "result": None}
+    assert acquire.await_count == 2
+    ws_client.send_command.assert_awaited_once_with(
+        "config/entity_registry/update", entity_id="light.test"
+    )
+    no_retry_sleep.assert_awaited_once()
 
 
 class TestNoAnswerRaises:
@@ -179,16 +244,12 @@ class TestNoAnswerRaises:
             await _send_with_acquire_failure(client, exc)
 
     @pytest.mark.asyncio
-    async def test_403_transport_death_raises_after_retries(
+    async def test_403_acquisition_failure_raises_after_safe_retries(
         self, client: HomeAssistantClient, no_retry_sleep: Any
     ) -> None:
-        """The 403 branch matches on message text, and a connection error can
-        carry that text: the class is free to wrap an httpx failure whose
-        message spells a 403 as ``Client error '403 Forbidden' for url ...``.
-        Deciding by phase and type rather than by the message keeps a dead
-        transport failing loud on this path too."""
+        """A proxy refusal before a usable connection exists may be retried."""
         with pytest.raises(HomeAssistantConnectionError, match="403 Forbidden"):
-            await _send_with_failure(
+            await _send_with_acquire_failure(
                 client,
                 HomeAssistantConnectionError(
                     "HTTP error: Client error '403 Forbidden' for url 'http://ha/api'"
@@ -210,6 +271,56 @@ class TestNoAnswerRaises:
         assert result["success"] is False
         assert "403 Forbidden" in result["error"]
         assert result["suggestions"]
+        no_retry_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["403 Forbidden", "handler failed"])
+@pytest.mark.parametrize(
+    "core_result", [False, True], ids=["local-error", "core-error"]
+)
+async def test_error_code_requires_a_core_result_frame(
+    client: HomeAssistantClient,
+    no_retry_sleep: Any,
+    message: str,
+    core_result: bool,
+) -> None:
+    """A local error's code must not masquerade as Core's authoritative rejection."""
+
+    class LocalCodedError(ValueError):
+        code = "unauthorized"
+
+    response = asyncio.get_running_loop().create_future()
+    response.set_result(
+        {
+            "id": 7,
+            "type": "result",
+            "success": False,
+            "error": {"code": "unauthorized", "message": message},
+        }
+    )
+    ws_client = MagicMock()
+    ws_client._state.is_ready = True
+    ws_client.get_next_message_id.return_value = 7
+    ws_client.register_pending_response.return_value = response
+    ws_client.send_json_message = AsyncMock(
+        side_effect=None if core_result else LocalCodedError(message)
+    )
+    ws_client.send_command = HomeAssistantWebSocketClient.send_command.__get__(
+        ws_client
+    )
+    with patch(
+        "ha_mcp.client.websocket_client.get_websocket_client",
+        new=AsyncMock(return_value=ws_client),
+    ) as acquire:
+        result = await client.send_websocket_message({"type": "call_service"})
+
+    assert result["success"] is False
+    assert message in result["error"]
+    assert result["error_code"] == ("unauthorized" if core_result else None)
+    ws_client.send_json_message.assert_awaited_once()
+    acquire.assert_awaited_once()
+    no_retry_sleep.assert_not_awaited()
 
 
 class TestRenderTemplateBranch:
@@ -279,8 +390,6 @@ class TestRenderTemplateVerdict:
         events: list[dict[str, Any]],
         **message: Any,
     ) -> tuple[dict[str, Any], MagicMock]:
-        import asyncio
-
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         for event in events:
             queue.put_nowait(event)
@@ -404,8 +513,6 @@ class TestRenderTemplateVerdict:
 
     @pytest.mark.asyncio
     async def test_no_verdict_without_report_errors_says_why(self) -> None:
-        import asyncio
-
         from ha_mcp.client.rest_client import (
             RENDER_NO_VERDICT_WITHOUT_REPORT_ERRORS,
             _read_render_verdict,
@@ -421,8 +528,6 @@ class TestRenderTemplateVerdict:
 
     @pytest.mark.asyncio
     async def test_lost_verdict_with_report_errors_is_an_event_timeout(self) -> None:
-        import asyncio
-
         from ha_mcp.client.rest_client import _read_render_verdict
 
         result = await _read_render_verdict(asyncio.Queue(), "t", 0.01, True)
@@ -431,8 +536,6 @@ class TestRenderTemplateVerdict:
 
     @pytest.mark.asyncio
     async def test_closed_socket_is_a_connection_error(self) -> None:
-        import asyncio
-
         from ha_mcp.client.rest_client import _read_render_verdict
 
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()

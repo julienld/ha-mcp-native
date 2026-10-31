@@ -1,0 +1,574 @@
+# Native migration compatibility contract
+
+Baseline: upstream `2dc504fd97d8416f87b6ea7f2fd8ce0332615956` (22 October 2026).
+The [machine contract](compatibility.json) lists the persisted identifiers. This
+is a preservation target, not a statement that every target is implemented.
+
+## Supported Core capabilities
+
+The component starts at Core 2026.10.0 and supports the current stable monthly
+generation and its predecessor. PR/main qualification resolves the published
+window, includes the exact minimum and current patches on amd64/aarch64, and
+uses each Core image's Python. A separate guard prevents a new release from
+advertising a stale installation floor. Existing releases do not expire by date.
+
+Child-device relationships, `use_device_name=True`, PKCE and Core LLM
+`ToolResult`/`ToolAnnotations` exist at this minimum. Optional provider features
+still depend on the integration actually loaded: HACS remains relevant on Core
+10, while Marketplace needs a Core version that supplies it. Schema discovery
+can remain incomplete for third-party validators; validation calls the original
+validator rather than a copied schema. Existing DCR, refresh/revocation and
+authentication identities are preserved.
+
+Calendar and to-do results use Core's own serializers: the public names when
+available and their existing private names on August/September. Missing
+serializers cause an explicit refusal before operations that require a read or
+snapshot, without a remote retry. These private names remain compatibility
+dependencies covered by the matrix.
+
+Required APIs must exist at the supported minimum; optional capabilities can
+have a later feature floor. Follow the canonical
+[Core API and deprecation guidance](../agents/custom-component.md#core-version-window-and-api-changes):
+monitor announcements immediately, normally review replacements after three
+months, and retain only supported, tested compatibility branches or precisely
+documented temporary exceptions. This timing does not impose an age requirement
+on every new API. Unknown warnings require triage; no global suppression or
+general exception engine is authorized.
+
+## Keep installation identity and stored intent
+
+Keep the integration domain `ha_mcp_tools`, existing config-entry IDs and the two
+entry types. Missing `entry_type` historically means the File & YAML Tools entry.
+The tools entry's unique ID is `ha_mcp_tools`; the server entry's is
+`ha_mcp_tools-server`. Replacing the server must not force users to delete and
+re-add either entry.
+
+Keep shared component commands available from either active entry, while
+privileged filesystem/YAML services stay tools-entry-only. Remote servers still
+use the existing REST/WebSocket command surface and negotiate capabilities.
+Core has no unregister operation for WebSocket commands: entry unload clears
+entry state but must not attempt to undo global command registration.
+
+Preserve webhook IDs, OAuth client IDs/secrets/signing keys, the DCR signing key,
+redirect allowlists, feature flags, policies, exposure overrides, saved custom
+tools and backend-independent backup metadata. Do not log or place credentials
+in generated evidence. Keeping old credential fields for rollback does not mean
+using the administrator token for native calls. Revoke only credentials the
+component issued, with the existing ownership rules; never delete a human user.
+
+Native Core bindings retain their library and SDK classes after entry unload.
+A switch to the legacy runtime reuses that same loaded generation. Once native
+bindings have loaded, the legacy installer refuses package replacement and a
+changed or ambiguous installed version requires a full Home Assistant restart.
+Purging Python modules cannot safely update references retained by Core.
+
+The reverse switch has a separate boundary: the component's FileAccess owner
+already retains `ToolFailure`, the owned-I/O helper and registry-lock function
+before Native is ever selected. A legacy hot upgrade may reload `ha_mcp` while
+those references survive. Since 2026-10-23 the first Native start compares those
+retained interfaces with the current module generation before importing native
+bindings. A mismatch files the existing startup repair with a Core-restart
+instruction, even if the two package versions have the same string. This failed
+Native attempt does not reserve a native generation or disable legacy upgrades.
+An unchanged component generation still starts Native normally. The local
+two-generation tests exercise actual module purge/reimport and the retained
+FileAccess exception class; live legacy package-update checks do not establish
+that every subsequent runtime-switch sequence is safe without a Core restart.
+
+Long Apps, full-backup and configured Code executions receive finite Engine
+budgets derived from their existing domain limits. Ordinary operations retain
+the default budget. Result filtering has a separate bounded window, so an
+expired operation remains an unknown outcome rather than being replaced by an
+already-expired filtering deadline. Cancellation still drains owned work and
+never replays a dispatched mutation.
+
+The new runtime can add a native-owner ID for secret-URL and legacy-OAuth modes.
+It must validate that owner is still active and authorized. In `ha_auth` mode,
+the calling human administrator is a separately authenticated principal.
+`Context(user_id=...)` supplies attribution, not authorization. Changing actions'
+attribution from the historical server account to the calling account is an
+observable behavior change and must be documented and tested.
+
+## Calendar recovery limits
+
+Calendar history retains the saved UID and occurrence scope. Core's calendar
+owner exposes bounded event queries, so an unlocated UID is not proof that an
+event was deleted. Native automatic restore updates a located occurrence. If
+it cannot locate the identity, it reports `calendar_identity_unavailable` with
+the saved arguments for an explicit creation; it does not create a possible
+duplicate. A provider exception after update is an unknown outcome, with no
+creation fallback. Ranged and series-rule writes do not claim a complete,
+restorable series snapshot.
+
+## Camera image content
+
+The native camera tool calls Core's camera API, preserving the served bytes,
+plain text caption, dimensions and local retrieval time. It uses no camera proxy
+HTTP connection or administrator token. Images are bounded at 20 MiB each;
+Core retains ownership of best-effort resizing and its camera timeout.
+
+Assist cannot receive image content. An image-only tool is refused before
+capturing an image, while a completed dashboard write can retain its structured
+outcome with a warning when its supplementary screenshot cannot be delivered.
+Active entity visibility enforcement refuses unfilterable camera pixels before
+capture. Normal MCP clients continue to receive standard image content blocks.
+
+## Preserve the HA-hosted MCP URLs
+
+Keep `/api/webhook/{webhook_id}` and its `/readonly` alias. Preserve the webhook
+registration and Nabu Casa/cloudhook integration; route an accepted request to
+FastMCP locally instead of proxying it through another HTTP listener. Preserve
+methods, CORS, authentication challenges, streaming and proxy-derived public
+origin handling. Do not expose the secret ID through a fixed discovery endpoint.
+
+Keep the component-scoped OAuth endpoints and metadata routes. Existing issued
+grants depend on their signing keys and client identity translation, not just
+the visible MCP URL. In HA-account mode Core remains the authority, including
+refresh and revocation of `hamcp-rt-` envelopes. The new-login floor above leaves
+these routes and existing credentials intact. On older Core, account metadata
+advertises refresh only; its retained authorize URL returns the explicit upgrade
+message before forwarding. There is no broker or automatic auth-mode switch.
+DCR/CIMD translation, redirect checks and issuer response handling remain part
+of the supported new-login flow. Legacy root `/authorize` and `/token` aliases retain
+their route-ownership conflict behavior with the Webhook Proxy app (add-on).
+
+Secret-URL mode stays a secret-URL credential. Cosmetic OAuth tokens in that mode
+must not silently become a different authentication authority. `ha_auth` accepts
+active human administrators and rejects inactive, non-admin and system accounts.
+Legacy OAuth remains a single-tenant administrator-equivalent credential.
+
+### A direct server-port URL is an explicit exception
+
+The old component can expose `http://host:{server_port}/{secret_path}` directly.
+Keeping that exact URL while removing every listener other than HA is impossible
+when the port differs from HA's port. Similarly, old `enable_webhook=False` leaves
+the direct listener as the only MCP endpoint; it cannot retain that behavior if
+the listener is removed.
+
+A native migration must give this case an explicit, recoverable route: use an
+HA-hosted endpoint with the intended local-only/authenticated access policy, or
+keep the old runtime as a deliberate compatibility option. Never automatically
+enable a public webhook to compensate. `server_port`, `bind_host` and
+`secret_path` can remain stored for rollback even when the native runtime does
+not use them. The promise of unchanged URL applies to HA-hosted webhook URLs.
+
+## Preserve Assist identity and the common engine
+
+Existing conversation agents select APIs by ID, not their display label:
+
+- Full catalog: `ha_mcp_tools-{config_entry_id}`.
+- Compact tool search: `ha_mcp_tools-{config_entry_id}-toolsearch`.
+
+Keep those IDs and the exposure option values `full`, `tool_search`, `both`.
+The richer neutral tool API must adapt to Core's current `llm.API`, `llm.Tool`
+and `ToolResult`; it must not monkeypatch the global Core LLM API. Preserve tool
+schemas and coercion, result/error distinction, limits and per-tool exposure.
+Anonymous Assist/satellite calls receive no implicit administrator privileges.
+
+Imported Core LLM APIs resolve the current API for the authenticated invocation,
+retain Core's validator, carry `external=True` where appropriate, and exclude
+the integration's own export IDs to prevent recursion. Serialization may lose
+MCP-specific rich content at the Core boundary; advertise that explicitly.
+
+## Bound the arbitrary transport escape hatches
+
+The remote runtime's `ha_call_service(ws_command=...)` accepts arbitrary one-shot
+commands, apart from streaming/two-phase operations, service invokers, component
+commands, protected writes and reserved envelopes. A native backend cannot
+support an unknown third-party command by calling its owning Core API unless
+that owner has a registered semantic operation. Calling raw handlers with a fake
+connection would re-create the WebSocket server in-process and bypass its
+intended boundary.
+
+The current native runtime rejects **every** non-null `ws_command`, including
+commands whose dedicated tools already have native owners. It returns a structured
+unsupported-capability error before Home Assistant command dispatch. No capability map is
+implemented. Native MCP and Assist discovery disclose this limitation while
+preserving the parameter schema. A future bounded map could call existing owners
+with their validators; it requires a separate compatibility decision and tests.
+The native runtime must never fall back to
+localhost WebSocket or REST after a write may have started. The remote backend
+can retain its existing arbitrary transport support. Keeping the public
+parameter while narrowing native capabilities is **partial compatibility** and
+must be visible in discovery and release notes.
+
+The same applies to saved custom tools' `api_get`, `api_post`, `ws_send` ABI.
+`call_tool(name, arguments)` is the portable common-engine route. Keep saved
+source and report the unsupported operation when an old script uses an
+unmapped raw endpoint; do not delete scripts or translate them heuristically.
+The existing invocation caps, endpoint normalization, protected-write denials,
+snapshot restrictions and structured error behavior still apply. Optional
+browser screenshot, HACS and Supervisor features must declare their real
+platform prerequisites instead of returning fabricated success.
+
+## Generated automation IDs
+
+Existing automation IDs and their stored bodies retain their identity. A native
+creation uses an opaque UUID-derived storage ID; the remote client retains its
+historical millisecond-derived ID. Both return the authoritative `unique_id`
+and resolve the actual Home Assistant `entity_id` after Core reloads the file.
+Clients must treat generated IDs as opaque and reuse returned identifiers.
+Neither backend retries an allocation or a write after dispatch. An allocated
+ID that already exists is rejected before snapshot capture and mutation.
+
+## Readiness evidence
+
+Entity edit history distinguishes its persisted domains. Historical `entity`
+snapshots retain their original state-and-attributes meaning. New
+`entity_registry` snapshots preserve Core's full registry entry and use its UUID
+as the key, so an `entity_id` rename does not redirect a restore to another
+registration. No global snapshot format version changes.
+
+This changes the observable metadata of new automatic entity captures in both
+runtimes: `domain="entity", entity_id="light.example"` still selects historical
+state snapshots, but does not select new registry snapshots. For registry
+history, use `domain="entity_registry"` and the durable registry UUID returned
+as `entity_id` by `edits.create` or the backup listing. An explicit registry
+capture accepts an HA entity ID (such as `light.example`) or registry UUID.
+API and settings-UI list/delete
+filters match the saved domain and ID exactly; they do not expand entity aliases
+or combine the two snapshot types. Clear the filters to discover both histories,
+then select a returned filename for view/restore. Existing snapshots are not
+renamed or relabelled, and a bulk-delete filter does not silently broaden.
+
+Registry restoration changes the user settings and option domains through the
+actual registry API. It compares the current row with the same typed before-image
+saved as its safety copy and refuses concurrent edits. It updates an existing
+durable identity; it cannot recreate an integration-owned entity registration.
+Single and bulk removals capture each existing target. An uncertain Core
+removal stops a native bulk call, returning its confirmed progress and explicit
+`not_attempted` targets without replaying a removal.
+
+Core can normalize an entity during its own callbacks, for example by adding
+a sensor's suggested display precision. Confirmation checks the durable UUID
+and explicitly written values instead of rejecting unrelated Core additions.
+Effective options and normalization warnings are returned; removing an option
+domain does not claim that Core left it absent if Core rematerialized fields.
+Changing a proposed value, including `false` to numeric `0`, remains an unknown
+outcome rather than a confirmed update.
+
+For state-only entities, `entity_exposure` snapshots preserve the actual Core
+exposure preferences. Missing preferences and explicit `false` remain distinct;
+restoring absence does not materialize disabled preferences. A registration
+created after the safety read causes a conflict instead of redirecting the
+write to the new registry entry.
+
+Native restoration of an old `entity` snapshot writes only its state and
+attributes through the actual StateMachine, using a fresh context for the
+current actor. It does not restore registry settings, saved timestamps, the old
+context or a physical device. Like the old REST state write, it may create a
+temporary state for a missing entity and trigger automations; an integration
+may publish its own state afterward. The response carries this warning.
+
+Native trace diagnostics distinguish an idle script (`off`) from a disabled
+automation. They read trace storage settings from the actual Core owner's
+configuration and return an unknown value when that configuration is unavailable.
+Legacy diagnostics, public arguments and safety annotations remain unchanged.
+
+The native HACS path omits optional `ha_mcp_update` metadata when no authoritative
+Core/HACS update information is available. PyPI and Supervisor package versions
+do not identify an update for the installed custom component or its fork. No
+`latest` version or `update_available=false` is invented. Standalone update
+checks retain their existing package source.
+
+Native system health retains the `health_info.data` domain map and each Core
+platform's metadata, including `manage_url` and typed dates. It resolves pending
+values within an observation window instead of returning only the first
+subscription frame. Timed-out probes started by the invocation are cancelled and
+drained; shared Core Futures remain running and are reported as pending. The
+`component_count` is corrected to the number of actual domains, rather than the
+number of keys in the historical event envelope. Independently available Core
+sections can still be returned when the system-health integration is absent,
+with `baseline_available=false` and an explicit warning. Physical ZHA, Z-Wave and
+Thread hardware is not qualified by the Container test fixture.
+
+The native catalog deliberately corrects three safety hints for
+`ha_config_list_helpers`: `readOnlyHint=false`, `destructiveHint=true` and
+`idempotentHint=false`. Describing a flow-backed helper may initialize a Core
+flow that immediately creates an entry. Its argument-specific effect policy
+still permits storage listing and storage schema descriptions in read-only mode.
+Native clients must treat flow discovery as a possible write. The standalone
+catalog and the immutable baseline retain their original annotations; the exact
+native exception is recorded in `compatibility.json` and checked separately.
+
+`ha_config_list_dashboard_resources` also uses those conservative native hints.
+Core's first storage read may migrate and save dashboard/resource data. Native
+policy therefore requires write admission while the collection is unloaded;
+loaded collections and YAML mode permit read-only listing. Its original
+`openWorldHint=true` and the standalone annotations remain unchanged.
+
+`ha_config_get_dashboard` uses the same three conservative native hints when
+describing a custom card or listing card types. Those inspections can initialize
+the actual Core resource owner and migrate resources. Its argument policy keeps
+ordinary dashboard config/list/search reads and inspection of already loaded
+resources available in read-only mode. Its `openWorldHint=true`, public schemas
+and standalone annotations remain unchanged.
+
+Dashboard capture is optional and requires an explicitly configured renderer
+or the existing Supervisor app. Only that renderer's own credential is sent to
+its associated URL; the native component creates no long-lived HA token and
+does not reuse HA authority for the renderer. HTTP, cleanup and revocation paths
+have unit coverage; this Core Container bench does not exercise an external
+renderer. An accessory-image failure preserves primary data and outcomes with
+a warning. It does not establish image support in Assist.
+
+The standalone native screenshot tool and dashboard reads with
+`include_screenshot=true` require write admission: the renderer can persist
+its user's profile, even without explicit theme parameters. The native
+screenshot annotations conservatively reflect that effect; historical remote
+annotations remain unchanged. Authority and admission are rechecked immediately
+before each renderer request. Native capture disables the historical HTTP 400
+full-page retry and stops queued viewports after an uncertain request. Earlier
+successful images remain available as partial results with an unknown outcome
+and explicit warning. An accessory failure retains the primary dashboard write
+outcome. Assist refuses image-only screenshot calls before renderer discovery.
+
+`ha_get_integration` has the same conservative native safety hints. Its explicit
+options/subentry schema requests initialize real Core flows; password-field
+redaction also probes an options flow when options are returned. Such flows can
+commit immediately, so these branches require write admission. Native parameter
+descriptions state this instead of the historical subentry non-creation promise.
+Metadata lists, and persisted options with redaction disabled, remain available
+in read-only mode. Mutation admission is rechecked before every actual flow.
+An unexpected failure after a Core flow callback is an unknown outcome, never a
+retry instruction. Parallel probes drain before the invocation returns.
+
+Native Search captures complete detached Core candidates before matching,
+visibility filtering, scoring, totals and pagination in an owned executor.
+Automation, script and scene bodies are emitted only when read through Core's
+registered config owner; a YAML entity's `unique_id` alone is insufficient.
+Loaded YAML remains searchable after secret scrubbing, and YAML dashboard
+matches expose metadata without their config or body-derived titles. If the
+secret scrub is unavailable, all config surfaces, including their reference
+graph leg, are omitted with a partial-result reason. Per-call config budgets
+apply only to automation/script/scene; dashboard reads use the configured
+individual timeout. Native settings use the HA entry's values. Public schemas
+and safety annotations remain unchanged.
+
+Native Blueprint snapshots retain the installed YAML text. Saving or restoring
+through Core normalizes that YAML and may remove comments, as the legacy path
+does. File preflight checks are optimistic: Core provides no atomic compare and
+write against simultaneous external file edits. Avoid editing a blueprint
+through another interface while it is being written or restored. Public schemas
+and hints remain unchanged; list, get and substitute are admitted as reads.
+
+Native Assist pipelines use the published Core collection and text-conversation
+owner, preserving public arguments and safety hints. `process` is a text call
+to the selected conversation agent, not a full STT/TTS pipeline run. The
+configuration lock is released before conversation dispatch so an agent can
+call configuration tools through the LLM API; the worker retains its admission
+and owner checks. Conversation processing is refused under entity-visibility
+enforcement with hiding rules, because natural-language actions and responses
+cannot be filtered by entity identifiers. Listing and simple decluttering retain
+their existing behavior. The historical literal `preferred` is not a Core ID
+alias; examples use the ID returned by listing. An intent failure can follow
+effects and never promises that the command did nothing.
+
+Native themes read the actual Frontend library and use its original service
+validator and actor Context to change defaults. Engine-profile reads require an
+already loaded Core UserStore; cold or pending storage is explicitly unavailable
+instead of being loaded by a read. Writes validate their payload before any
+potentially migrating store initialization, under write admission. Only a token
+proven to belong to the effective renderer app may identify its user; HA-MCP never
+substitutes the caller or creates a token. Container covers real theme defaults
+and absent-renderer refusal; a real Supervisor/Puppet engine account remains
+outside this qualification.
+
+Native Radio uses the installed ZHA, Z-Wave JS, Matter and Thread/OTBR owners,
+with their original validators, published registries and provider methods.
+Public arguments and safety annotations remain unchanged. Missing hardware is
+explicitly unavailable; the component never falls back to a remote HA client.
+Thread dataset reads and writes use Core's public
+[`dataset_store.async_get_store` singleton](https://github.com/home-assistant/core/blob/2026.10.2/homeassistant/components/thread/dataset_store.py#L576)
+after the integration is loaded. Since 2026-10-23 this also waits for
+cold or pending storage, matching Core's own list/delete/preferred paths rather
+than requiring the user to open the Thread UI first. Core owns deserialization,
+any normal storage migration and singleton publication; HA-MCP creates no second
+store and never invokes a WebSocket handler. Cancellation drains the owned wait
+without cancelling another caller's shared initialization. Actor and owner
+identity are revalidated before data is returned or a dataset is changed.
+`list_datasets` remains a read of configuration: lazy Core storage initialization
+does not configure a radio, form a network or change the preferred dataset.
+Physical Thread/OTBR behavior still requires hardware qualification.
+Thread discovery is bounded and reports partial results after releasing its
+listener; long-running actions await the provider's available receipt, which
+does not guarantee completion of physical commissioning or network changes.
+
+Radio operations are refused when entity-visibility enforcement has hiding
+rules: protocol node/device identifiers cannot safely be treated as entity IDs.
+Simple decluttering retains its existing behavior. Mutations pin the actual
+owner and authority before dispatch, stop queued work after uncertainty and
+never replay an unconfirmed operation. Core Container qualifies hardware-absent
+reads and write refusal for all four families. Physical devices and HAOS radio
+operations remain covered only by isolated owner tests and pinned Core source.
+
+Native File/YAML calls the same local business owners as the component's
+legacy services, with no ServiceCall fabrication or transport loopback. The
+separate File & YAML entry, feature opt-ins, permission store and non-overridable
+deny floor remain required. Public schemas and safety hints are unchanged.
+The native settings panel exposes these opt-ins and custom allowed paths.
+
+Writes require enabled, successful snapshots. They recheck authority, entry,
+permissions and the exact before-image after backup and before owned file I/O.
+YAML confirmation tokens now include that before-image: previously issued
+preview tokens require a fresh preview. These checks are optimistic against
+external filesystem writers; they are not atomic filesystem compare-and-swap.
+Binary files retain the legacy text-snapshot limitation, while their actual
+digest is still compared. Native history and UI restore share the same guards,
+including deleted-file recreation. POSIX and HAOS path fixtures remain active
+on Linux; their Windows skips do not qualify a physical HAOS installation.
+
+Native HACS reads its published repository cache without refreshing GitHub,
+clearing the new flag or persisting metadata from an information request.
+Freshness and cached README availability are explicit. Use the existing
+`update_information` action for an admitted refresh. Public arguments and
+safety annotations remain unchanged; the shared prose describes this native
+read behavior and the historical remote endpoint's possible metadata writes.
+
+Mutations call the original HACS owners with installed validation and final
+actor, credential, visibility, owner, repository and method checks. Installing
+or removing code is refused under active hide-enforce rules. HACS 2.0.5
+(`c0dfd8b44297c3673c21973e2539375a53687a9c`) self-update/removal changes files
+through its owner without restarting or reloading this running integration.
+The response distinguishes files on disk, pending restart and unverified active
+runtime version. Unqualified future self-modification protocols are refused
+before dispatch. Core Container proves honest absence for both tools and all
+actions; authenticated HACS/GitHub installation remains unqualified. Existing
+patched legacy fixtures are not evidence of an unmodified upstream installation.
+
+The rich LLM projection is separate from FastMCP and the legacy loopback API.
+`ha_mcp.tool_api.llm_projection` derives descriptions, normalized schemas and
+rich result envelopes from the existing Engine definitions and results. It
+imports neither MCP nor Home Assistant. The component's `llm_projection.py`
+adapts those values to Core using catalogue and invocation callbacks. Native
+Assist retains full/search modes, API IDs, pinned discovery, native notes,
+safety metadata and result envelopes without reading a FastMCP provider or
+serializing through an MCP result model. This separation is a candidate for
+future Core work; no upstream contribution or acceptance is claimed.
+
+Assist tool exposure is a live Engine admission guard, including nested
+`call_tool` operations. Imported Core APIs recheck the actor, credential,
+selection, registered owner and tool capabilities after asynchronous instance
+resolution, immediately before the callback. Refusals before dispatch remain
+not-started; exceptions after a callback has begun remain unknown outcomes.
+
+In native custom scripts, `api_get`, `api_post` and `ws_send` retain their
+saved-script ABI names but return `UNSUPPORTED_OPERATION` before Home Assistant
+I/O. Saved source is preserved. Use `call_tool(name, args)` to invoke Engine
+with the current actor, tool policy and visibility checks; no REST/WebSocket
+emulation or semantic-map fallback is provided.
+
+Native Updates uses the published UpdateEntity owners, original update services
+and IssueRegistry callbacks. List/get preserve presentation and expose complete
+provider attributes; release notes come from the actual provider, with the shared
+best-effort public GitHub enrichment. PyPI's sidecar release is not presented as
+the native HACS component's update authority. Actual Core, OS and Supervisor
+entity classes remain excluded from category batches after renaming.
+
+Core/OS installs are scheduled, then revalidate the actor, policy, visibility and
+target before Core takes ownership in a clean task context. Their reply does not
+confirm installation completion, and later batch targets are not dispatched.
+Other operations retain known per-item results; a post-dispatch failure or an
+unverified skipped-version readback is unknown and is never replayed. The new
+Container fixture exercises real UpdateEntity services and Repairs callbacks;
+it does not qualify a Supervisor or OS update. Public schemas and safety hints
+remain unchanged, with the native scheduling limit stated in the shared prose.
+
+Native restart and self-reload responses report a scheduled request. Restart
+returns `requested=true`; self-reload retains `reloaded=false`. Before handoff, the pending request
+rechecks its actor, credential, unchanged policy and target. Core then owns the
+job with a fresh actor Context and no inherited MCP admission context. Shutdown
+cancels pending handoffs before draining tools, avoiding a self-reload cycle.
+Ordinary reloads wait for Core's result and preserve partial or unknown outcomes;
+there is no transport polling. The Container bench exercises actual script,
+config-entry and self reloads, but does not establish a full process restart.
+
+Native Energy uses Core's published manager, registered validator and original
+source normalizer. An absent or still-loading manager returns a temporary
+unavailable result; HA-MCP never initiates Core storage loading or migration
+from a read or preview. Public arguments, coercion, hashes and safety hints
+remain unchanged. Convenience mutations share their pure duplicate rules with
+the remote adapter, but the native owner dispatches once and never rebases or
+replays a write after an uncertain result.
+
+Core callback failures or changed data during a dispatched save are unknown
+outcomes. If the save is already confirmed but authority, owner or preferences
+change during subsequent semantic validation, the response withholds config,
+hash and validation data. It explicitly retains `write_completed=true`,
+`operation_outcome=confirmed` and `requires_reread=true`; this is a refused or
+stale response to a completed write, not permission to repeat it.
+
+Native bulk control retains the public parameters and safety annotations.
+Its `device-*` operation IDs belong to the invoking user, client and manager;
+they are distinct from Engine invocation IDs. Repeated targets run sequentially,
+with their own before-image and confirmation, and a warning explains the overlap.
+An after-effect failure preserves partial results and an unknown outcome, while
+the queue stops before dispatching remaining targets. Selector previews with
+`dry_run=true` are admitted as reads.
+
+Native service groups use Core's original Group owners and retain the public
+parameters and safety annotations. Listing reports the owner's actual `all`
+mode. Snapshots restore the name, members, icon and mode; a missing mode in an
+older snapshot preserves the existing mode, or Core's default during recreation,
+with a warning. Restoring a null icon clears it through Core's original setter.
+These groups are runtime configuration: YAML and startup configuration remain
+authoritative after reload or restart. Snapshot restoration reports that limit
+instead of claiming persistent YAML changes.
+
+Native Apps uses the installed Core Supervisor owners, preserving unknown
+provider metadata and applying the shared option redaction. Every
+`ha_manage_app` mode requires write permission, including opaque HTTP GET;
+hidden-entity enforcement refuses app management. `ha_get_app` remains a read.
+The native path uses Supervisor's actual option validator instead of treating
+UI schema fields as a complete contract. Config readback says explicitly when
+the accepted values could not be verified. Array editing remains one GET and
+one POST, without an atomic guarantee against other app clients.
+
+HTTP borrows Core's session with a local guard against automatic retries.
+WebSocket uses Core's ingress URL and an ingress session created for the actor,
+with the existing WebSocket library's single-attempt mode and handshake
+redirects disabled. Neither opens a Home Assistant API connection. An uncertain
+dispatch is never replayed. Real local transport tests prove these guards;
+the Container bench proves Supervisor absence, not HAOS app execution.
+
+Native full backups use Core's configured manager and local agent. Creation
+waits for completion and identifies its archive using a unique metadata nonce.
+Deletion retains the newest/manual/age/confirmation gates and refuses an
+incomplete inventory. These are optimistic checks against other Core agents
+and external filesystem writers, rather than atomic archive transactions.
+
+Full restore requires a completed safety archive including the database. The
+target, manager, reader/writer, agent and protection stay pinned through safety
+capture and deferred Core handoff. Its reply confirms scheduling only, with
+`restore_completed=false`. Hidden-entity enforcement refuses full restore.
+Edit backups reuse the existing store and native domain restorers, checking
+actual content and target identities. Renamed scripts retain their storage key.
+Integration metadata restores only an existing entry's enabled state, without
+replaying credentials or connection options. Container tests exercise local
+archives and edit captures; a full restore and HAOS remain unqualified.
+
+Native developer controls edit only the entry's native configuration through
+shared validators and locked patch producers. Editing one tool preserves its
+neighbours. Human-only approval and backup controls remain accessible through
+the UI or environment. `update_source` refuses before dispatch in native mode;
+install integration updates through HACS rather than pip in Core's process.
+Policy edits retain canonical validation, version comparison and explicit
+approval decisions. Reads do not migrate policy files; initial migration is
+owned by startup. A partial persistence or refresh failure identifies confirmed
+files or the committed policy and requires a fresh read before retrying.
+
+Native reports use bounded Engine operation records and Core's error log.
+Missing timestamps, startup collection and client identity are reported as
+unavailable. All three report types are returned for review without publishing.
+
+For each promised tool behavior, compare native and remote execution on a real,
+isolated Home Assistant. Exercise normal results, missing resources, future
+Core fields, actual validators, invalid inputs that reach Core, read-only and
+policy gates, mutate-then-raise, client disconnect, cancellation, reload and
+shutdown. Verify one dispatch and an honest unknown outcome where confirmation
+cannot be established. No transport fallback may repeat a dispatched mutation.
+
+Migration tests restore old entry/options data and OAuth grants, retain webhook
+and LLM API IDs, and test rollback of both code and stored state. HACS packaging
+and startup must work without the tools entry, without opening another listener,
+creating a server thread or initiating a Core loopback REST/WebSocket connection.

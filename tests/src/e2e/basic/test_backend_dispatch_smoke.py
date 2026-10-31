@@ -242,10 +242,19 @@ def _validate_skip_ceiling_fragment(
 
 def _skip_ceilings_with_fragments() -> dict[str, int]:
     ceilings = dict(_SKIP_CEILING_BASELINE)
+    for lane in (
+        "embedded",
+        "embedded_no_tools",
+        "haos_embedded",
+        "haos_embedded_no_tools",
+    ):
+        ceilings[f"{lane}_native"] = ceilings[lane]
     for name, fragment in _load_skip_ceiling_fragments().items():
         deltas = _validate_skip_ceiling_fragment(name, fragment, ceilings)
         for lane, delta in deltas.items():
             ceilings[lane] += delta
+            if f"{lane}_native" in ceilings:
+                ceilings[f"{lane}_native"] += delta
     return ceilings
 
 
@@ -457,6 +466,8 @@ def test_session_skipped_count_below_ceiling(
     """
     backend = ha_container_with_fresh_config["backend"]
     lane = f"{backend}_no_tools" if tools_entry_absent() else backend
+    if os.environ.get("E2E_EMBEDDED_RUNTIME", "legacy") == "native":
+        lane += "_native"
     ceiling = _SKIP_CEILING_PER_LANE.get(lane)
     assert ceiling is not None, (
         f"Unknown lane {lane!r} — add to _SKIP_CEILING_PER_LANE at the top of this file"

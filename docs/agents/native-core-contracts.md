@@ -63,6 +63,15 @@ same test the frontend's restart dialog applies). When the recorder or the
 backup manager does not answer, it says so in `warnings` instead of claiming
 the check passed.
 
+A restart acknowledgement means `requested`, and embedded deferred dispatch
+means `scheduled`; neither proves completion. After a possible dispatch,
+`ha_restart` reports `outcome_unknown` without retry unless the client proves a
+preflight refusal. Keep the original diagnostic even when the outcome remains
+unknown: an HTTP status or proxy-looking message alone cannot prove refusal.
+Native error provenance is not execution-stage evidence either: Core catches
+validation, not-found and authorization errors around the service call, after
+a handler may have begun work. Keep those outcomes unknown after dispatch.
+
 Some API meanings are not discoverable as schemas: Core declares Energy
 statistic references as plain strings. The optional metadata enrichment uses
 Core's `stat_*` / `included_in_stat` naming convention; it is not an authoritative

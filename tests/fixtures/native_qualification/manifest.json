@@ -1,0 +1,7 @@
+{
+  "domain": "native_qualification",
+  "name": "Disposable HAOS runtime attestation",
+  "version": "1.0.0",
+  "codeowners": [],
+  "requirements": []
+}

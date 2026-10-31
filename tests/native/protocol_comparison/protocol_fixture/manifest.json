@@ -1,0 +1,7 @@
+{
+  "domain": "protocol_fixture",
+  "name": "Disposable paired protocol fixture",
+  "version": "0.1.0",
+  "dependencies": ["http"],
+  "requirements": []
+}

@@ -567,11 +567,26 @@ _PIN_RULE_SPEC.loader.exec_module(_server_pin)
 def is_server_requirement(requirement: str) -> bool:
     """True for the ha-mcp server pin the component manifest carries (#2427).
 
-    On the embedded lanes the checkout's own wheel supplies the server, so
+    When the checkout's wheel supplies the component library or server,
     installing the pinned PyPI release first would put released code under
     test (pip then treats the same-version wheel as already satisfied).
     """
     return _server_pin.server_dist(requirement) is not None
+
+
+def pair_component_library(config_path: Path, wheel_name: str) -> str:
+    """Let Core install the checkout library before importing its paired component."""
+    manifest_path = config_path / "custom_components/ha_mcp_tools/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    requirements = manifest["requirements"]
+    if sum(is_server_requirement(value) for value in requirements) != 1:
+        raise ValueError("Expected exactly one component library requirement")
+    requirement = f"ha-mcp @ file:///config/{wheel_name}"
+    manifest["requirements"] = [
+        requirement if is_server_requirement(value) else value for value in requirements
+    ]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    return requirement
 
 
 def _collect_manifest_requirements(

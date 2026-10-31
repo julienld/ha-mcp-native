@@ -6,7 +6,6 @@ Mirrors ``tests/src/unit/policy/test_middleware.py``: drive
 The live-settings read is patched at the ``ha_mcp.read_only`` import site.
 """
 
-import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +21,10 @@ from ha_mcp.read_only import (
     ReadOnlyToolsTransform,
     is_read_safe,
     read_only_visible,
+)
+
+from ._tool_ast_parameters import (
+    decorated_tool_param_names as _decorated_tool_param_names,
 )
 
 
@@ -249,6 +252,22 @@ class TestExemptionRules:
     )
     def test_manage_updates(self, args, allowed):
         rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_updates"].blocked_write
+        assert (rule(args) is None) is allowed
+
+    @pytest.mark.parametrize(
+        "args,allowed",
+        [
+            ({}, True),
+            ({"action": "check"}, True),
+            ({"action": "guide"}, True),
+            ({"action": "update"}, False),
+            ({"action": "future_write"}, False),
+            ({"action": None}, False),
+            ({"action": []}, False),
+        ],
+    )
+    def test_manage_ha_mcp_updates(self, args, allowed):
+        rule = READ_ONLY_EXEMPT_TOOLS["ha_manage_ha_mcp_updates"].blocked_write
         assert (rule(args) is None) is allowed
 
     @pytest.mark.parametrize(
@@ -664,6 +683,7 @@ class TestExemptTableContract:
             "ha_manage_custom_tool",
             "ha_manage_radio",
             "ha_manage_updates",
+            "ha_manage_ha_mcp_updates",
             "ha_manage_security_policy",
             "ha_manage_theme",
             "ha_manage_blueprints",
@@ -689,6 +709,7 @@ _EXEMPT_TOOL_MODULES = {
     "ha_manage_custom_tool": "tools_code.py",
     "ha_manage_radio": "tools_radio.py",
     "ha_manage_updates": "tools_updates.py",
+    "ha_manage_ha_mcp_updates": "tools_self_update.py",
     "ha_manage_security_policy": "tools_security_policy.py",
     "ha_manage_theme": "tools_themes.py",
     "ha_manage_blueprints": "tools_blueprints.py",
@@ -721,6 +742,7 @@ _EXEMPT_INSPECTED_ARGS = {
     "ha_manage_custom_tool": {"list_saved", "code", "run_saved"},
     "ha_manage_radio": {"action"},
     "ha_manage_updates": {"action"},
+    "ha_manage_ha_mcp_updates": {"action"},
     "ha_manage_security_policy": {"action"},
     "ha_manage_blueprints": {"action"},
 }
@@ -747,6 +769,7 @@ _ADDON_CONFIG_WRITE_PARAMS_MANIFEST = (
 # dispatch fields the predicate inspects) would silently classify as a
 # read in Read Only Mode.
 _EXEMPT_GATED_OR_READ_ARGS = {
+    "ha_manage_ha_mcp_updates": set(),
     "ha_manage_theme": {
         # Consumed only under the action dispatch the predicate inspects:
         # the backend-default write payload ('set')...
@@ -901,49 +924,6 @@ _EXEMPT_GATED_OR_READ_ARGS = {
         "confirm",
     },
 }
-
-
-def _is_tool_decorated(node: ast.AST) -> bool:
-    for dec in node.decorator_list:
-        target = dec.func if isinstance(dec, ast.Call) else dec
-        if isinstance(target, ast.Attribute) and target.attr == "tool":
-            return True
-        if isinstance(target, ast.Name) and target.id == "tool":
-            return True
-    return False
-
-
-def _decorated_tool_param_names(module_path: Path, tool_name: str) -> set[str]:
-    """Return the parameter names of the ``@tool``-decorated function that
-    backs ``tool_name`` (both the ``@tool(name=...)`` class-method pattern
-    and the ``@mcp.tool(...)`` closure pattern, where the function name IS
-    the tool name)."""
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
-
-    def _names_match(node: ast.AST) -> bool:
-        # @tool(name="ha_...") explicit name kwarg.
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Call):
-                for kw in dec.keywords:
-                    if (
-                        kw.arg == "name"
-                        and isinstance(kw.value, ast.Constant)
-                        and kw.value.value == tool_name
-                    ):
-                        return True
-        # @mcp.tool(...) closure: function name is the tool name.
-        return node.name == tool_name and _is_tool_decorated(node)
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and _names_match(
-            node
-        ):
-            args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
-            return {a.arg for a in args if a.arg not in ("self", "ctx")}
-    raise AssertionError(
-        f"could not locate the @tool-decorated function for {tool_name} "
-        f"in {module_path.name}"
-    )
 
 
 class TestExemptPredicateSchemaDrift:

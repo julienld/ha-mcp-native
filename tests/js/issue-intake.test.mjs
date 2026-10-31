@@ -726,7 +726,7 @@ test("the report heading matches what ha_report_issue writes", () => {
   // If the two drift apart, filed reports lose their type label and are
   // asked for a report they already contain.
   const tool = readFileSync(
-    new URL("../../src/ha_mcp/tools/bug_report_templates.py", import.meta.url),
+    new URL("../../src/ha_mcp/runtime/report_templates.py", import.meta.url),
     "utf8",
   );
   for (const heading of ["## 🚨 ", "## 🤖 ", "## 💡 "])
