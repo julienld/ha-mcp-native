@@ -55,6 +55,7 @@ function localizeMeta(section, field, meta) {
 // A row's help text plus the facts its payload carries (range, off value,
 // restart), rendered here so the catalog sentences never repeat them.
 function helpWithFacts(help, row) {
+  if (typeof row.help_override === 'string') help = row.help_override;
   const parts = help ? [help] : [];
   if (typeof row.min === 'number' && typeof row.max === 'number') {
     const range = {min: row.min, max: row.max};

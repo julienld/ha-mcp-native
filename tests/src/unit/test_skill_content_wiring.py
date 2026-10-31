@@ -29,6 +29,9 @@ when it's absent so a fresh clone doesn't fail collection.
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -53,7 +56,13 @@ WRITE_TOOLS: tuple[tuple[str, str], ...] = (
 # check below — the direct shared helper plus the two per-tool wrappers
 # that delegate to it.
 _ATTACH_CALL_NAMES = frozenset(
-    {"attach_skill_content", "_attach_helper_skill", "_attach_dashboard_skill"}
+    {
+        "attach_skill_content",
+        "apply_skill_content",
+        "attach_skill",
+        "_attach_helper_skill",
+        "_attach_dashboard_skill",
+    }
 )
 
 # Modules split out of a tool module, whose attach calls count toward that
@@ -67,6 +76,54 @@ _ATTACH_SIBLING_MODULES: dict[str, tuple[str, ...]] = {
         "config_helpers/update.py",
     )
 }
+_SHARED_ATTACH_SIBLINGS = {
+    "ha_config_set_helper": ("helper_storage.py",),
+    "ha_config_set_dashboard": ("dashboard_advice.py",),
+}
+_NATIVE_ATTACH_OWNERS = {
+    "ha_config_set_yaml": (
+        REPO_ROOT / "custom_components/ha_mcp_tools/native_operations/yaml_config.py",
+        "edit",
+    ),
+    "ha_config_set_dashboard": (
+        REPO_ROOT
+        / "custom_components/ha_mcp_tools/native_operations/lovelace_dashboards.py",
+        "set",
+    ),
+}
+
+
+@cache
+def _shared_source_resolver():
+    def load(name: str, filename: str):
+        spec = importlib.util.spec_from_file_location(
+            name, REPO_ROOT / "scripts" / filename
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    extractor = load("skill_content_tool_extractor", "extract_tools.py")
+    shared = load("skill_content_shared_extractor", "extract_tools_shared.py")
+    return shared.SharedToolExtractor(
+        extractor._import_source,
+        extractor._module_scope,
+        extractor._extract_tool_from_node,
+    )
+
+
+def _tool_source_tree(module_path: Path, tool_name: str) -> ast.Module:
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    if _find_function_by_name(tree, tool_name) is None:
+        resolved = _shared_source_resolver().resolve_function(module_path, tool_name)
+        assert resolved is not None, (
+            f"Cannot resolve {tool_name} registration in {module_path}"
+        )
+        tree.body.append(resolved)
+    return tree
+
 
 # ---------------------------------------------------------------------------
 # Structural coverage of attach_skill_content on every success return path
@@ -102,6 +159,109 @@ def _count_attach_calls(tree: ast.AST) -> int:
             ):
                 count += 1
     return count
+
+
+def _count_success_returns(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, module: ast.Module
+) -> int:
+    """Count response-producing returns that require skill content."""
+    no_return_types = {
+        alias.asname or alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {"typing", "typing_extensions"}
+        for alias in node.names
+        if alias.name in {"NoReturn", "Never"}
+    }
+    owner = next(
+        (
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.ClassDef)
+            and any(
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and (method.name, method.lineno) == (function.name, function.lineno)
+                for method in node.body
+            )
+        ),
+        None,
+    )
+    failure_methods = {
+        method.name
+        for method in (owner.body if owner is not None else [])
+        if isinstance(method, ast.AsyncFunctionDef)
+        and isinstance(method.returns, ast.Name)
+        and method.returns.id in no_return_types
+    }
+    count = 0
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Return) or not isinstance(
+            node.value, (ast.Dict, ast.Name, ast.Await)
+        ):
+            continue
+        value = node.value
+        if isinstance(value, ast.Await) and isinstance(value.value, ast.Call):
+            target = value.value.func
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr in failure_methods
+            ):
+                # Explicitly returning an awaited NoReturn method propagates its
+                # exception; it cannot be a success branch needing an attachment.
+                continue
+        count += 1
+    return count
+
+
+@pytest.mark.parametrize(
+    ("annotation", "returned", "expected"),
+    [
+        ("NoReturn", "await self.reject()", 0),
+        ("dict[str, object]", "await self.reject()", 1),
+        ("NoReturn", "await self.unknown()", 1),
+        ("NoReturn", "await other.reject()", 1),
+        ("FakeNoReturn", "await self.reject()", 1),
+        ("NoReturn | dict[str, object]", "await self.reject()", 1),
+        ("NoReturn", "{'success': True}", 1),
+    ],
+)
+def test_skill_coverage_distinguishes_failure_from_unattached_success(
+    annotation: str, returned: str, expected: int
+) -> None:
+    """An error return needs no skill; genuine or unresolved responses still do."""
+    tree = ast.parse(
+        f"""
+from typing import NoReturn
+class Writer:
+    async def reject(self) -> {annotation}:
+        raise RuntimeError('failed')
+    async def write(self):
+        return {returned}
+"""
+    )
+    function = _find_function_by_name(tree, "write")
+    assert function is not None
+    assert _count_success_returns(function, tree) == expected
+    assert _count_attach_calls(tree) == 0
+
+
+def test_other_class_failure_annotation_cannot_hide_a_success_return() -> None:
+    tree = ast.parse(
+        """
+from typing import NoReturn
+class Other:
+    async def reject(self) -> NoReturn:
+        raise RuntimeError('failed')
+class Writer:
+    async def write(self):
+        return await self.reject()
+"""
+    )
+    function = _find_function_by_name(tree, "write")
+    assert function is not None
+    assert _count_success_returns(function, tree) == 1
 
 
 def _MandatoryBPS_field(tree: ast.AST, tool_name: str) -> tuple[ast.Call | None, str]:
@@ -191,7 +351,8 @@ def test_MandatoryBPS_is_visible_in_tool_catalog(
          param so the schema still publishes it, allowing the LLM to
          act on the hint when it appears."""
     module_path = TOOLS_DIR / module_file
-    tree = ast.parse(module_path.read_text())
+    tree = _tool_source_tree(module_path, tool_name)
+
     excluded = _decorator_kwarg_literals(tree, tool_name, "exclude_args") or []
     assert "MandatoryBPS" not in excluded, (
         f"{tool_name} in {module_file} has exclude_args={excluded!r} which "
@@ -214,7 +375,7 @@ def test_MandatoryBPS_has_no_field_description(
     reflex-disable. Pinned structurally so a well-meaning future PR
     can't quietly re-add a description that defeats the opacity."""
     module_path = TOOLS_DIR / module_file
-    tree = ast.parse(module_path.read_text())
+    tree = _tool_source_tree(module_path, tool_name)
     field_call, reason = _MandatoryBPS_field(tree, tool_name)
     assert field_call is not None, reason
     described = next(
@@ -248,7 +409,17 @@ def test_write_tool_attaches_skill_content_somewhere(
     and set_scene.python_transform returned without wrapping.
     """
     module_path = TOOLS_DIR / module_file
-    tree = ast.parse(module_path.read_text())
+    tree = _tool_source_tree(module_path, tool_name)
+
+    fn = _find_function_by_name(tree, tool_name)
+    assert fn is not None, f"{tool_name} not found in {module_file}"
+    source_path = getattr(fn, "_source_path", module_path)
+
+    if owner := _NATIVE_ATTACH_OWNERS.get(tool_name):
+        source_path, method = owner
+        owner_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        fn = _find_function_by_name(owner_tree, method)
+        assert fn is not None, f"{tool_name}'s native owner has no {method} method"
 
     # Count attach calls anywhere in the module — the helper tool wraps
     # at the class-level method, others wrap inline in the @tool method,
@@ -257,23 +428,20 @@ def test_write_tool_attaches_skill_content_somewhere(
     sibling_paths = [
         TOOLS_DIR / name for name in _ATTACH_SIBLING_MODULES.get(module_file, ())
     ]
+    if source_path != module_path:
+        # A registration facade delegates the successful returns to its shared
+        # owner. Measure that owner, never unrelated legacy attach adapters.
+        sibling_paths = [
+            source_path.parent / name
+            for name in _SHARED_ATTACH_SIBLINGS.get(tool_name, ())
+        ]
     attach_tree = ast.parse(
-        "\n".join(p.read_text() for p in [module_path, *sibling_paths])
+        "\n".join(p.read_text(encoding="utf-8") for p in [source_path, *sibling_paths])
     )
     total_attaches = _count_attach_calls(attach_tree)
 
-    fn = _find_function_by_name(tree, tool_name)
-    assert fn is not None, f"{tool_name} not found in {module_file}"
-
-    # Count return statements that return a dict literal or a variable name
-    # — these are the success paths.
-    success_returns = sum(
-        1
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Return)
-        and node.value is not None
-        and isinstance(node.value, (ast.Dict, ast.Name, ast.Await))
-    )
+    owner_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    success_returns = _count_success_returns(fn, owner_tree)
 
     # Heuristic: attach calls in the module should equal or exceed the
     # number of success return paths in the public method. Holds because
@@ -290,6 +458,29 @@ def test_write_tool_attaches_skill_content_somewhere(
         f"At least one return path is missing its attach call — this is the "
         f"PR #1448 bug class (silently broken MandatoryBPS on one branch)."
     )
+    if tool_name in _NATIVE_ATTACH_OWNERS:
+        # The advice helper's own apply call cannot hide a missing invocation
+        # from the actual native success path.
+        assert _count_attach_calls(fn) >= success_returns
+
+    # A facade's old attach calls must not hide a missing attach in the native
+    # implementation. Check the actual owner and only its declared siblings.
+    if source_path != module_path:
+        shared_paths = [
+            source_path,
+            *(
+                source_path.parent / name
+                for name in _SHARED_ATTACH_SIBLINGS.get(tool_name, ())
+            ),
+        ]
+        shared_tree = ast.parse(
+            "\n".join(path.read_text(encoding="utf-8") for path in shared_paths)
+        )
+        shared_attaches = _count_attach_calls(shared_tree)
+        assert shared_attaches >= success_returns, (
+            f"{tool_name}'s shared implementation has {success_returns} success returns "
+            f"but only {shared_attaches} attach calls in {shared_paths}"
+        )
 
 
 # ---------------------------------------------------------------------------

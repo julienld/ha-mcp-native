@@ -1126,7 +1126,7 @@ class TestErrorLogPagination:
 
     @pytest.mark.asyncio
     async def test_structured_pages_by_the_whole_window(self):
-        window = "ha_mcp.tools.error_log_parsing.STRUCTURED_ERROR_LOG_WINDOW_LINES"
+        window = "ha_mcp.runtime.error_log_parsing.STRUCTURED_ERROR_LOG_WINDOW_LINES"
         with patch(window, 4):
             client = _make_client(_numbered_log(4), has_more=True)
             tools = _register_and_collect(client)
