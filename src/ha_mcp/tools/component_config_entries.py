@@ -31,7 +31,9 @@ it as ``None`` — the same discipline as ``device_get``'s opt-in entities join.
 from __future__ import annotations
 
 import logging
-from typing import Any, NamedTuple
+from typing import Any
+
+from ha_mcp.runtime.reconfigure_identity import EntryUniqueId as EntryUniqueId
 
 from ..client.rest_client import (
     HomeAssistantCommandError,
@@ -48,15 +50,6 @@ from .component_api import (
 logger = logging.getLogger(__name__)
 
 WS_CONFIG_ENTRIES = "ha_mcp_tools/config_entries"
-
-
-class EntryUniqueId(NamedTuple):
-    """A config entry's ``unique_id``, and whether it could be read at all."""
-
-    #: False when no component answered, or the component predates the field.
-    known: bool
-    #: The value when ``known``; always ``None`` when not.
-    value: str | None
 
 
 UNKNOWN_UNIQUE_ID = EntryUniqueId(known=False, value=None)

@@ -23,30 +23,42 @@ See: https://github.com/homeassistant-ai/ha-mcp/issues/726
 
 import json
 import logging
-import re
-import tempfile
 import urllib.parse
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Annotated, Any
-
-from pydantic import Field
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.server.context import Context
+from ha_mcp._vendor.fastmcp.server.dependencies import get_context
 
+from ..backends.legacy import legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     NON_ADMIN_TOKEN_WARNING,
     HomeAssistantAdminRequiredError,
 )
 from ..config import get_global_settings
-from ..errors import ErrorCode, create_error_response
+from ..errors import ErrorCode
+from ..runtime.code_persistence import (
+    MAX_SAVED_TOOLS,
+    SAVED_TOOLS_SCHEMA_VERSION,
+    SavedToolsPersistence,
+)
+from ..runtime.code_registry import SavedToolsRegistry
+from ..runtime.code_runner import run_sandboxed_code
+from ..runtime.code_session import CodeSession
+from ..runtime.code_validation import (
+    BLOCKED_TOOLS,
+    _classify_sandbox_error,
+    _sandbox_error,
+)
+from ..tool_api import ToolFailure
 from .backup_access import snapshot_route_refusal
-from .helpers import log_tool_usage, raise_tool_error
+from .helpers import log_tool_usage
 from .tool_hints import write_hints
 from .util_helpers import BLOCKED_WS_WRITE_COMMANDS
 
 logger = logging.getLogger(__name__)
+_MAX_SAVED_TOOLS = MAX_SAVED_TOOLS
+_SAVED_TOOLS_SCHEMA_VERSION = SAVED_TOOLS_SCHEMA_VERSION
 
 # In-memory cache for saved custom tools, optionally persisted to disk.
 #
@@ -88,18 +100,10 @@ _saved_tools: dict[str, dict[str, str]] = {}
 # ``CategorizedSearchTransform`` (excludes pinned tools from category sets
 # when code mode is on); this set is the defense-in-depth that closes the
 # inner-call path even if the proxy is reachable some other way.
-_BLOCKED_TOOLS = frozenset(
-    {
-        "ha_manage_custom_tool",
-        "ha_search_tools",
-        "ha_call_read_tool",
-        "ha_call_write_tool",
-        "ha_call_delete_tool",
-    }
-)
+_BLOCKED_TOOLS = BLOCKED_TOOLS
 
 # Validation for save_as names
-_SAVE_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+
 
 # Path-prefix denylist for ``_api_post``. Two flavours of entry, kept in
 # one list because the matching logic is identical:
@@ -178,111 +182,6 @@ _BLOCKED_HA_INTERNAL_EVENTS: frozenset[str] = frozenset(
 )
 
 
-def _classify_sandbox_error(exc: Exception) -> tuple[ErrorCode, str, list[str]]:
-    """Map a sandbox exception to ``(code, message, suggestions)``.
-
-    Monty wraps inner exceptions in ``MontyRuntimeError`` with the inner
-    type name embedded in the string representation, so we inspect both
-    ``type(exc).__name__`` and ``str(exc)`` and pick the most specific
-    bucket. Three categories:
-
-    * ``SANDBOX_LIMIT_EXCEEDED`` — memory / time / recursion / invocation
-      limits the sandbox runtime enforces.
-    * ``SANDBOX_SYNTAX_UNSUPPORTED`` — features Monty doesn't implement
-      (imports, classes, ``with``, ``match``, etc.) or hard syntax errors.
-    * ``SANDBOX_RUNTIME_ERROR`` — anything else; opaque runtime failure
-      whose root cause is in the LLM-authored code.
-
-    The suggestions are tailored per category so the LLM can self-recover
-    instead of seeing every failure as "check the Python code for syntax
-    errors" (which was the prior behaviour and actively misled callers
-    when the real cause was a memory cap or a missing module import).
-    """
-    exc_text = str(exc)
-    exc_type = type(exc).__name__
-    short = exc_text[:200]
-
-    def _matches(*needles: str) -> bool:
-        return any(needle in exc_type or needle in exc_text for needle in needles)
-
-    if _matches("MemoryError"):
-        return (
-            ErrorCode.SANDBOX_LIMIT_EXCEEDED,
-            f"Sandbox memory limit exceeded: {short}",
-            [
-                "Reduce memory usage in your code (smaller intermediate "
-                + "data structures, no large list accumulation).",
-                "Stream results via call_tool calls rather than building "
-                + "them up in-process.",
-                "Operator can raise CODE_MODE_MAX_MEMORY (max 256 MB).",
-            ],
-        )
-    if _matches("RecursionError"):
-        return (
-            ErrorCode.SANDBOX_LIMIT_EXCEEDED,
-            f"Sandbox recursion limit exceeded: {short}",
-            [
-                "Convert deep recursion to iteration (while/for with an "
-                + "explicit stack).",
-                "Operator can raise CODE_MODE_MAX_RECURSION (max 10000).",
-            ],
-        )
-    if _matches("TimeoutError", "timed out", "wall-clock", "max_duration"):
-        return (
-            ErrorCode.SANDBOX_LIMIT_EXCEEDED,
-            f"Sandbox time limit exceeded: {short}",
-            [
-                "Optimise the code to finish within the wall-clock limit.",
-                "Break the work into smaller chunks across multiple calls.",
-                "Operator can raise CODE_MODE_MAX_DURATION (max 300s).",
-            ],
-        )
-
-    if _matches("ModuleNotFoundError", "No module named"):
-        return (
-            ErrorCode.SANDBOX_SYNTAX_UNSUPPORTED,
-            f"Imports are not allowed in the sandbox: {short}",
-            [
-                "Remove all 'import' / 'from ... import' statements.",
-                "Use the injected helpers instead: api_get, api_post, "
-                + "ws_send, call_tool, delete_saved_tool.",
-            ],
-        )
-    if _matches("NotImplementedError", "does not yet support", "context manager"):
-        return (
-            ErrorCode.SANDBOX_SYNTAX_UNSUPPORTED,
-            f"Sandbox does not support this Python feature: {short}",
-            [
-                "Monty's sandboxed interpreter is a Python subset — "
-                + "context managers (with), match statements, class "
-                + "definitions, and some builtins are unavailable.",
-                "Rewrite using basic statements and the injected helpers.",
-            ],
-        )
-    if _matches("SyntaxError"):
-        return (
-            ErrorCode.SANDBOX_SYNTAX_UNSUPPORTED,
-            f"Code did not parse: {short}",
-            [
-                "Fix the syntax error and retry.",
-                "Reminder: no class definitions, no imports, no 'with' "
-                + "or 'match' statements.",
-            ],
-        )
-
-    return (
-        ErrorCode.SANDBOX_RUNTIME_ERROR,
-        f"Sandbox runtime error: {short}",
-        [
-            f"Exception type: {exc_type}",
-            "Some Python builtins behave differently in Monty (e.g. "
-            + "next() requires an iterator, not a list).",
-            "Check the values you're passing to api_get/api_post/ws_send/call_tool.",
-            "Use 'await' before any call to api_get/api_post/ws_send/call_tool.",
-        ],
-    )
-
-
 def _check_api_post_blocked(normalized: str) -> str | None:
     """Return a rejection message if ``normalized`` matches the api_post
     blocklist or a backup control, or ``None`` if the call should proceed.
@@ -310,13 +209,13 @@ def _check_api_post_blocked(normalized: str) -> str | None:
 # LLM loop could otherwise fill the on-disk file with unique save_as
 # names. Enforced both at load (truncate-with-warning) and at save
 # (reject the call before mutating the in-memory cache).
-_MAX_SAVED_TOOLS = 256
+
 
 # Schema version for the on-disk saved-tools file. Bumped when the shape
 # changes so _load_saved_tools can refuse old/new files cleanly. The
 # load path checks data["version"] explicitly and refuses anything that
 # isn't this number rather than silently re-interpreting it as v1.
-_SAVED_TOOLS_SCHEMA_VERSION = 1
+
 
 # Module-level flag set when _load_saved_tools fails for a reason other
 # than "the file doesn't exist yet" (e.g. PermissionError reading an
@@ -329,240 +228,18 @@ _SAVED_TOOLS_SCHEMA_VERSION = 1
 _saved_tools_load_failed = False
 
 
-def _read_saved_tools_raw(path: Path) -> str | None:
-    """Read the saved-tools file's raw text, if it exists and is readable.
-
-    Returns ``None`` for the legitimate "starting empty" cases: the file
-    doesn't exist, or a FileNotFoundError race between ``exists()`` and
-    ``read_text()``.
-
-    A genuine I/O error reading an existing file (OSError that isn't
-    FileNotFoundError) is logged at ERROR and ALSO sets the module-level
-    ``_saved_tools_load_failed`` flag so callers know not to overwrite
-    whatever is on disk while the load condition persists. This prevents
-    a PermissionError at startup from cascading into "next save wipes
-    out the unreadable file" data loss.
-    """
-    global _saved_tools_load_failed
-    if not path.exists():
-        logger.debug("Saved-tools file %s does not exist yet; starting empty", path)
-        return None
-    try:
-        return path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        # Race: file disappeared between exists() and read_text().
-        # Treat as legitimate "not yet" rather than an I/O failure.
-        return None
-    except OSError as exc:
-        # PermissionError / IsADirectoryError / etc. The file exists but
-        # we can't read it. Block subsequent persistence so we don't
-        # overwrite the unreadable original with empty content.
-        logger.error(
-            "Cannot read saved-tools file %s (%s); persistence will be "
-            "suppressed until the load condition clears. Saves and "
-            "deletes will still update the in-memory cache for the "
-            "current session.",
-            path,
-            exc,
-            exc_info=True,
-        )
-        _saved_tools_load_failed = True
-        return None
-
-
-def _parse_saved_tools_payload(raw: str, path: Path) -> dict[str, Any] | None:
-    """Parse the saved-tools JSON payload and return its raw ``saved_tools`` mapping.
-
-    Returns ``None`` (logging at WARNING/ERROR as appropriate) for any
-    malformed shape: invalid JSON, non-dict top level, unexpected schema
-    version, or a non-dict ``saved_tools`` value. Sets the module-level
-    ``_saved_tools_load_failed`` flag on an unexpected schema version, for
-    the same reason as ``_read_saved_tools_raw``'s OSError branch.
-    """
-    global _saved_tools_load_failed
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            "Saved-tools file %s is not valid JSON (%s); starting empty. "
-            "The corrupt file will be overwritten on the next persist.",
-            path,
-            exc,
-        )
-        return None
-
-    if not isinstance(data, dict):
-        logger.warning(
-            "Saved-tools file %s top-level is %s, expected dict; ignoring",
-            path,
-            type(data).__name__,
-        )
-        return None
-
-    file_version = data.get("version")
-    if file_version != _SAVED_TOOLS_SCHEMA_VERSION:
-        # Refuse to interpret the file. We don't know whether this is a
-        # newer file produced by a future ha-mcp version (which might
-        # have shape changes we'd silently mangle) or an older file we
-        # don't have a migration for. Setting the failed flag means the
-        # current session won't overwrite it on next save.
-        logger.error(
-            "Saved-tools file %s has schema version %r; this build expects %d. "
-            "Refusing to load. Persistence is suppressed for this session "
-            "to avoid overwriting an unfamiliar file. Move or delete the "
-            "file to recover.",
-            path,
-            file_version,
-            _SAVED_TOOLS_SCHEMA_VERSION,
-        )
-        _saved_tools_load_failed = True
-        return None
-
-    tools_raw = data.get("saved_tools", {})
-    if not isinstance(tools_raw, dict):
-        logger.warning(
-            "Saved-tools file %s 'saved_tools' is %s, expected dict; ignoring",
-            path,
-            type(tools_raw).__name__,
-        )
-        return None
-    return tools_raw
-
-
-def _validate_saved_tool_entry(
-    name: object, info: object, path: Path
-) -> dict[str, str] | None:
-    """Validate and normalize a single saved-tool entry from the on-disk file.
-
-    Returns the ``{"code": ..., "justification": ...}`` dict, or ``None``
-    (logging at WARNING) if the entry is malformed.
-    """
-    if not (isinstance(name, str) and _SAVE_NAME_PATTERN.match(name)):
-        logger.warning("Skipping saved tool with invalid name %r in %s", name, path)
-        return None
-    if not isinstance(info, dict):
-        logger.warning("Skipping saved tool %r in %s: entry is not a dict", name, path)
-        return None
-    code = info.get("code")
-    justification = info.get("justification", "")
-    if not isinstance(code, str) or not code:
-        logger.warning(
-            "Skipping saved tool %r in %s: missing or invalid code",
-            name,
-            path,
-        )
-        return None
-    if not isinstance(justification, str):
-        justification = ""
-    return {"code": code, "justification": justification}
-
-
 def _load_saved_tools(path_str: str) -> dict[str, dict[str, str]]:
-    """Load saved tools from a JSON file, filtering malformed entries.
-
-    Returns an empty dict if the path is unset or the file doesn't exist
-    yet (legitimate "starting empty" cases). A corrupt JSON body or an
-    unexpected schema version is logged at WARNING and returns empty —
-    the file will be overwritten on the next persist.
-
-    A genuine I/O error reading an existing file (OSError that isn't
-    FileNotFoundError) is logged at ERROR and ALSO sets the module-level
-    ``_saved_tools_load_failed`` flag so callers know not to overwrite
-    whatever is on disk while the load condition persists. This prevents
-    a PermissionError at startup from cascading into "next save wipes
-    out the unreadable file" data loss.
-    """
     global _saved_tools_load_failed
-    _saved_tools_load_failed = False
-    if not path_str:
-        return {}
-    path = Path(path_str)
-
-    raw = _read_saved_tools_raw(path)
-    if raw is None:
-        return {}
-
-    tools_raw = _parse_saved_tools_payload(raw, path)
-    if tools_raw is None:
-        return {}
-
-    valid: dict[str, dict[str, str]] = {}
-    for name, info in tools_raw.items():
-        entry = _validate_saved_tool_entry(name, info, path)
-        if entry is None:
-            continue
-        valid[name] = entry
-        if len(valid) >= _MAX_SAVED_TOOLS:
-            logger.warning(
-                "Saved-tools file %s contains more than %d tools; truncating",
-                path,
-                _MAX_SAVED_TOOLS,
-            )
-            break
-
-    logger.info("Loaded %d saved tool(s) from %s", len(valid), path)
-    return valid
+    persistence = SavedToolsPersistence()
+    loaded = persistence.load(path_str)
+    _saved_tools_load_failed = persistence.load_failed
+    return loaded
 
 
 def _save_saved_tools(path_str: str, tools: dict[str, dict[str, str]]) -> bool:
-    """Persist the saved-tools cache to a JSON file atomically.
-
-    Returns ``True`` if persistence succeeded (or was disabled because
-    ``path_str`` is empty — that's the configured-out case, not a
-    failure). Returns ``False`` only when persistence was attempted and
-    the underlying I/O raised. Callers that promised the user durability
-    should surface a ``False`` return as a warning in the response.
-
-    Writes to ``<dir>/.<name>.<rand>.tmp`` first and uses ``os.replace``
-    to swap it in, so a crash mid-write cannot corrupt the existing
-    file. Refuses to write at all when ``_saved_tools_load_failed`` is
-    set — see _load_saved_tools for why we'd rather skip persistence
-    than overwrite an unreadable file with empty content.
-    """
-    if not path_str:
-        return True
-    # Read-only access to the module-level flag; ``global`` declaration
-    # only needed at the set sites in ``_load_saved_tools``.
-    if _saved_tools_load_failed:
-        logger.warning(
-            "Skipping persist to %s because the prior load failed; "
-            "saves and deletes are in-memory only for this session.",
-            path_str,
-        )
-        return False
-    path = Path(path_str)
-    payload = {
-        "version": _SAVED_TOOLS_SCHEMA_VERSION,
-        "saved_at": datetime.now(UTC).isoformat(),
-        "saved_tools": tools,
-    }
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Write to a temp file in the same directory so os.replace is
-        # guaranteed to be atomic (cross-filesystem replace on POSIX is
-        # not). delete=False because we'll replace it ourselves.
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            json.dump(payload, tmp, indent=2, sort_keys=True)
-            tmp_path = Path(tmp.name)
-        tmp_path.replace(path)
-    except OSError as exc:
-        logger.error(
-            "Failed to persist saved tools to %s (%s); the in-memory "
-            "cache holds the latest change but it will be lost on restart "
-            "unless this resolves before the next save",
-            path,
-            exc,
-            exc_info=True,
-        )
-        return False
-    return True
+    return SavedToolsPersistence(load_failed=_saved_tools_load_failed).save(
+        path_str, tools
+    )
 
 
 def _collect_content_texts(content: Any) -> list[str]:
@@ -647,17 +324,6 @@ def _extract_tool_result(result: Any) -> Any:
     if is_error:
         return {"error": repr_str}
     return repr_str
-
-
-def _sandbox_error(code: ErrorCode, message: str) -> dict[str, Any]:
-    """Build an error dict to return to sandbox code (not a tool-level error).
-
-    These are returned to the sandbox caller, not to the MCP client,
-    so they intentionally do NOT use raise_tool_error.
-    """
-    err: dict[str, Any] = {"error": {"code": str(code), "message": message}}
-    err["success"] = False
-    return err
 
 
 def _normalize_endpoint(endpoint: Any) -> str:
@@ -906,368 +572,41 @@ class _SandboxBridge:
         return _extract_tool_result(result)
 
     def delete_saved_tool(self, name: Any) -> dict[str, Any]:
-        """Remove a previously saved custom tool by name.
-
-        Sandbox helper. Returns ``{"deleted": True, "name": name}`` on
-        success, ``{"error": "..."}`` on validation failure, missing
-        name, or persistence failure. When persistence is configured
-        and the on-disk write fails, the in-memory deletion is rolled
-        back so the next save_as / list_saved doesn't show a different
-        view than the next process restart.
-        """
-        if not isinstance(name, str):
-            return {"error": "delete_saved_tool(name) requires a string name"}
-        if not _SAVE_NAME_PATTERN.match(name):
-            return {
-                "error": (
-                    f"Invalid saved-tool name {name!r}. "
-                    "Use alphanumeric characters and underscores, 1-64 chars."
-                )
-            }
-        if name not in _saved_tools:
-            return {"error": f"No saved tool named {name!r}"}
-        # Snapshot the entry before deleting so we can restore it on
-        # persist failure (otherwise the in-memory cache and disk would
-        # disagree, and the on-restart hydration would resurrect the
-        # entry the LLM already saw "deleted").
-        previous = _saved_tools[name]
-        del _saved_tools[name]
-        if not _save_saved_tools(
-            self.settings.code_mode_saved_tools_path, _saved_tools
-        ):
-            _saved_tools[name] = previous
-            return {
-                "error": (
-                    f"Deleted {name!r} from in-memory cache but the "
-                    "persistence write failed; rolled back. Check "
-                    "operator logs for the underlying I/O error."
-                )
-            }
-        logger.info("Deleted saved custom tool '%s'", name)
-        return {"deleted": True, "name": name}
+        return SavedToolsRegistry(_saved_tools, _save_saved_tools).delete(
+            name, self.settings.code_mode_saved_tools_path
+        )
 
 
 async def _run_sandboxed_code(
-    code: str,
-    ctx: Context,
-    client: Any,
-    settings: Any,
-    Monty: Any,
-    ResourceLimits: Any,
+    code: str, ctx: Context, client: Any, settings: Any, Monty: Any, ResourceLimits: Any
 ) -> Any:
-    """Execute code in the pydantic-monty sandbox.
-
-    External functions available to sandbox code:
-    - api_get(endpoint) — GET request to HA REST API
-    - api_post(endpoint, data) — POST request to HA REST API
-    - ws_send(message) — send a HA WebSocket command and return its result
-    - call_tool(name, args) — call a registered MCP tool (for existing tools)
-
-    See ``_SandboxBridge`` for the error shape contract these external
-    functions share.
-    """
     bridge = _SandboxBridge(ctx, client, settings)
-    m = Monty(code, script_name="ha_manage_custom_tool.py")
-    run_kwargs: dict[str, Any] = {
-        "external_functions": {
+    return await run_sandboxed_code(
+        code,
+        {
             "api_get": bridge.api_get,
             "api_post": bridge.api_post,
             "ws_send": bridge.ws_send,
             "call_tool": bridge.call_tool,
             "delete_saved_tool": bridge.delete_saved_tool,
         },
-        "limits": ResourceLimits(
-            max_duration_secs=settings.code_mode_max_duration,
-            max_memory=settings.code_mode_max_memory,
-            max_recursion_depth=settings.code_mode_max_recursion,
-        ),
-    }
-
-    # Monty.run_async() is the preferred path but may not be available on
-    # all platforms (e.g., ARM wheels).  Fall back to the deprecated
-    # module-level run_monty_async.
-    if hasattr(m, "run_async"):
-        return await m.run_async(**run_kwargs)
-
-    # Import in its own try so an ImportError raised by the body of
-    # run_monty_async (e.g. a missing native shim) propagates instead of
-    # being misattributed to "module-level run_monty_async not found".
-    try:
-        from pydantic_monty import run_monty_async
-    except ImportError:
-        run_monty_async = None  # type: ignore[assignment]
-    if run_monty_async is not None:
-        return await run_monty_async(m, **run_kwargs)
-
-    # No async execution path available — fail explicitly rather than
-    # silently breaking call_tool with a sync fallback.
-    raise RuntimeError(
-        "pydantic-monty async execution is not available on this platform. "
-        "ha_manage_custom_tool requires Monty.run_async() or run_monty_async()."
+        settings,
+        Monty,
+        ResourceLimits,
     )
-
-
-def _validate_custom_tool_modes(
-    code: str | None, run_saved: str | None, list_saved: bool
-) -> None:
-    """Raise if more than one of code/run_saved/list_saved was provided.
-
-    ``code`` and ``run_saved`` are mutually exclusive (either run new
-    code or re-run a saved tool, not both). ``list_saved`` is also
-    exclusive — it inspects state and must not coexist with execution.
-    ``save_as`` and ``justification`` are modifiers for the ``code``
-    mode and don't count as a "mode" on their own.
-    """
-    modes_active = sum(
-        1
-        for v in (
-            bool(code and code.strip()),
-            bool(run_saved is not None),
-            bool(list_saved),
-        )
-        if v
-    )
-    if modes_active > 1:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                "code, run_saved, and list_saved are mutually exclusive — "
-                "specify exactly one.",
-                suggestions=[
-                    "ha_manage_custom_tool(code='...', justification='...')",
-                    "ha_manage_custom_tool(run_saved='tool_name')",
-                    "ha_manage_custom_tool(list_saved=True)",
-                ],
-            )
-        )
 
 
 def _build_list_saved_tools_response() -> dict[str, Any]:
-    """Build the ``list_saved=True`` response payload.
-
-    The saved-tools dict is nested under a stable ``saved_tools`` key
-    rather than spread directly under ``data`` because the name pattern
-    (``^[a-zA-Z_][a-zA-Z0-9_]{0,63}$``) accepts values like ``result``,
-    ``count``, ``code`` — every one of which is also a key the *other*
-    response shapes use. A consumer reading ``r["data"]["result"]`` after
-    a list_saved call would otherwise get a saved-tool entry instead of a
-    run-result.
-    """
-    return {
-        "success": True,
-        "data": {
-            "saved_tools": {
-                name: {
-                    "code": info["code"],
-                    "justification": info["justification"],
-                }
-                for name, info in _saved_tools.items()
-            },
-            "count": len(_saved_tools),
-        },
-    }
+    return SavedToolsRegistry(_saved_tools, _save_saved_tools).list()
 
 
-async def _run_saved_custom_tool(
-    run_saved: str,
-    ctx: Context,
-    client: Any,
-    settings: Any,
-    Monty: Any,
-    ResourceLimits: Any,
-) -> dict[str, Any]:
-    """Re-run a previously saved custom tool by name.
-
-    Raises ToolError (RESOURCE_NOT_FOUND) if ``run_saved`` isn't in the
-    saved-tools cache, or a classified sandbox error if execution fails.
-    """
-    if run_saved not in _saved_tools:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"No saved tool named '{run_saved}'",
-                suggestions=[
-                    "Use ha_manage_custom_tool(list_saved=True) to see saved tools",
-                    "Use ha_manage_custom_tool(code=...) to create a new tool",
-                ],
-                context={"tool_name": run_saved},
-            )
-        )
-
-    saved = _saved_tools[run_saved]
-    logger.info("Running saved tool '%s'", run_saved)
-
-    try:
-        result = await _run_sandboxed_code(
-            saved["code"], ctx, client, settings, Monty, ResourceLimits
-        )
-    except ToolError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        code, message, suggestions = _classify_sandbox_error(e)
-        raise_tool_error(
-            create_error_response(
-                code,
-                message,
-                suggestions=[
-                    "The saved code may no longer work in the "
-                    + "current sandbox or HA configuration.",
-                    "Use ha_manage_custom_tool(code=...) to "
-                    + "create an updated version.",
-                    *suggestions,
-                ],
-                context={
-                    "sandbox_error_type": type(e).__name__,
-                    "saved_tool_name": run_saved,
-                },
-            )
-        )
-
-    return {
-        "success": True,
-        "data": {"result": result, "saved_tool": run_saved},
-    }
-
-
-def _validate_custom_tool_code_inputs(
-    code: str | None, justification: str | None, save_as: str | None
-) -> tuple[str, str]:
-    """Validate the code/justification/save_as inputs for execute-code mode.
-
-    Raises ToolError for missing code, missing justification, or an
-    invalid save_as name. Returns the narrowed ``(code, justification)``
-    pair on success.
-    """
-    if not code or not code.strip():
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                "Provide code to execute, run_saved to reuse a saved tool, "
-                "or list_saved=True to list saved tools",
-                suggestions=[
-                    "ha_manage_custom_tool(code='...', justification='...')",
-                    "ha_manage_custom_tool(run_saved='tool_name')",
-                    "ha_manage_custom_tool(list_saved=True)",
-                ],
-            )
-        )
-
-    if not justification or not justification.strip():
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                "justification is required when providing code",
-                suggestions=["Explain why no existing tool can accomplish this task"],
-            )
-        )
-
-    if save_as is not None and not _SAVE_NAME_PATTERN.match(save_as):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Invalid save_as name: '{save_as}'. "
-                "Use alphanumeric characters and underscores, 1-64 chars.",
-                suggestions=["Example: save_as='movie_mode'"],
-            )
-        )
-
-    return code, justification
-
-
-async def _execute_custom_tool_code(
-    code: str,
-    justification: str,
-    ctx: Context,
-    client: Any,
-    settings: Any,
-    Monty: Any,
-    ResourceLimits: Any,
-) -> Any:
-    """Run freshly-provided sandbox code, classifying failures for the caller."""
-    try:
-        return await _run_sandboxed_code(
-            code, ctx, client, settings, Monty, ResourceLimits
-        )
-    except ToolError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        err_code, err_message, err_suggestions = _classify_sandbox_error(e)
-        raise_tool_error(
-            create_error_response(
-                err_code,
-                err_message,
-                suggestions=err_suggestions,
-                context={
-                    "sandbox_error_type": type(e).__name__,
-                    "justification": justification[:200],
-                },
-            )
-        )
-
-
+@legacy_errors_sync
 def _apply_custom_tool_save_as(
-    response: dict[str, Any],
-    save_as: str,
-    code: str,
-    justification: str,
-    settings: Any,
+    response: dict[str, Any], save_as: str, code: str, justification: str, settings: Any
 ) -> None:
-    """Save the just-executed code under ``save_as``, updating ``response["data"]``.
-
-    Mutates ``response["data"]`` in place: sets ``saved_as`` on success,
-    or rolls back the in-memory write and sets ``saved_as=None`` plus a
-    ``save_warning`` on persistence failure. Raises ToolError if the
-    saved-tools cache is full.
-    """
-    if save_as not in _saved_tools and len(_saved_tools) >= _MAX_SAVED_TOOLS:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_FAILED,
-                f"Saved-tools cache is full ({_MAX_SAVED_TOOLS} entries). "
-                "Delete a tool with delete_saved_tool(name) before "
-                "saving a new one.",
-                suggestions=[
-                    "Use list_saved=True to see existing saved tools",
-                    "Use code='delete_saved_tool(\"<name>\")' to remove one",
-                ],
-            )
-        )
-    previous = _saved_tools.get(save_as)
-    _saved_tools[save_as] = {
-        "code": code,
-        "justification": justification,
-    }
-    response["data"]["saved_as"] = save_as
-    logger.info("Saved custom tool as '%s'", save_as)
-    persisted = _save_saved_tools(settings.code_mode_saved_tools_path, _saved_tools)
-    if not persisted:
-        # Roll back the in-memory write so the cache matches
-        # what's on disk (or, on next restart, what's loaded).
-        # Surface a warning in the response so the LLM knows
-        # the save_as didn't actually durable, while still
-        # returning success=True for the code execution itself.
-        if previous is None:
-            _saved_tools.pop(save_as, None)
-        else:
-            _saved_tools[save_as] = previous
-        response["data"]["saved_as"] = None
-        response["data"]["save_warning"] = (
-            f"save_as={save_as!r} was attempted but the persistence "
-            "write failed; the entry was rolled back from the "
-            "in-memory cache. Check operator logs for the "
-            "underlying I/O error."
-        )
-    elif not settings.code_mode_saved_tools_path:
-        # Blank path = persistence disabled: the in-memory save
-        # succeeded but is lost on restart. Surface a warning so
-        # the agent doesn't assume the entry is durable — mirrors
-        # the write-failure branch above.
-        response["data"]["save_warning"] = (
-            f"save_as={save_as!r} is kept in memory only — "
-            "code_mode_saved_tools_path is unset, so custom tools "
-            "are not persisted and are lost on restart. Set a path "
-            "on persistent storage to keep them."
-        )
+    SavedToolsRegistry(_saved_tools, _save_saved_tools).save_as(
+        response, save_as, code, justification, settings.code_mode_saved_tools_path
+    )
 
 
 def register_code_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
@@ -1307,123 +646,41 @@ def register_code_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
         _saved_tools.clear()
         _saved_tools.update(loaded)
 
-    @mcp.tool(
+    async def list_saved() -> dict[str, Any]:
+        return _build_list_saved_tools_response()
+
+    async def get_saved(name: str) -> dict[str, str] | None:
+        return _saved_tools.get(name)
+
+    async def save_tool(
+        response: dict[str, Any], name: str, code: str, justification: str
+    ) -> None:
+        _apply_custom_tool_save_as(response, name, code, justification, settings)
+
+    async def run_code(code: str) -> Any:
+        return await _run_sandboxed_code(
+            code, get_context(), client, settings, Monty, ResourceLimits
+        )
+
+    session = CodeSession(
+        list_saved=list_saved,
+        get_saved=get_saved,
+        save_tool=save_tool,
+        run_code=run_code,
+        passthrough_errors=(ToolFailure, ToolError),
+    )
+    mcp.tool(
+        name="ha_manage_custom_tool",
         tags={"System", "beta"},
         annotations=write_hints(
             "Custom Tool", destructive=True, idempotent=False, open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_manage_custom_tool(
-        ctx: Context,
-        code: Annotated[
-            str | None,
-            Field(
-                description="Python code to execute.  Last expression is the return value."
-            ),
-        ] = None,
-        justification: Annotated[
-            str | None,
-            Field(description="Why no existing tool works."),
-        ] = None,
-        save_as: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Save the tool under this name for reuse "
-                    "(alphanumeric/underscores, max 64 chars)."
-                )
-            ),
-        ] = None,
-        run_saved: Annotated[
-            str | None,
-            Field(description="Name of a previously saved tool to re-run."),
-        ] = None,
-        list_saved: Annotated[
-            bool, Field(description="Set True to list all saved tools.")
-        ] = False,
-    ) -> dict[str, Any]:
-        """Create and run a custom tool in a sandbox, or manage saved custom tools.
+    )(log_tool_usage(legacy_errors(session.ha_manage_custom_tool)))
 
-        LAST RESORT — search for existing tools first.
 
-        **Modes** (mutually exclusive): ``code`` + ``justification``;
-        ``run_saved``; ``list_saved=True``.
-
-        **Available functions in sandbox:**
-        - ``api_get(endpoint)`` / ``api_post(endpoint, data)`` — HA REST API,
-          for operations not covered by existing tools
-        - ``ws_send(message)`` — send a HA WebSocket command, for operations
-          only available over WebSocket (most registry CRUD, template rendering,
-          Lovelace operations). ``message`` must include a ``"type"`` field; the
-          MCP server adds ``id`` and handles auth.
-        - ``call_tool(name, args)`` — call a registered MCP tool
-        - ``delete_saved_tool(name)`` — remove a previously saved custom tool.
-          Returns ``{"deleted": True, "name": name}`` or ``{"error": ...}``.
-
-        Saved tools persist across server restarts when
-        ``CODE_MODE_SAVED_TOOLS_PATH`` is set (the app sets this by default to
-        ``/data/saved_tools.json``).
-
-        Example — list areas via WebSocket:
-        ```python
-        result = await ws_send({"type": "config/area_registry/list"})
-        result.get("result", [])
-        ```
-
-        Example — chain existing tools:
-        ```python
-        result = await call_tool("ha_search", {"query": "light", "limit": 5})
-        lights = result.get("entities", [])
-        for e in lights:
-            await call_tool("ha_call_service", {"domain": "light", "service": "turn_off", "entity_id": e["entity_id"]})
-        {"turned_off": len(lights)}
-        ```
-        """
-        _validate_custom_tool_modes(code, run_saved, list_saved)
-
-        # --- Mode: list saved tools ---
-        if list_saved:
-            return _build_list_saved_tools_response()
-
-        # --- Mode: run saved tool ---
-        if run_saved is not None:
-            return await _run_saved_custom_tool(
-                run_saved, ctx, client, settings, Monty, ResourceLimits
-            )
-
-        # --- Mode: execute code ---
-        code, justification = _validate_custom_tool_code_inputs(
-            code, justification, save_as
-        )
-
-        # ``%r`` (repr) defends against log-line injection by escaping
-        # ``\r`` / ``\n`` / ``\t`` as literal ``\r``/``\n``/``\t``
-        # sequences in the formatted output — same primitive used by
-        # the audit-log endpoint/type fields below. Truncate to keep
-        # log lines bounded; an LLM can supply a multi-KB
-        # justification.
-        logger.info(
-            "ha_manage_custom_tool invoked — justification: %r",
-            justification[:200],
-        )
-        # Code is logged at DEBUG and the multi-line shape is intentional
-        # (the LLM-authored snippet is the operator's primary forensic
-        # artefact). No control-char sanitisation here because the log
-        # format string already opens a fresh line — there's nothing to
-        # inject into.
-        logger.debug("ha_manage_custom_tool code:\n%s", code)
-
-        result = await _execute_custom_tool_code(
-            code, justification, ctx, client, settings, Monty, ResourceLimits
-        )
-
-        response: dict[str, Any] = {
-            "success": True,
-            "data": {"result": result, "justification": justification},
-        }
-
-        if save_as:
-            _apply_custom_tool_save_as(response, save_as, code, justification, settings)
-
-        return response
+__all__ = [
+    "_MAX_SAVED_TOOLS",
+    "_SAVED_TOOLS_SCHEMA_VERSION",
+    "_classify_sandbox_error",
+    "register_code_tools",
+]

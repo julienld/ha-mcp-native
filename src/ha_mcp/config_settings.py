@@ -37,11 +37,6 @@ if not env_path.exists():
     # Fallback to default .env
     env_path = project_root / ".env"
 
-# Load the environment file (silently, since env vars may come from other sources)
-if env_path.exists():
-    load_dotenv(env_path)
-
-
 # The app options declared by both flavors, and by the dev flavor only.
 _ALL_FLAVORS = AppOption()
 _DEV_FLAVOR = AppOption(flavors=("dev",))
@@ -893,7 +888,7 @@ class Settings(BaseSettings):
         return _one_of(cls, "backup_hint", v.lower())
 
     model_config = SettingsConfigDict(
-        # Absolute, and the same file load_dotenv already resolved above. A
+        # Absolute, and the same file get_settings loads for standalone use. A
         # relative ".env" here would be a second, independent read that
         # pydantic-settings resolves against the process's working directory —
         # so HAMCP_ENV_FILE would not govern it, and a stray .env in whatever
@@ -907,4 +902,8 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Get application settings."""
+    # Model introspection is also used inside Core. Only explicit standalone
+    # settings initialization may populate the process environment from .env.
+    if env_path.exists():
+        load_dotenv(env_path)
     return Settings()  # type: ignore[call-arg]

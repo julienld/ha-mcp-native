@@ -235,7 +235,7 @@ class TestZoneBackup:
                 snapshots.append((domain, entity_id))
 
         monkeypatch.setattr(
-            "ha_mcp.tools.auto_backup.get_global_settings",
+            "ha_mcp.config.get_global_settings",
             lambda: MagicMock(enable_auto_backup=True),
         )
         monkeypatch.setattr(
