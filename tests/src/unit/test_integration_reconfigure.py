@@ -15,10 +15,10 @@ from ha_mcp.client.rest_client import (
     HomeAssistantCommandTimeout,
     HomeAssistantConnectionError,
 )
+from ha_mcp.runtime import entry_reload as config_entry_reload_watch
+from ha_mcp.runtime import reconfigure as config_entry_reconfigure
 from ha_mcp.tools import (
     config_entry_identity,
-    config_entry_reconfigure,
-    config_entry_reload_watch,
 )
 from ha_mcp.tools.component_config_entries import UNKNOWN_UNIQUE_ID, EntryUniqueId
 from ha_mcp.tools.config_entry_flow import set_config_subentry
@@ -60,13 +60,11 @@ def _legacy_registry_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     stubbed to a miss here; the component-first path has its own tests below.
     """
     monkeypatch.setattr(
-        config_entry_identity,
-        "fetch_entities_for_config_entry_via_component",
+        "ha_mcp.backends.remote_reconfigure_identity.fetch_entities_for_config_entry_via_component",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
-        config_entry_identity,
-        "fetch_device_list_via_component",
+        "ha_mcp.backends.remote_reconfigure_identity.fetch_device_list_via_component",
         AsyncMock(return_value=None),
     )
 
@@ -82,7 +80,8 @@ def _legacy_registry_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     # only come from the ha_mcp_tools component. The doubles carry it per
     # client, defaulting to "component installed" — see reconfigure_client.
     monkeypatch.setattr(
-        config_entry_identity, "fetch_config_entry_unique_id", _entry_unique_id
+        "ha_mcp.tools.component_config_entries.fetch_config_entry_unique_id",
+        _entry_unique_id,
     )
 
     async def _domain_unique_ids(client: Any, domain: str) -> dict[str, str] | None:
@@ -91,7 +90,8 @@ def _legacy_registry_reads(monkeypatch: pytest.MonkeyPatch) -> None:
         return getattr(client, "_test_domain_unique_ids", None)
 
     monkeypatch.setattr(
-        config_entry_reconfigure, "fetch_domain_unique_ids", _domain_unique_ids
+        "ha_mcp.tools.component_config_entries.fetch_domain_unique_ids",
+        _domain_unique_ids,
     )
 
     async def _subscribe(client: Any) -> Any:
@@ -108,7 +108,7 @@ def _legacy_registry_reads(monkeypatch: pytest.MonkeyPatch) -> None:
         return ws, (1, queue)
 
     monkeypatch.setattr(
-        config_entry_reconfigure, "_subscribe_entry_changes", _subscribe
+        "ha_mcp.backends.remote_entry_watch._subscribe_entry_changes", _subscribe
     )
 
 

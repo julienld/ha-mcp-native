@@ -12,16 +12,14 @@ from __future__ import annotations
 from typing import Any
 
 from ..client.rest_client import HomeAssistantError
+from ..runtime.entity_removal_values import (
+    storage_note_unread as _unread,
+)
+from ..runtime.entity_removal_values import (
+    stored_helper_removal_note,
+)
 from .config_helpers.listing import listed_items
 from .config_helpers.schemas import SIMPLE_HELPER_TYPES
-
-
-def _unread(entity_id: str, reason: Any) -> list[str]:
-    return [
-        f"Whether {entity_id} belongs to a stored helper could not be read "
-        f"({reason}); if it does, the helper stays and Home Assistant adds its "
-        "entity again when it restarts."
-    ]
 
 
 async def _stored_helper_note(client: Any, entity_id: str) -> list[str]:
@@ -48,19 +46,7 @@ async def _stored_helper_note(client: Any, entity_id: str) -> list[str]:
         str(item.get("id")) == storage_id for item in listed_items(listed["result"])
     ):
         return []
-    remove = (
-        f"ha_remove_zone(zone_id={storage_id!r})"
-        if platform == "zone"
-        else (
-            f"ha_remove_helpers_integrations(helper_type={platform!r}, "
-            f"target={storage_id!r}, confirm=True)"
-        )
-    )
-    return [
-        f"{entity_id} is the entity of the stored {platform} {storage_id!r}, "
-        "which stays: Home Assistant adds its entity again when it restarts. "
-        f"To remove the {platform} itself, use {remove}."
-    ]
+    return stored_helper_removal_note(entity_id, platform, storage_id)
 
 
 async def remove_registry_entry(

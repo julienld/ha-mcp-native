@@ -69,6 +69,8 @@ class RoutingClient:
         if msg_type == "config/device_registry/list":
             self.device_list_calls += 1
             return {"success": True, "result": list(self._devices)}
+        if msg_type == "config/device_registry/remove":
+            return {"success": False, "error_code": "unknown_command"}
         if msg_type == "config/device_registry/remove_config_entry":
             self.remove_calls.append(msg["config_entry_id"])
             return {"success": True}

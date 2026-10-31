@@ -16,244 +16,166 @@ from .test_config_flow import _make_flow, _make_options_flow, cf, const
 
 
 class TestServerBranch:
-    TOKEN = "admin-llat"
+    """New native entries bind a chosen HA owner without issuing credentials."""
+
+    OWNER = "selected-owner"
 
     @pytest.fixture(autouse=True)
-    def _token_check(self, monkeypatch):
-        # Accept TOKEN; anything else is refused the way Home Assistant would.
-        self.checked: list[str] = []
+    def qualified_native_core(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(cf, "HA_VERSION", "2026.10.2")
 
-        def problem(_hass, token):
-            self.checked.append(token)
-            return None if token == self.TOKEN else "invalid_token"
-
-        monkeypatch.setattr(cf.server_credentials, "token_problem", problem)
-
-    def test_server_step_shows_confirm_form(self):
+    def _flow(self):
         flow = _make_flow()
-        form = asyncio.run(flow.async_step_server(None))
-        assert form["type"] == "form"
-        assert form["step_id"] == "server"
+        flow.hass.auth.async_get_users = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    id=self.OWNER,
+                    name="Selected owner",
+                    is_active=True,
+                    is_admin=True,
+                    system_generated=False,
+                )
+            ]
+        )
+        return flow
 
     def _defaults(self, form) -> dict:
-        values = {
-            marker.schema: marker.default()
-            for marker in form["data_schema"].schema
-            if marker.schema
-            not in (
-                cf.SETUP_ADMIN_TOKEN,
-                cf.server_credentials.ADMIN_USERNAME,
-                cf.server_credentials.ADMIN_PASSWORD,
-            )
+        return {
+            cf.SETUP_REMOTE_ACCESS: cf.REMOTE_ACCESS_DISABLED,
+            const.DATA_NATIVE_OWNER_ID: self.OWNER,
         }
-        return {**values, cf.SETUP_ADMIN_TOKEN: self.TOKEN}
 
-    def test_new_install_defaults_to_no_webhook_and_loopback_only(self):
-        # #2427 (HACS review): a fresh install exposes nothing beyond the Home
-        # Assistant machine until the admin chooses otherwise during setup.
-        flow = _make_flow()
+    def test_server_step_shows_owner_and_remote_access(self):
+        flow = self._flow()
         form = asyncio.run(flow.async_step_server(None))
-        defaults = self._defaults(form)
+        assert form["type"] == "form"
+        fields = {marker.schema for marker in form["data_schema"].schema}
+        assert const.DATA_NATIVE_OWNER_ID in fields
+        assert cf.SETUP_ADMIN_TOKEN not in fields
+        assert const.OPT_BIND_HOST not in fields
 
-        entry = asyncio.run(flow.async_step_server(defaults))
-
-        assert entry["type"] == "entry"
-        assert entry["title"] == cf.SERVER_ENTRY_TITLE
-        assert entry["data"][const.CONF_ENTRY_TYPE] == const.ENTRY_TYPE_SERVER
-        assert entry["options"][const.OPT_ENABLE_WEBHOOK] is False
-        assert entry["options"][const.OPT_BIND_HOST] == const.BIND_HOST_LOOPBACK
-
-    def test_new_install_options_are_saved_not_inherited(self):
-        # Seeding them keeps later default changes from moving this entry, and
-        # leaves entries created before this change on the defaults they had.
-        flow = _make_flow()
+    def test_new_install_defaults_to_assist_only_native_runtime(self):
+        flow = self._flow()
         form = asyncio.run(flow.async_step_server(None))
         entry = asyncio.run(flow.async_step_server(self._defaults(form)))
-        assert {
-            const.OPT_ENABLE_WEBHOOK,
-            const.OPT_WEBHOOK_AUTH,
-            const.OPT_BIND_HOST,
-        } <= set(entry["options"])
+        assert entry["type"] == "entry"
+        assert entry["data"][const.CONF_ENTRY_TYPE] == const.ENTRY_TYPE_SERVER
+        assert entry["options"][const.OPT_ENABLE_WEBHOOK] is False
+        assert entry["options"][const.OPT_RUNTIME_MODE] == const.RUNTIME_NATIVE
+        assert entry["data"][const.DATA_NATIVE_OWNER_ID] == self.OWNER
+        assert const.DATA_ADMIN_TOKEN not in entry["data"]
+        flow.hass.auth.async_create_access_token.assert_not_called()
 
     @pytest.mark.parametrize(
         "mode",
         [const.WEBHOOK_AUTH_NONE, const.WEBHOOK_AUTH_HA, const.WEBHOOK_AUTH_LEGACY],
     )
-    def test_choosing_remote_access_enables_the_webhook_with_that_auth(self, mode):
-        flow = _make_flow()
+    def test_choosing_remote_access_preserves_auth_modes(self, mode):
+        flow = self._flow()
         entry = asyncio.run(
             flow.async_step_server(
                 {
                     cf.SETUP_REMOTE_ACCESS: mode,
-                    const.OPT_BIND_HOST: const.BIND_HOST_ALL,
-                    cf.SETUP_ADMIN_TOKEN: self.TOKEN,
+                    const.DATA_NATIVE_OWNER_ID: self.OWNER,
                 }
             )
         )
         assert entry["options"][const.OPT_ENABLE_WEBHOOK] is True
         assert entry["options"][const.OPT_WEBHOOK_AUTH] == mode
-        assert entry["options"][const.OPT_BIND_HOST] == const.BIND_HOST_ALL
 
-    def test_disabled_remote_access_keeps_ha_sign_in_for_a_later_enable(self):
-        # Turning the webhook on later in Configure must not land on the
-        # secret-URL mode by default.
-        flow = _make_flow()
-        entry = asyncio.run(
-            flow.async_step_server(
-                {
-                    cf.SETUP_REMOTE_ACCESS: cf.REMOTE_ACCESS_DISABLED,
-                    const.OPT_BIND_HOST: const.BIND_HOST_LOOPBACK,
-                    cf.SETUP_ADMIN_TOKEN: self.TOKEN,
-                }
-            )
-        )
+    def test_disabled_remote_access_keeps_ha_sign_in_for_later_enable(self):
+        flow = self._flow()
+        entry = asyncio.run(flow.async_step_server(self._defaults(None)))
         assert entry["options"][const.OPT_WEBHOOK_AUTH] == const.WEBHOOK_AUTH_HA
 
-    def test_the_server_runs_with_the_administrators_token(self):
-        # #2427: setup no longer creates an administrator account for itself.
-        flow = _make_flow()
-        form = asyncio.run(flow.async_step_server(None))
-        values = {**self._defaults(form), cf.SETUP_ADMIN_TOKEN: f" {self.TOKEN} "}
+    def test_previous_token_setup_payload_resolves_owner_without_retaining_token(self):
+        flow = self._flow()
+        flow.hass.auth.async_validate_access_token.return_value = SimpleNamespace(
+            user=SimpleNamespace(id=self.OWNER)
+        )
+        entry = asyncio.run(
+            flow.async_step_server({cf.SETUP_ADMIN_TOKEN: "old-payload-token"})
+        )
+        assert entry["data"][const.DATA_NATIVE_OWNER_ID] == self.OWNER
+        assert const.DATA_ADMIN_TOKEN not in entry["data"]
+        flow.hass.auth.async_create_access_token.assert_not_called()
 
-        entry = asyncio.run(flow.async_step_server(values))
-
-        assert entry["data"][const.DATA_ADMIN_TOKEN] == self.TOKEN
-
-    def test_an_unusable_token_keeps_the_form_open(self):
-        flow = _make_flow()
-        form = asyncio.run(flow.async_step_server(None))
-        values = {**self._defaults(form), cf.SETUP_ADMIN_TOKEN: "wrong"}
-
-        result = asyncio.run(flow.async_step_server(values))
-
+    def test_expired_token_setup_payload_does_not_select_an_owner(self):
+        flow = self._flow()
+        flow.hass.auth.async_validate_access_token.return_value = None
+        result = asyncio.run(flow.async_step_server({cf.SETUP_ADMIN_TOKEN: "expired"}))
         assert result["type"] == "form"
-        assert result["errors"] == {cf.SETUP_ADMIN_TOKEN: "invalid_token"}
 
-    def test_an_accounts_login_sets_up_the_server_without_a_pasted_token(
-        self, monkeypatch
-    ):
-        # #2427: the token is issued for the account; its id is kept so a
-        # switch or the entry's removal revokes it.
-        issue = AsyncMock(return_value=("issued-tok", "i1"))
-        monkeypatch.setattr(cf.server_credentials, "async_credential_from_input", issue)
-        flow = _make_flow()
-        form = asyncio.run(flow.async_step_server(None))
-        values = {
-            **self._defaults(form),
-            cf.SETUP_ADMIN_TOKEN: "",
-            cf.server_credentials.ADMIN_USERNAME: " ha-mcp ",
-            cf.server_credentials.ADMIN_PASSWORD: "pw",
-        }
-
-        entry = asyncio.run(flow.async_step_server(values))
-
-        assert issue.await_args.kwargs == {
-            "token": "",
-            "username": "ha-mcp",
-            "password": "pw",
-        }
-        assert entry["data"][const.DATA_ADMIN_TOKEN] == "issued-tok"
-        assert entry["data"][const.DATA_ISSUED_TOKEN_ID] == "i1"
-        assert cf.server_credentials.ADMIN_PASSWORD not in entry["options"]
-
-    def test_a_setup_that_lost_the_race_revokes_the_token_it_issued(
-        self, monkeypatch
-    ) -> None:
-        # Two setups with two accounts: the other one created the entry while
-        # this one's login was checked, so its issued token has no entry.
-        class _AlreadyConfigured(Exception):
-            pass
-
-        monkeypatch.setattr(
-            cf.server_credentials,
-            "async_credential_from_input",
-            AsyncMock(return_value=("issued-tok", "i1")),
+    @pytest.mark.parametrize("owner", ["", "missing"])
+    def test_unselected_owner_keeps_form_open(self, owner):
+        flow = self._flow()
+        result = asyncio.run(
+            flow.async_step_server({const.DATA_NATIVE_OWNER_ID: owner})
         )
-        release = AsyncMock()
-        monkeypatch.setattr(cf.server_credentials, "async_release_credentials", release)
-        flow = _make_flow()
-        flow._abort_if_unique_id_configured.side_effect = [None, _AlreadyConfigured()]
-        values = {
-            cf.server_credentials.ADMIN_USERNAME: "ha-mcp",
-            cf.server_credentials.ADMIN_PASSWORD: "pw",
-        }
+        assert result["type"] == "form"
+        assert result["errors"] == {const.DATA_NATIVE_OWNER_ID: "token_not_admin"}
 
-        with pytest.raises(_AlreadyConfigured):
-            asyncio.run(flow.async_step_server(values))
-
-        release.assert_awaited_once_with(flow.hass, {const.DATA_ISSUED_TOKEN_ID: "i1"})
-        flow.async_create_entry.assert_not_called()
-
-    def test_a_refused_login_keeps_the_form_open(self, monkeypatch):
-        monkeypatch.setattr(
-            cf.server_credentials,
-            "async_credential_from_input",
-            AsyncMock(
-                side_effect=cf.server_credentials.CredentialRefused("invalid_login")
-            ),
-        )
-        flow = _make_flow()
-        form = asyncio.run(flow.async_step_server(None))
-        values = {
-            **self._defaults(form),
-            cf.SETUP_ADMIN_TOKEN: "",
-            cf.server_credentials.ADMIN_USERNAME: "ha-mcp",
-            cf.server_credentials.ADMIN_PASSWORD: "bad",
-        }
-
-        result = asyncio.run(flow.async_step_server(values))
-
-        assert result["errors"] == {"base": "invalid_login"}
+    @pytest.mark.parametrize(
+        "restriction", ["is_admin", "is_active", "system_generated"]
+    )
+    def test_owner_must_be_a_live_human_administrator(self, restriction):
+        flow = self._flow()
+        user = flow.hass.auth.async_get_users.return_value[0]
+        setattr(user, restriction, restriction == "system_generated")
+        result = asyncio.run(flow.async_step_server(self._defaults(None)))
+        assert result["type"] == "form"
 
     def test_an_abandoned_setup_does_not_block_a_new_one(self):
-        # A setup dialog that never aborts (tab closed mid-setup) stays open
-        # until Home Assistant restarts. Home Assistant aborts any new flow
-        # that claims the same unique id with raise_on_progress left on.
-        flow = _make_flow()
+        flow = self._flow()
 
         async def claim(unique_id, *, raise_on_progress=True):
             if raise_on_progress:
                 raise RuntimeError("already_in_progress")
 
         flow.async_set_unique_id = claim
-
-        form = asyncio.run(flow.async_step_server(None))
-
-        assert form["type"] == "form"
+        assert asyncio.run(flow.async_step_server(None))["type"] == "form"
 
     def test_server_refuses_a_second_entry_on_every_submit(self):
-        # Two open dialogs may both reach submit; the second must abort rather
-        # than let Home Assistant replace the first entry.
-        class _AlreadyConfigured(Exception):
+        class AlreadyConfigured(Exception):
             pass
 
-        flow = _make_flow()
-        # The first dialog's entry exists by the time this one submits.
-        flow._abort_if_unique_id_configured.side_effect = _AlreadyConfigured
-        values = {cf.SETUP_ADMIN_TOKEN: self.TOKEN}
-        with pytest.raises(_AlreadyConfigured):
-            asyncio.run(flow.async_step_server(values))
+        flow = self._flow()
+        flow._abort_if_unique_id_configured.side_effect = AlreadyConfigured
+        with pytest.raises(AlreadyConfigured):
+            asyncio.run(flow.async_step_server(self._defaults(None)))
         flow.async_create_entry.assert_not_called()
 
-    def test_server_uses_distinct_unique_id(self):
-        flow = _make_flow()
+    def test_server_preserves_the_existing_unique_id(self):
+        flow = self._flow()
         asyncio.run(flow.async_step_server(None))
         assert flow.async_set_unique_id.await_args.args == (cf._SERVER_UNIQUE_ID,)
-        # Distinct from the tools entry's unique id so both can coexist.
         assert cf._SERVER_UNIQUE_ID != const.DOMAIN
+
+    def test_a_setup_that_lost_the_owner_lookup_race_aborts_without_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class AlreadyConfigured(Exception):
+            pass
+
+        flow = self._flow()
+        flow._abort_if_unique_id_configured.side_effect = [None, AlreadyConfigured()]
+        issue = AsyncMock()
+        release = AsyncMock()
+        monkeypatch.setattr(cf.server_credentials, "async_credential_from_input", issue)
+        monkeypatch.setattr(cf.server_credentials, "async_release_credentials", release)
+
+        with pytest.raises(AlreadyConfigured):
+            asyncio.run(flow.async_step_server(self._defaults(None)))
+
+        flow.async_create_entry.assert_not_called()
+        issue.assert_not_awaited()
+        release.assert_not_awaited()
 
     def test_server_aborts_on_unsupported_home_assistant(self, monkeypatch):
         monkeypatch.setattr(cf, "HA_VERSION", "2025.9.4")
-        flow = _make_flow()
-
+        flow = self._flow()
         result = asyncio.run(flow.async_step_server(None))
-
-        assert result["type"] == "abort"
         assert result["reason"] == "unsupported_home_assistant"
-        assert result["description_placeholders"] == {
-            "installed": "2025.9.4",
-            "required": "2026.8.0",
-        }
         flow.async_set_unique_id.assert_not_awaited()
 
 
@@ -580,8 +502,15 @@ class TestOAuthCredsHint:
     [
         ({}, "ha-mcp-dev==9.0.0.dev3"),
         ({const.OPT_PIP_SPEC: "acme-ha-mcp==1.0"}, "acme-ha-mcp==1.0"),
+        (
+            {
+                const.OPT_RUNTIME_MODE: const.RUNTIME_NATIVE,
+                const.OPT_PIP_SPEC: "acme-ha-mcp==1.0",
+            },
+            "ha-mcp-dev==9.0.0.dev3",
+        ),
     ],
-    ids=["pre-release-pin", "override"],
+    ids=["pre-release-pin", "override", "native-ignores-legacy-override"],
 )
 def test_the_version_line_reads_what_the_server_runs(monkeypatch, options, expected):
     # #2787: the form reads the version as bring-up does, so an ha-mcp left

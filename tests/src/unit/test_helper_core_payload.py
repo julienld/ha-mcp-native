@@ -138,46 +138,63 @@ def test_stored_range_is_judged_only_when_the_update_changes_it() -> None:
 
 
 async def test_update_path_refuses_an_unusable_range_before_writing() -> None:
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from ha_mcp.tools.config_helpers.update import _execute_legacy_update
 
     stored = {"id": "c1", "name": "Count", "minimum": 0, "maximum": 10, "step": 1}
-    client = AsyncMock()
-    client.send_websocket_message.return_value = {"success": True, "result": [stored]}
+    client = MagicMock()
+    client.send_websocket_message = AsyncMock(
+        side_effect=lambda message: {
+            "success": True,
+            "result": [stored]
+            if message["type"] == "counter/list"
+            else dict(stored)
+            if message["type"] == "counter/update"
+            else [],
+        }
+    )
 
     with pytest.raises(ToolError, match="step must be > 0"):
         await _execute_legacy_update(
             client, "counter", "counter.count", "c1", None, None, {"step": 0}
         )
     sent = [c.args[0]["type"] for c in client.send_websocket_message.await_args_list]
-    assert sent == ["counter/list"]
+    assert sent == ["counter/list", "config/entity_registry/list"]
 
     stored.update(minimum=5, maximum=5)  # unusable, but Core already stores it
     await _execute_legacy_update(
         client, "counter", "counter.count", "c1", "Renamed", None, {}
     )
-    update = client.send_websocket_message.await_args.args[0]
+    update = next(
+        call.args[0]
+        for call in client.send_websocket_message.await_args_list
+        if call.args[0]["type"] == "counter/update"
+    )
     assert update["type"] == "counter/update" and update["name"] == "Renamed"
 
 
 async def test_item_vanishing_before_the_update_reports_like_the_read() -> None:
     """Core's not_found on <type>/update is the same missing item the stored
     read reports as CONFIG_NOT_FOUND, so the caller sees one code for it."""
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from ha_mcp.tools.config_helpers.update import _execute_legacy_update
 
     stored = {"id": "c1", "name": "Count", "minimum": 0, "maximum": 10, "step": 1}
-    client = AsyncMock()
-    client.send_websocket_message.side_effect = [
-        {"success": True, "result": [stored]},
-        {
+    client = MagicMock()
+    replies = {
+        "counter/list": {"success": True, "result": [stored]},
+        "config/entity_registry/list": {"success": True, "result": []},
+        "counter/update": {
             "success": False,
             "error": "Unable to find counter_id c1",
             "error_code": "not_found",
         },
-    ]
+    }
+    client.send_websocket_message = AsyncMock(
+        side_effect=lambda message: replies[message["type"]]
+    )
     with pytest.raises(ToolError) as exc_info:
         await _execute_legacy_update(
             client, "counter", "counter.count", "c1", "Renamed", None, {}

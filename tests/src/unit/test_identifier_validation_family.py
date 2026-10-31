@@ -842,8 +842,7 @@ class TestFlowHelperDirectGuard:
 
         validator_mock = MagicMock()
         monkeypatch.setattr(
-            helper_flow,
-            "validate_identifier_not_empty",
+            "ha_mcp.runtime.flows.helpers.validate_identifier_not_empty",
             validator_mock,
         )
 
@@ -1198,14 +1197,7 @@ def _register_addon_tools_and_capture(mock_client):
     mock_mcp = MagicMock()
     captured: dict[str, Any] = {}
 
-    def fake_tool(**kwargs):
-        def decorator(fn):
-            captured[fn.__name__] = fn
-            return fn
-
-        return decorator
-
-    mock_mcp.tool = fake_tool
+    mock_mcp.add_tool = lambda fn: captured.setdefault(fn.__name__, fn)
     register_addon_tools(mock_mcp, mock_client)
     return captured
 

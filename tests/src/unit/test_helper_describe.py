@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.runtime import helper_describe as shared
+from ha_mcp.tools import component_helper_collections as component_io
 from ha_mcp.tools.config_helpers import describe as mod
 
 _SCHEDULE_CORE = [
@@ -27,8 +29,10 @@ def client() -> AsyncMock:
 
 @pytest.fixture
 def no_component(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod, "fetch_helper_schemas", AsyncMock(return_value=None))
-    monkeypatch.setattr(mod, "read_helper_item", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        component_io, "fetch_helper_schemas", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(component_io, "read_helper_item", AsyncMock(return_value=None))
 
 
 @pytest.mark.asyncio
@@ -37,7 +41,7 @@ async def test_storage_helper_fields_come_from_core_when_component_present(
 ) -> None:
     """With the component, the field list is Core's, typed where Core is opaque."""
     monkeypatch.setattr(
-        mod,
+        component_io,
         "fetch_helper_schemas",
         AsyncMock(return_value={"schedule": {"create": _SCHEDULE_CORE}}),
     )
@@ -147,7 +151,7 @@ async def test_menu_choice_without_a_menu_is_refused_not_ignored(
     kwargs: dict[str, Any],
 ) -> None:
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(return_value={"step_id": "user", "schema": [{"name": "name"}]}),
     )
@@ -163,7 +167,7 @@ async def test_menu_choice_without_a_menu_is_refused_not_ignored(
 async def test_current_values_of_a_password_field_are_redacted(
     client: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mod, "redaction_enabled", lambda: True)
+    monkeypatch.setattr(shared, "redaction_enabled", lambda: True)
     client.get_config_entry.return_value = {"domain": "group"}
     client.send_websocket_message.return_value = {"result": {"resources": {}}}
     client.start_options_flow.return_value = {
@@ -193,7 +197,7 @@ async def test_flow_helper_menu_lists_sub_types_until_one_is_chosen(
 ) -> None:
     """A menu-rooted helper names its sub-types instead of failing."""
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(return_value={"menu_options": ["sensor", "binary_sensor"]}),
     )
@@ -218,7 +222,7 @@ async def test_flow_helper_says_when_more_forms_follow(
     """A statistics helper asks for its characteristic on a second form; the
     agent learns that instead of taking the first form for all of it."""
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(
             return_value={
@@ -285,7 +289,7 @@ async def test_flow_that_cannot_be_read_is_an_error_not_an_empty_field_list(
 ) -> None:
     """A mistyped menu_choice makes HA reject the branch; the agent must not be
     told the helper has no fields."""
-    monkeypatch.setattr(mod, "fetch_helper_flow_info", AsyncMock(return_value={}))
+    monkeypatch.setattr(shared, "fetch_helper_flow_info", AsyncMock(return_value={}))
 
     with pytest.raises(ToolError, match="menu_choice 'sensors'"):
         await mod.describe_helper(client, "template", menu_choice="sensors")
@@ -307,7 +311,8 @@ async def test_options_flow_that_does_not_open_with_a_form_is_an_error(
     with pytest.raises(ToolError, match="abort: not_loaded"):
         await mod.describe_helper(client, "group", helper_id="entry1")
 
-    client.abort_options_flow.assert_awaited_once_with("f1")
+    # Core already finished this flow; the session must not issue a second abort.
+    client.abort_options_flow.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -391,7 +396,7 @@ async def test_flow_fields_carry_ha_own_help_text_including_sections(
 ) -> None:
     """The model sees the same per-field help the HA UI shows, with no doc to maintain."""
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(
             return_value={
@@ -438,7 +443,7 @@ async def test_flow_fields_still_described_when_translations_fail(
 ) -> None:
     """Help text is best-effort: a failed or malformed reply leaves it out."""
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(return_value={"step_id": "user", "schema": [{"name": "source"}]}),
     )
@@ -458,7 +463,7 @@ async def test_flow_field_without_help_text_gets_its_ui_label(
 ) -> None:
     """A field HA documents only by its label still says what it is."""
     monkeypatch.setattr(
-        mod,
+        shared,
         "fetch_helper_flow_info",
         AsyncMock(return_value={"step_id": "user", "schema": [{"name": "source"}]}),
     )
@@ -484,7 +489,7 @@ async def test_core_fields_follow_a_stable_order_with_hints_first(
         {"name": "monday", "required": False},
     ]
     monkeypatch.setattr(
-        mod,
+        component_io,
         "fetch_helper_schemas",
         AsyncMock(return_value={"schedule": {"create": shuffled}}),
     )
