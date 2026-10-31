@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_mcp import backup_manager as bm
+from ha_mcp.runtime import snapshot_flow_restore
 
 from .test_template_deleted_recovery import recovery as recovery
 
@@ -30,7 +31,7 @@ async def test_new_entry_writes_wait_until_recreation_finishes(  # noqa: PLR0915
     entered = asyncio.Event()
     original_create = recovery.create.side_effect
     original_send = bm._ws_send
-    original_verify = bm._verify_readback
+    original_verify = snapshot_flow_restore._verify_readback
 
     async def pause():
         reached.set()
@@ -47,10 +48,10 @@ async def test_new_entry_writes_wait_until_recreation_finishes(  # noqa: PLR0915
             await pause()
         return await original_send(client, message)
 
-    async def verify(*args):
+    async def verify(*args, **kwargs):
         if stage == "verification":
             await pause()
-        return await original_verify(*args)
+        return await original_verify(*args, **kwargs)
 
     async def write():
         attempted.set()
@@ -65,7 +66,7 @@ async def test_new_entry_writes_wait_until_recreation_finishes(  # noqa: PLR0915
 
     recovery.create.side_effect = create
     monkeypatch.setattr(bm, "_ws_send", AsyncMock(side_effect=send))
-    monkeypatch.setattr(bm, "_verify_readback", verify)
+    monkeypatch.setattr(snapshot_flow_restore, "_verify_readback", verify)
     restore = asyncio.create_task(recovery.manager.restore_snapshot(recovery.name))
     writer = None
     try:

@@ -42,7 +42,10 @@ from ._component_ws_fakes import (
     _FakeConnection,
     _FakeWSApi,
     _Unauthorized,
+    register_empty_surface,
 )
+
+__all__ = ["_FakeWSApi"]
 
 # Force the REAL voluptuous into sys.modules (sibling unit modules stub it with
 # a MagicMock at import time); the schema/registration tests need a real one.
@@ -1814,14 +1817,9 @@ class TestMatchTypeTaxonomy:
 
 @pytest.fixture
 def functional_ws(monkeypatch):
-    fake = _FakeWSApi()
-    monkeypatch.setattr(wsapi, "websocket_api", fake)
-    monkeypatch.setattr(wsapi, "vol", _REAL_VOL)
-    monkeypatch.setattr(
-        wsapi, "_resolve_registries", lambda hass: wsapi._RegistryView()
-    )
-    wsapi.async_register_commands(FakeHass())
-    return fake
+    from custom_components.ha_mcp_tools.websocket_api import hacs_cache
+
+    return register_empty_surface(wsapi, hacs_cache, FakeHass(), monkeypatch, _REAL_VOL)
 
 
 _ALL_COMMANDS = [
@@ -1881,6 +1879,7 @@ class TestRegistrationAndAdminGate:
             wsapi.WS_SEARCH,
             wsapi.WS_OVERVIEW,
             wsapi.WS_HELPERS_LIST,
+            "ha_mcp_tools/hacs_cache",  # test_hacs_cache_bridge.py covers its owner
             wsapi.WS_STATES,
             wsapi.WS_BLUEPRINT_GET,
             wsapi.WS_DEVICE_GET,

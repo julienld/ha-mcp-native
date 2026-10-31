@@ -10,18 +10,26 @@ Use ha_search(query='calendar', domain_filter='calendar') to find calendar entit
 
 import logging
 from datetime import datetime, timedelta
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any, Literal
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantConnectionError,
 )
 from ..errors import ErrorCode, create_error_response
+from ..runtime.calendar_tools import Calendars
+from ..runtime.calendar_tools import CalendarTools as _CalendarContractTools
+from ..runtime.calendar_values import (
+    _calendar_event_backup_id as _calendar_event_backup_id,
+)
+from ..runtime.calendar_values import (
+    _validate_recurrence_target as _pure_validate_recurrence_target,
+)
+from ..runtime.calendar_values import is_date_only
 from .auto_backup import with_auto_backup
 from .helpers import (
     exception_to_structured_error,
@@ -34,172 +42,25 @@ from .tool_hints import read_only_hints, write_hints
 from .util_helpers import is_connection_error_message
 
 logger = logging.getLogger(__name__)
+_validate_recurrence_target = legacy_errors_sync(_pure_validate_recurrence_target)
 
 # The only recurrence range Home Assistant recognises; it compares the string
 # verbatim against ical's Range.THIS_AND_FUTURE.
-_THIS_AND_FUTURE = "THISANDFUTURE"
 
 
-def _calendar_event_backup_id(kw: dict[str, Any]) -> str:
-    """Auto-backup key for a calendar write: ``<entity>::<uid>[::<recurrence_id>]``.
-
-    A recurring series expands into occurrences that all share the ``uid`` and
-    differ only by ``recurrence_id``, so the uid alone cannot identify which
-    occurrence a write targets. Creates carry no uid and are skipped with a
-    falsy key (the truthy ``"::"`` shape would hit the fetch with no record to
-    find), as are the two write shapes no snapshot could undo.
-    """
-    entity_id = kw.get("entity_id")
-    uid = kw.get("uid")
-    if not entity_id or not uid:
-        return ""
-    if kw.get("recurrence_range"):
-        # A ranged write splits the series: Home Assistant truncates the
-        # original at this occurrence and starts a second one under the same
-        # uid. Restoring the captured occurrence would land on the NEW series
-        # and fork that single date out of it, leaving every later date
-        # edited while reporting success.
-        # Debug, not warning: the decorator runs this key builder twice per
-        # call, and once even when auto-backup is switched off.
-        logger.debug(
-            "Auto-backup: no snapshot for the ranged write on %s (event %s); "
-            "a recurrence range rewrites the series, which a per-occurrence "
-            "snapshot cannot undo",
-            entity_id,
-            uid,
-        )
-        return ""
-    if kw.get("rrule"):
-        # Turning an event into a series cannot be undone through the update
-        # command: Home Assistant validates ``rrule`` with a rule parser that
-        # rejects both null and empty, so the restore has no way to say
-        # "no recurrence" and the stored rule survives the merge.
-        logger.debug(
-            "Auto-backup: no snapshot for the recurrence-rule write on %s "
-            "(event %s); Home Assistant offers no way to clear a rule again",
-            entity_id,
-            uid,
-        )
-        return ""
-    recurrence_id = kw.get("recurrence_id")
-    if recurrence_id:
-        return f"{entity_id}::{uid}::{recurrence_id}"
-    return f"{entity_id}::{uid}"
-
-
-def _validate_recurrence_target(
-    entity_id: str,
-    recurrence_id: str | None,
-    recurrence_range: Literal["THISANDFUTURE"] | None,
-) -> None:
-    """Reject recurrence targeting that Home Assistant would silently widen.
-
-    A range starts AT the identified occurrence, so Home Assistant ignores
-    ``recurrence_range`` unless ``recurrence_id`` is set (ical gates the whole
-    fork on it). Without the identifier an update then edits the master event
-    and a delete removes the ENTIRE series rather than this occurrence and the
-    following ones — both silently, and both reported as success.
-    """
-    if recurrence_id is not None:
-        validate_identifier_not_empty(
-            recurrence_id,
-            "recurrence_id",
-            suggestions=[
-                (
-                    "Use ha_config_get_calendar_events() to list occurrences "
-                    "and obtain a valid recurrence_id"
-                ),
-                "Omit recurrence_id to target the whole series",
-            ],
-            context={"entity_id": entity_id},
-        )
-    if recurrence_range is not None and recurrence_range != _THIS_AND_FUTURE:
-        # The ``Literal`` annotation only binds MCP calls, which the tool's
-        # TypeAdapter validates; a direct Python call reaches here unchecked
-        # and Home Assistant compares the value verbatim, so a near-miss
-        # spelling silently degrades to a single-occurrence write.
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"recurrence_range must be {_THIS_AND_FUTURE!r}: Home Assistant "
-                "compares the value verbatim",
-                context={
-                    "entity_id": entity_id,
-                    "recurrence_range": recurrence_range,
-                },
-                suggestions=[
-                    f"Pass {_THIS_AND_FUTURE!r} to target this and later occurrences",
-                    "Omit recurrence_range to target a single occurrence",
-                ],
-            )
-        )
-    if recurrence_range is not None and recurrence_id is None:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                "recurrence_range requires recurrence_id: the range starts at "
-                "the identified occurrence",
-                context={
-                    "entity_id": entity_id,
-                    "recurrence_range": recurrence_range,
-                },
-                suggestions=[
-                    "Pass the recurrence_id of the occurrence the range starts at",
-                    "Omit recurrence_range to target the whole series",
-                    "Use ha_config_get_calendar_events() to list occurrences",
-                ],
-            )
-        )
-
-
-class CalendarTools:
+class LegacyCalendars:
     """Calendar event management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @tool(
-        name="ha_config_get_calendar_events",
-        tags={"Calendar"},
-        annotations=read_only_hints("Get Calendar Events", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_config_get_calendar_events(
+    async def get(
         self,
-        entity_id: Annotated[
-            str, Field(description="Calendar entity ID (e.g., 'calendar.family')")
-        ],
-        start: Annotated[
-            str | None,
-            Field(
-                description="Start datetime in ISO format; omit it to start at the current time",
-                default=None,
-            ),
-        ] = None,
-        end: Annotated[
-            str | None,
-            Field(
-                description="End datetime in ISO format (default: 7 days from now, "
-                "not from start; pass end whenever you pass start)",
-                default=None,
-            ),
-        ] = None,
-        max_results: Annotated[
-            int,
-            Field(description="Maximum number of events to return", default=20),
-        ] = 20,
+        entity_id: str,
+        start: str | None = None,
+        end: str | None = None,
+        max_results: int = 20,
     ) -> dict[str, Any]:
-        """Get calendar events from a calendar entity within a time range.
-
-        Returns each event's summary, start, end, description and location,
-        plus the uid, recurrence_id and rrule when the calendar provides them
-        (the edit and remove tools use uid and recurrence_id). To find calendar
-        entities, use ha_search(domain_filter='calendar').
-
-        EXAMPLES:
-        - Next week (defaults): ha_config_get_calendar_events("calendar.family")
-        - Date range: ha_config_get_calendar_events("calendar.work", start="2024-01-01T00:00:00", end="2024-01-31T23:59:59")
-        """
         try:
             # Validate entity_id
             if not entity_id.startswith("calendar."):
@@ -404,14 +265,7 @@ class CalendarTools:
 
     @staticmethod
     def _is_date_only(value: str) -> bool:
-        """Return whether value is a valid date in strict YYYY-MM-DD form."""
-        try:
-            return (
-                len(value) == 10
-                and datetime.strptime(value, "%Y-%m-%d").date().isoformat() == value
-            )
-        except ValueError:
-            return False
+        return is_date_only(value)
 
     def _build_set_calendar_event_error_suggestions(
         self,
@@ -509,129 +363,19 @@ class CalendarTools:
 
         return suggestions
 
-    @tool(
-        name="ha_config_set_calendar_event",
-        tags={"Calendar"},
-        annotations=write_hints(
-            "Create or Update Calendar Event",
-            destructive=True,
-            idempotent=False,
-            open_world=False,
-        ),
-    )
-    @with_auto_backup(
-        domain="calendar_event",
-        id_fn=_calendar_event_backup_id,
-    )
-    @log_tool_usage
-    async def ha_config_set_calendar_event(
+    async def set(
         self,
-        entity_id: Annotated[
-            str, Field(description="Calendar entity ID (e.g., 'calendar.family')")
-        ],
-        summary: Annotated[str, Field(description="Event title/summary")],
-        start: Annotated[
-            str, Field(description="Event start date or datetime in ISO format")
-        ],
-        end: Annotated[
-            str,
-            Field(
-                description=(
-                    "Event end date or datetime in ISO format. For all-day "
-                    "events (date-only) the end date is exclusive; a "
-                    "single-day all-day event needs end = start + 1 day."
-                )
-            ),
-        ],
-        description: Annotated[
-            str | None,
-            Field(description="Event description", default=None),
-        ] = None,
-        location: Annotated[
-            str | None, Field(description="Event location", default=None)
-        ] = None,
-        rrule: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "RFC 5545 recurrence rule, without 'RRULE:' prefix (e.g., "
-                    "'FREQ=WEEKLY;BYDAY=MO' or 'FREQ=MONTHLY;BYDAY=3SA'). Creates a "
-                    "recurring event series."
-                ),
-                default=None,
-            ),
-        ] = None,
-        uid: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "UID of an existing event to update. Omit to create a new event."
-                ),
-                default=None,
-            ),
-        ] = None,
-        recurrence_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Only meaningful with 'uid': identifies one occurrence of a "
-                    "recurring series to update."
-                ),
-                default=None,
-            ),
-        ] = None,
-        recurrence_range: Annotated[
-            Literal["THISANDFUTURE"] | None,
-            Field(
-                description=(
-                    "Only meaningful with 'uid': 'THISANDFUTURE' to update "
-                    "this and all following occurrences. Home Assistant "
-                    "compares this value verbatim, so no other spelling "
-                    "(including 'THIS_AND_FUTURE') selects the range."
-                ),
-                default=None,
-            ),
-        ] = None,
+        entity_id: str,
+        summary: str,
+        start: str,
+        end: str,
+        description: str | None = None,
+        location: str | None = None,
+        rrule: str | None = None,
+        uid: str | None = None,
+        recurrence_id: str | None = None,
+        recurrence_range: Literal["THISANDFUTURE"] | None = None,
     ) -> dict[str, Any]:
-        """Create a new event in a calendar, or update an existing one.
-
-        Creates a one-off event via the calendar.create_event service, or a
-        recurring series via the WebSocket ``calendar/event/create`` command
-        when ``rrule`` is provided (the REST service schema does not accept
-        recurrence rules). Passing ``uid`` switches to update mode, which uses
-        the WebSocket ``calendar/event/update`` command — HA registers no REST
-        service for updating an event.
-
-        **When NOT to use:**
-        - To retrieve calendar events, use ``ha_config_get_calendar_events``.
-        - To delete an event, use ``ha_config_remove_calendar_event``.
-        - To find the ``uid`` of an event to update, use
-          ``ha_config_get_calendar_events``; this tool does not search.
-
-        Passing date-only values (``YYYY-MM-DD``) for both ``start`` and
-        ``end`` creates an all-day event; passing full ISO datetimes creates
-        a timed event. The two forms cannot be mixed — a date-only ``start``
-        with a datetime ``end`` (or vice versa) is rejected.
-
-        An update replaces the whole event rather than patching it, so
-        ``summary``, ``start`` and ``end`` stay required in update mode, and a
-        ``description`` or ``location`` that is not re-supplied is cleared.
-        An ``rrule`` is the exception: Home Assistant accepts a new rule but
-        has no way to express "no recurrence", so an existing rule survives an
-        update that omits it. Delete the event and create it again to drop the
-        recurrence.
-
-        Not every calendar integration supports event creation; recurring
-        events additionally require the integration to support recurrence
-        (the built-in Local Calendar does). Update support is narrower still:
-        Local Calendar implements it, while the core Google Calendar and CalDAV
-        integrations do not.
-
-        EXAMPLES:
-        - Create: ha_config_set_calendar_event("calendar.family", summary="Doctor appointment", start="2024-01-15T14:00:00", end="2024-01-15T15:00:00")
-        - Recurring (every Monday, 10 occurrences): ha_config_set_calendar_event("calendar.work", summary="Team meeting", start="2024-01-15T10:00:00", end="2024-01-15T11:00:00", rrule="FREQ=WEEKLY;BYDAY=MO;COUNT=10")
-        - Update this and all later occurrences: ha_config_set_calendar_event("calendar.work", summary="Team meeting (new time)", start="2024-02-05T11:00:00", end="2024-02-05T12:00:00", uid="recurring-event-67890", recurrence_id="20240205T100000", recurrence_range="THISANDFUTURE")
-        """
         try:
             # Validate entity_id
             if not entity_id.startswith("calendar."):
@@ -765,54 +509,13 @@ class CalendarTools:
             )
             return None  # unreachable: exception_to_structured_error always raises
 
-    @tool(
-        name="ha_config_remove_calendar_event",
-        tags={"Calendar"},
-        annotations=write_hints(
-            "Remove Calendar Event", destructive=True, idempotent=True, open_world=False
-        ),
-    )
-    @with_auto_backup(
-        domain="calendar_event",
-        id_fn=_calendar_event_backup_id,
-    )
-    @log_tool_usage
-    async def ha_config_remove_calendar_event(
+    async def remove(
         self,
-        entity_id: Annotated[
-            str, Field(description="Calendar entity ID (e.g., 'calendar.family')")
-        ],
-        uid: Annotated[
-            str, Field(description="Unique identifier of the event to delete")
-        ],
-        recurrence_id: Annotated[
-            str | None,
-            Field(description="Recurrence ID for recurring events", default=None),
-        ] = None,
-        recurrence_range: Annotated[
-            Literal["THISANDFUTURE"] | None,
-            Field(
-                description=(
-                    "Recurrence range: 'THISANDFUTURE' to delete this and future "
-                    "occurrences. Home Assistant compares this value verbatim, so no other "
-                    "spelling (including 'THIS_AND_FUTURE') selects the range."
-                ),
-                default=None,
-            ),
-        ] = None,
+        entity_id: str,
+        uid: str,
+        recurrence_id: str | None = None,
+        recurrence_range: Literal["THISANDFUTURE"] | None = None,
     ) -> dict[str, Any]:
-        """Delete an event from a calendar.
-
-        Deletes a calendar event via the WebSocket ``calendar/event/delete``
-        command. HA's calendar component only registers ``create_event`` and
-        ``get_events`` as REST services — delete and update live on the
-        WebSocket API only. Get the event UID from
-        ha_config_get_calendar_events().
-
-        EXAMPLES:
-        - Delete a single event: ha_config_remove_calendar_event("calendar.family", uid="event-12345")
-        - Delete one occurrence and all later ones: ha_config_remove_calendar_event("calendar.work", uid="recurring-event-67890", recurrence_id="20240115T100000", recurrence_range="THISANDFUTURE")
-        """
         try:
             # Validate entity_id
             if not entity_id.startswith("calendar."):
@@ -921,6 +624,45 @@ class CalendarTools:
         if "not supported" in lowered or "does not support" in lowered:
             suggestions.insert(0, "This calendar does not support event deletion")
         return suggestions
+
+
+class CalendarTools(LegacyCalendars):
+    @property
+    def calendars(self) -> Calendars:
+        return self
+
+    ha_config_get_calendar_events = tool(
+        name="ha_config_get_calendar_events",
+        tags={"Calendar"},
+        annotations=read_only_hints("Get Calendar Events", open_world=False),
+    )(log_tool_usage(_CalendarContractTools.ha_config_get_calendar_events))
+
+    ha_config_set_calendar_event = tool(
+        name="ha_config_set_calendar_event",
+        tags={"Calendar"},
+        annotations=write_hints(
+            "Create or Update Calendar Event",
+            destructive=True,
+            idempotent=False,
+            open_world=False,
+        ),
+    )(
+        with_auto_backup(domain="calendar_event", id_fn=_calendar_event_backup_id)(
+            log_tool_usage(_CalendarContractTools.ha_config_set_calendar_event)
+        )
+    )
+
+    ha_config_remove_calendar_event = tool(
+        name="ha_config_remove_calendar_event",
+        tags={"Calendar"},
+        annotations=write_hints(
+            "Remove Calendar Event", destructive=True, idempotent=True, open_world=False
+        ),
+    )(
+        with_auto_backup(domain="calendar_event", id_fn=_calendar_event_backup_id)(
+            log_tool_usage(_CalendarContractTools.ha_config_remove_calendar_event)
+        )
+    )
 
 
 def register_calendar_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
