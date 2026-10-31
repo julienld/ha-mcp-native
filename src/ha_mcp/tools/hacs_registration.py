@@ -11,6 +11,11 @@ import logging
 import time
 from typing import Any
 
+from ha_mcp.runtime.hacs_values import (
+    CATEGORY_MAP,
+    _filter_and_score_repos,
+)
+
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
@@ -18,102 +23,6 @@ from ..client.rest_client import (
 )
 
 logger = logging.getLogger(__name__)
-
-# HACS uses different category names internally vs what users expect
-# User-friendly name -> HACS internal name
-CATEGORY_MAP = {
-    "lovelace": "plugin",  # HACS calls Lovelace cards "plugin"
-    "integration": "integration",
-    "theme": "theme",
-    "appdaemon": "appdaemon",
-    "python_script": "python_script",
-    "template": "template",
-}
-
-# Reverse mapping for display
-CATEGORY_DISPLAY = {v: k for k, v in CATEGORY_MAP.items()}
-CATEGORY_DISPLAY["plugin"] = "lovelace"  # Display as lovelace for users
-
-
-def _score_repo_against_query(
-    query_lower: str, name: str, full_name: str, description: str, authors: str
-) -> int:
-    """Compute a relevance score for a repo's text fields against a query."""
-    score = 0
-    if query_lower in name:
-        score += 100
-    if query_lower in full_name:
-        score += 50
-    if query_lower in description:
-        score += 30
-    if query_lower in authors:
-        score += 20
-    return score
-
-
-def _filter_and_score_repos(
-    all_repositories: list[dict[str, Any]],
-    query: str,
-    installed_only: bool | None,
-) -> list[dict[str, Any]]:
-    """Filter repositories and compute relevance scores."""
-    query_lower = query.lower().strip()
-    matches = []
-
-    for repo in all_repositories:
-        if installed_only and not repo.get("installed", False):
-            continue
-
-        # Handle None values safely
-        name = (repo.get("name") or "").lower()
-        description = (repo.get("description") or "").lower()
-        full_name = (repo.get("full_name") or "").lower()
-        authors_list = repo.get("authors") or []
-        authors = " ".join(authors_list).lower()
-
-        # Calculate relevance score (all repos match when query is empty)
-        if query_lower:
-            score = _score_repo_against_query(
-                query_lower, name, full_name, description, authors
-            )
-            if score == 0:
-                continue
-        else:
-            score = 0
-
-        # Map HACS internal category back to user-friendly name
-        repo_category = repo.get("category", "")
-        display_category = CATEGORY_DISPLAY.get(repo_category, repo_category)
-        entry: dict[str, Any] = {
-            "name": repo.get("name"),
-            "full_name": repo.get("full_name"),
-            "description": repo.get("description"),
-            "category": display_category,
-            "id": repo.get("id"),
-            "stars": repo.get("stars", 0),
-            "downloads": repo.get("downloads", 0),
-            "authors": authors_list,
-            "installed": repo.get("installed", False),
-            "installed_version": repo.get("installed_version")
-            if repo.get("installed")
-            else None,
-            "available_version": repo.get("available_version"),
-        }
-        if query_lower:
-            entry["score"] = score
-        if repo.get("installed"):
-            entry["pending_update"] = repo.get("pending_upgrade", False)
-            entry["domain"] = repo.get("domain")
-        matches.append(entry)
-
-    # Sort by score (descending) when searching, by name when listing
-    if query_lower:
-        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
-    else:
-        matches.sort(key=lambda x: (x.get("name") or "").lower())
-
-    return matches
-
 
 # HACS' dispatcher signal that fires whenever a repository is
 # registered, installed, or otherwise mutates. Raw string keeps
@@ -420,3 +329,13 @@ async def send_hacs_repository_refresh(
         _wait_timeout=HACS_REFRESH_TIMEOUT,
     )
     return response
+
+
+__all__ = [
+    "CATEGORY_MAP",
+    "HACS_ADD_REGISTRATION_TIMEOUT",
+    "HACS_RESOLVE_REGISTRATION_TIMEOUT",
+    "_filter_and_score_repos",
+    "send_hacs_repository_refresh",
+    "wait_for_repo_registration",
+]
