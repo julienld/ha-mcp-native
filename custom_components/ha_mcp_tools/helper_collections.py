@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -245,8 +246,26 @@ def _apply_registry(
     return applied
 
 
+async def _write_collection_item(
+    collection: Any,
+    msg: dict[str, Any],
+    data: dict[str, Any],
+    writer: Callable[[Any, str, str | None, dict[str, Any]], Awaitable[Any]] | None,
+) -> Any:
+    if writer is not None:
+        return await writer(collection, msg["action"], msg.get("item_id"), data)
+    if msg["action"] == "create":
+        return await collection.async_create_item(data)
+    return await collection.async_update_item(msg["item_id"], data)
+
+
 async def async_write_item(
-    hass: HomeAssistant, registry: Any, msg: dict[str, Any]
+    hass: HomeAssistant,
+    registry: Any,
+    msg: dict[str, Any],
+    *,
+    writer: Callable[[Any, str, str | None, dict[str, Any]], Awaitable[Any]]
+    | None = None,
 ) -> dict[str, Any]:
     """Create or update a stored item, then apply its entity-registry fields.
 
@@ -264,10 +283,7 @@ async def async_write_item(
     # update), so an error once the data changed is not a rejection: it
     # propagates and the server reports an unknown outcome.
     try:
-        if msg["action"] == "create":
-            item = await collection.async_create_item(data)
-        else:
-            item = await collection.async_update_item(msg["item_id"], data)
+        item = await _write_collection_item(collection, msg, data, writer)
     except _item_not_found() as err:
         return _failure("not_found", f"{helper_type} config not found: {err}")
     except _INVALID_ERRORS as err:
@@ -313,7 +329,7 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
     Built from websocket_api's ``vol`` and ``er`` so its registration stays the
     one place those are bound.
     """
-    helper_type = vol.In(SIMPLE_HELPER_TYPES)
+    from .core_operation_schemas import helper_item_parameters, helper_write_parameters
 
     def do_schemas(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
         return describe_schemas(hass)
@@ -337,20 +353,12 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
     ) -> dict[str, Any]:
         return result
 
-    registry_fields = {
-        vol.Optional("icon"): vol.Any(str, None),
-        vol.Optional("area_id"): vol.Any(str, None),
-        vol.Optional("labels"): [str],
-        vol.Optional("category"): vol.Any(str, None),
-    }
     return [
         ({vol.Required("type"): WS_HELPER_SCHEMAS}, do_schemas, None),
         (
             {
                 vol.Required("type"): WS_HELPER_ITEM,
-                vol.Required("helper_type"): helper_type,
-                vol.Exclusive("entity_id", "target"): str,
-                vol.Exclusive("item_id", "target"): str,
+                **helper_item_parameters(vol),
             },
             do_item,
             None,
@@ -358,11 +366,7 @@ def command_specs(vol: Any, er: Any) -> list[tuple[dict[Any, Any], Any, Any]]:
         (
             {
                 vol.Required("type"): WS_HELPER_WRITE,
-                vol.Required("helper_type"): helper_type,
-                vol.Required("action"): vol.In(("create", "update")),
-                vol.Optional("item_id"): str,
-                vol.Required("data"): dict,
-                vol.Optional("registry"): registry_fields,
+                **helper_write_parameters(vol),
             },
             do_write,
             write_prep,

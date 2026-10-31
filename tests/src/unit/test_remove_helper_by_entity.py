@@ -17,9 +17,11 @@ from ha_mcp import backup_manager as bm
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp.client.rest_client import HomeAssistantAuthError
 from ha_mcp.errors import DEFAULT_SUGGESTIONS
-from ha_mcp.tools import auto_backup, helper_flows
+from ha_mcp.tools import helper_flows
 from ha_mcp.tools.helpers import exception_to_structured_error
 from ha_mcp.tools.tools_integrations import IntegrationTools
+
+from ._helper_removal_reads import stored_removal_images  # noqa: F401 - shared fixture
 
 # The real Core read, kept before conftest's autouse fixture replaces it.
 _REAL_FETCH = helper_flows._fetch_helper_flow_types
@@ -34,6 +36,9 @@ def _client(
 ) -> MagicMock:
     client = MagicMock()
     client.get_entity_state = AsyncMock(return_value=None)
+    client.get_config_entry = AsyncMock(
+        return_value={"domain": (registry_row or {}).get("platform", "hue")}
+    )
     client.delete_config_entry = AsyncMock(return_value={"require_restart": False})
     client._request = AsyncMock(
         return_value=_HELPER_FLOW_DOMAINS
@@ -235,7 +240,7 @@ async def test_entity_route_logs_one_tool_call(
                 "unique_id": "guest_mode",
                 "config_entry_id": None,
             },
-            ("helper_input_boolean", "input_boolean.guest_mode"),
+            ("helper_input_boolean", "guest_mode"),
         ),
     ],
     ids=["flow", "storage"],
@@ -258,8 +263,7 @@ async def test_entity_route_backs_up_the_resolved_helper_before_deleting(
 
     monkeypatch.setattr(bm.BackupManager, "maybe_snapshot", record)
     monkeypatch.setattr(
-        auto_backup,
-        "get_global_settings",
+        "ha_mcp.config.get_global_settings",
         lambda: SimpleNamespace(enable_auto_backup=True, auto_backup_dir=str(tmp_path)),
     )
     await _remove(client, registry_row["entity_id"])
@@ -309,8 +313,7 @@ async def test_a_helper_whose_options_are_not_backed_up_is_removed_with_the_reas
 
     monkeypatch.setattr(bm, "_ws_send", fake_ws_send)
     monkeypatch.setattr(
-        auto_backup,
-        "get_global_settings",
+        "ha_mcp.config.get_global_settings",
         lambda: SimpleNamespace(enable_auto_backup=True, auto_backup_dir=str(tmp_path)),
     )
     with caplog.at_level(logging.INFO, logger=bm.logger.name):
@@ -350,8 +353,7 @@ async def test_a_custom_helper_named_by_type_is_snapshotted_once_before_deleting
 
     monkeypatch.setattr(bm.BackupManager, "maybe_snapshot", record)
     monkeypatch.setattr(
-        auto_backup,
-        "get_global_settings",
+        "ha_mcp.config.get_global_settings",
         lambda: SimpleNamespace(enable_auto_backup=True, auto_backup_dir=str(tmp_path)),
     )
     result: dict[str, Any] = await IntegrationTools(

@@ -152,7 +152,7 @@ class TestTagAutoGeneratesTagId:
     ):
         _wire_default_ws(mock_client, "tag")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -172,7 +172,7 @@ class TestTagAutoGeneratesTagId:
     ):
         _wire_default_ws(mock_client, "tag")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -201,7 +201,7 @@ class TestTagAutoGeneratesTagId:
         """
         _wire_default_ws(mock_client, "tag")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ) as wait_mock:
@@ -224,7 +224,7 @@ class TestTagAutoGeneratesTagId:
         """
         _wire_default_ws(mock_client, "input_boolean")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ) as wait_mock:
@@ -259,7 +259,7 @@ class TestInputNumberStepGuard:
         # Control: step exactly equal to range is allowed (slider has 2 stops).
         _wire_default_ws(mock_client, "input_number")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -278,7 +278,7 @@ class TestInputNumberStepGuard:
         # Control: a normal range goes through unchanged.
         _wire_default_ws(mock_client, "input_number")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -309,7 +309,7 @@ class TestInputTextLengthValidation:
         """Core accepts min == max for input_text: an exact-length value."""
         _wire_default_ws(mock_client, "input_text")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -322,7 +322,7 @@ class TestInputTextLengthValidation:
     async def test_valid_lengths_pass(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_text")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -346,7 +346,7 @@ class TestInputSelectDuplicateOptions:
     async def test_unique_options_pass(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_select")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -369,7 +369,7 @@ class TestScheduleValidation:
     async def test_non_overlapping_ranges_pass(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "schedule")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -390,7 +390,7 @@ class TestScheduleValidation:
         # 07:00-12:00 and 12:00-14:00 do NOT overlap (boundary equal).
         _wire_default_ws(mock_client, "schedule")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -430,7 +430,7 @@ class TestInputSelectInitialInOptions:
     async def test_create_valid_initial_passes(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_select")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -454,7 +454,7 @@ class TestInputSelectInitialInOptions:
             {"id": "abc123", "name": "Mode", "options": ["A", "B"], "initial": "A"},
         )
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -484,7 +484,7 @@ class TestInputDatetimeHasDateOrTime:
     async def test_create_with_only_date_passes(self, register_tools, mock_client):
         _wire_default_ws(mock_client, "input_datetime")
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -510,7 +510,7 @@ class TestInputDatetimeHasDateOrTime:
             {"id": "abc123", "name": "Schedule", "has_date": True, "has_time": True},
         )
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -536,7 +536,7 @@ class TestInputDatetimeHasDateOrTime:
             {"id": "abc123", "name": "TimeOnly", "has_date": False, "has_time": True},
         )
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):

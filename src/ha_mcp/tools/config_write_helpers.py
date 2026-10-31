@@ -21,6 +21,15 @@ from ..client.rest_client import (
     HomeAssistantAuthError,
     HomeAssistantConnectionError,
 )
+from ..runtime.config_write_context import (
+    _WRITE_TOOL_BP_HINT_SUGGESTION,
+    attach_error_guidance,
+)
+from ..runtime.skill_content import (
+    _SKILL_CONTENT_OPTOUT_HINT,
+    _SKILLS_VENDOR_MISSING_WARNING,
+    apply_skill_content,
+)
 from ..utils.skill_loader import (
     BEST_PRACTICES_SKILL_NAME as _HA_BEST_PRACTICES_SKILL_NAME,
 )
@@ -158,37 +167,6 @@ async def apply_entity_category(
         )
 
 
-def merge_validation_meta(
-    result: dict[str, Any], validation_meta: dict[str, Any]
-) -> None:
-    """Attach reference-validator output to a set-tool success ``result``.
-
-    Produces a single nested ``validation`` field when there's anything
-    worth reporting - warnings, skipped templates, or a blueprint
-    short-circuit. Keeps the happy-path response unchanged.
-
-    Shared between ``ha_config_set_automation`` and
-    ``ha_config_set_script``; see
-    :mod:`ha_mcp.tools.reference_validator` for the validator itself
-    and #940 for background.
-    """
-    warnings = validation_meta.get("warnings") or []
-    unvalidated_templates = validation_meta.get("unvalidated_templates") or 0
-    blueprint_skipped = bool(validation_meta.get("blueprint_skipped"))
-
-    if not warnings and not unvalidated_templates and not blueprint_skipped:
-        return
-
-    entry: dict[str, Any] = {}
-    if warnings:
-        entry["warnings"] = warnings
-    if unvalidated_templates:
-        entry["unvalidated_templates"] = unvalidated_templates
-    if blueprint_skipped:
-        entry["blueprint_skipped"] = True
-    result["validation"] = entry
-
-
 # ---------------------------------------------------------------------------
 # Skill content assembly (write-tool MandatoryBPS parameter, issue #1182)
 # ---------------------------------------------------------------------------
@@ -280,34 +258,18 @@ def build_skill_content(
     )
 
 
-_SKILLS_VENDOR_MISSING_WARNING = (
-    "skill_content unavailable — the home-assistant-best-practices "
-    "skills-vendor submodule is not initialised. The agent will not "
-    "receive the relevant best-practice guidance for this write. "
-    "Run `git submodule update --init` on the server install."
-)
-
 # Opt-out hint shipped alongside delivered skill_content. The param
 # name (`MandatoryBPS`), absence of a Field description, and first-key
 # response placement are all load-bearing — each was settled by BAT
 # (failing alternatives reflexively triggered minimisation, omission,
 # or invisibility on at least one model). Don't tune any of them
 # casually; re-BAT before any change.
-_SKILL_CONTENT_OPTOUT_HINT = (
-    "Pass `MandatoryBPS=false` on subsequent calls to this tool in "
-    "this session to skip this content."
-)
 
 # Suggestion appended to EVERY write-tool error response. Not every
 # error has BP-checker context, so the generic skill-guide pointer is
 # the floor — when BP fired, the checker's own warning text (with its
 # more specific 2-route hint) is appended alongside in the suggestions
 # array, and the matching section body auto-embeds inline.
-_WRITE_TOOL_BP_HINT_SUGGESTION = (
-    "For Home Assistant best-practice guidance, call "
-    "ha_get_skill_guide() to read SKILL.md, then the reference file its "
-    "table points to, before retrying."
-)
 
 
 def attach_skill_content(
@@ -346,19 +308,9 @@ def attach_skill_content(
         referenced_files=referenced_files,
     )
     if content:
-        # Reorder so the hint is the FIRST key in the response and the
-        # bulky skill_content is the LAST. LLMs (especially smaller
-        # models) process responses top-down and BAT showed the
-        # trailing-hint placement was getting buried under ~25KB of
-        # markdown — Opus needed five tries to find it, Sonnet/Haiku
-        # never found it. The mutation is in place because callers
-        # pass the dict by reference and expect their handle to keep
-        # pointing at the same response object.
-        existing_items = list(response.items())
-        response.clear()
-        response["skill_content_hint"] = _SKILL_CONTENT_OPTOUT_HINT
-        response.update(existing_items)
-        response["skill_content"] = content
+        apply_skill_content(
+            response, content, enabled=True, requested=True, vendor_missing=False
+        )
         return
 
     # Empty content has three distinct causes:
@@ -377,8 +329,15 @@ def attach_skill_content(
     except ValidationError:
         master_on = False
     requested_anything = MandatoryBPS or referenced_files
-    if master_on and requested_anything and get_skills_dir() is None:
-        response.setdefault("warnings", []).append(_SKILLS_VENDOR_MISSING_WARNING)
+    apply_skill_content(
+        response,
+        content,
+        enabled=master_on,
+        requested=bool(requested_anything),
+        vendor_missing=master_on
+        and bool(requested_anything)
+        and get_skills_dir() is None,
+    )
 
 
 def augment_error_dict_with_skill_content(
@@ -405,19 +364,9 @@ def augment_error_dict_with_skill_content(
     (defensive — preserves the contract for any caller passing a
     non-standard error shape).
     """
-    err = error_dict.get("error")
-    if not isinstance(err, dict):
+    if not isinstance(error_dict.get("error"), dict):
         return
-    suggestions = err.setdefault("suggestions", [])
-    # create_error_response emits only the singular field for one suggestion.
-    # Preserve that recovery advice before appending the generic skill hint.
-    primary = err.get("suggestion")
-    if not suggestions and isinstance(primary, str) and primary:
-        suggestions.append(primary)
-    if _WRITE_TOOL_BP_HINT_SUGGESTION not in suggestions:
-        suggestions.append(_WRITE_TOOL_BP_HINT_SUGGESTION)
-    if suggestions:
-        err["suggestion"] = suggestions[0]
+    attach_error_guidance(error_dict)
 
     referenced_files = getattr(bp_warnings, "referenced_files", None)
     if referenced_files:
@@ -513,22 +462,15 @@ async def config_reload_waiter(
             await _ws_cleanup(ws_client, attached_handlers, sub_ids, handler)
 
 
-def note_reload_outcome(
-    result: dict[str, Any], reloaded: bool | None, *, domain: str, requested: bool
-) -> None:
-    """Warn when a runtime change could not be ordered after a config reload.
-
-    ``reloaded`` is the ``config_reload_waiter`` verdict: False when the
-    reload was never confirmed, None when nothing could watch for it.
-    """
-    if not requested or reloaded:
-        return
-    reason = (
-        f"did not confirm the {domain} reload"
-        if reloaded is False
-        else f"could not be watched for the {domain} reload (no WebSocket)"
-    )
-    result.setdefault("warnings", []).append(
-        f"Home Assistant {reason}; the requested runtime change may be "
-        "reverted or lost when the reload completes."
-    )
+__all__ = [
+    "_SKILLS_VENDOR_MISSING_WARNING",
+    "_SKILL_CONTENT_OPTOUT_HINT",
+    "_WRITE_TOOL_BP_HINT_SUGGESTION",
+    "apply_entity_category",
+    "attach_skill_content",
+    "augment_error_dict_with_skill_content",
+    "augment_tool_error_with_skill_content",
+    "build_skill_content",
+    "config_reload_waiter",
+    "fetch_entity_category",
+]

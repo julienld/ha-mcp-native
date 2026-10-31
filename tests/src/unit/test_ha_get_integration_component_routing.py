@@ -19,6 +19,7 @@ nonexistent id (not-found, never the first entry).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -130,6 +131,9 @@ class RoutingClient:
         # Legacy list-all-entries REST fetch.
         self.rest_list_calls += 1
         return list(self._rest_entries)
+
+    async def list_config_entries(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/config/config_entries/entry")
 
     async def get_config_entry(self, entry_id: str) -> dict[str, Any]:
         # Legacy single-entry read (lists all + filters client-side in real life).
@@ -309,6 +313,9 @@ async def test_single_entry_not_found_via_component_raises() -> None:
         await get_integration(entry_id="ghost")
 
     assert "ghost" in str(excinfo.value)
+    error = json.loads(str(excinfo.value))["error"]
+    assert error["code"] == "RESOURCE_NOT_FOUND"
+    assert "ha_get_integration()" in error["suggestion"]
     assert client.get_config_entry_calls == 0
 
 
