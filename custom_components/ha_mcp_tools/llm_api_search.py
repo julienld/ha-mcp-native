@@ -8,6 +8,7 @@ it with ``ha_call_tool``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -17,7 +18,6 @@ from .llm_tool_metadata import declare_metadata, tool_result
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from homeassistant.util.json import JsonObjectType
 
 # Names of the meta-tools synthesized for the tool-search mode. ha_search_tools
 # deliberately matches the server's own tool-search terminology (see the
@@ -68,8 +68,15 @@ class HaMcpSearchTool(llm.Tool):
     )
     parameters = vol.Schema({vol.Optional("query"): str, vol.Optional("tools"): [str]})
 
-    def __init__(self, catalog: list[dict[str, Any]], pinned: set[str]) -> None:
+    def __init__(
+        self,
+        catalog: list[dict[str, Any]],
+        pinned: set[str],
+        *,
+        check_enabled: Callable[[], None] | None = None,
+    ) -> None:
         """Hold the exposed-catalog snapshot (name/description/schema dicts)."""
+        self._check_enabled = check_enabled
         self._catalog = catalog
         self._pinned = pinned
         declare_metadata(
@@ -88,7 +95,7 @@ class HaMcpSearchTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> JsonObjectType:
+    ) -> llm.ToolResult:
         """Return full entries for ``tools``, compact hits for ``query``, or an
         error when neither is given.
 
@@ -97,6 +104,8 @@ class HaMcpSearchTool(llm.Tool):
         accepted as a one-item list, anything but a list of names is an
         error.
         """
+        if self._check_enabled is not None:
+            self._check_enabled()
         names = tool_input.tool_args.get("tools")
         if isinstance(names, str):
             names = [names]
@@ -141,7 +150,7 @@ class HaMcpSearchTool(llm.Tool):
             hit["params"] = tool["params"]
         return hit
 
-    def _full(self, names: list[str]) -> JsonObjectType:
+    def _full(self, names: list[str]) -> llm.ToolResult:
         """Full entries for *names* in the order given; an error when none
         of them is an exposed tool."""
         by_name = {t["name"]: t for t in self._catalog}
@@ -161,7 +170,7 @@ class HaMcpSearchTool(llm.Tool):
             error=not any(n in by_name for n in names),
         )
 
-    def _search(self, query_words: list[str]) -> JsonObjectType:
+    def _search(self, query_words: list[str]) -> llm.ToolResult:
         """Return the top-scoring exposed tools as compact entries."""
         scored = sorted(
             (

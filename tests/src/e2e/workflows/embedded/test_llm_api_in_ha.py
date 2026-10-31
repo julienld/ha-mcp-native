@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 from haos_runtime import HA_MCP_SERVER_WEBHOOK_ID, ssh_exec
+from qualification_artifacts import native_runtime_selected
 
 from ..._conftest_embedded import _EMBEDDED_WEBHOOK_ID
 from ...utilities.llm_api_probe import (
@@ -46,6 +47,10 @@ from ...utilities.llm_api_probe import (
     PROBE_URL_ENV,
     assert_report_clean,
     parse_probe_report,
+)
+from ...utilities.native_llm_opt_in import (
+    assert_native_llm_registration,
+    native_llm_opt_in,
 )
 
 LOG = logging.getLogger(__name__)
@@ -76,6 +81,12 @@ _HAOS_CORE_CONTAINER = "homeassistant"
 _HAOS_LOG_WINDOW_LINES = 20000
 
 
+@pytest.fixture(autouse=True)
+def _explicit_native_export(ha_container_with_fresh_config):
+    with native_llm_opt_in(ha_container_with_fresh_config):
+        yield
+
+
 @pytest.mark.embedded_only
 def test_llm_api_schemas_survive_core_reemission_container(
     ha_container_with_fresh_config: dict[str, Any],
@@ -97,7 +108,10 @@ def test_llm_api_schemas_survive_core_reemission_container(
     # Registration first: it is the cheaper, lane-plumbing half, and it must
     # keep being exercised while the report assertion is expectedly red on a
     # Core that carries the #2361 defect.
-    _assert_registration_logged_in_container(Path(info["config_path"]))
+    if native_runtime_selected():
+        assert_native_llm_registration(info)
+    else:
+        _assert_registration_logged_in_container(Path(info["config_path"]))
 
     # A client with an explicit timeout above the probe's own budget: the
     # testcontainers handle's client keeps docker-py's 60s default, which sits
@@ -163,7 +177,10 @@ def test_llm_api_schemas_survive_core_reemission_haos(
     )
 
     # Same order as the container test: registration plumbing first.
-    _assert_registration_logged_in_haos()
+    if native_runtime_selected():
+        assert_native_llm_registration(info)
+    else:
+        _assert_registration_logged_in_haos()
 
     try:
         result = ssh_exec(

@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_runtime_only
 @pytest.mark.parametrize(
     "action,params",
     [
