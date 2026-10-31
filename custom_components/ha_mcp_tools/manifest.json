@@ -2,15 +2,21 @@
     "domain": "ha_mcp_tools",
     "name": "HA-MCP Custom Component",
     "after_dependencies": [
+        "auth",
         "backup",
-        "cloud",
+        "blueprint",
+        "config",
         "energy",
         "frontend",
         "http",
         "logbook",
+        "logger",
         "lovelace",
         "network",
-        "recorder"
+        "recorder",
+        "search",
+        "tag",
+        "trace"
     ],
     "codeowners": [
         "@homeassistant-ai"
@@ -23,7 +29,6 @@
     "iot_class": "local_push",
     "issue_tracker": "https://github.com/homeassistant-ai/ha-mcp/issues",
     "requirements": [
-        "mcp>=1.24.0",
         "ruamel.yaml>=0.18.0",
         "voluptuous-openapi>=0.4.1",
         "ha-mcp==8.7.0"

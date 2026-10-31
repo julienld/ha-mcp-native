@@ -18,7 +18,9 @@ sides in step; that file's header names the pair's intended deltas (identity
 rename, the flat ``hass.data[DOMAIN]`` layout in place of this side's
 ``cfg[DATA_WEBHOOK]`` nesting, the ``oauth_mode == ha_auth`` test in
 ``_active_grant_types`` where this side checks for a resource server, and the
-``_addon_alive`` gate on the register view).
+``_addon_alive`` gate on the register view). The component-only Core version
+floor for new HA-account login is an intentional delta; the standalone proxy
+app is outside this migration.
 """
 
 from __future__ import annotations
@@ -33,9 +35,11 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
 from .const import DATA_WEBHOOK, DOMAIN, OAUTH_BASE
+from .oauth_core import HA_OAUTH_UNAVAILABLE, supports_ha_oauth
 from .oauth_legacy import _b64url_decode, _b64url_encode
 from .oauth_redirect_allowlist import _is_loopback_host, _is_valid_redirect_uri
 
@@ -259,6 +263,9 @@ class DcrRegisterView(HomeAssistantView):
         key = _active_dcr_key(self._hass)
         if key is None:
             return web.json_response({"error": "not_found"}, status=404)
+        cfg = self._hass.data[DOMAIN][DATA_WEBHOOK]
+        if cfg.get("resource_server") is not None and not supports_ha_oauth(HA_VERSION):
+            return _dcr_error("invalid_client_metadata", HA_OAUTH_UNAVAILABLE)
         raw = await _read_capped_body(request)
         if raw is None:
             return _dcr_error("invalid_client_metadata", "body is too large")
