@@ -120,9 +120,7 @@ def _porch_core(rows: list[dict[str, Any]], sent: list[dict[str, Any]]) -> Magic
 async def _legacy_update(client: MagicMock, **changes: Any) -> dict[str, Any]:
     args = {"name": None, "icon": None, "area_id": None, "wait": False, **changes}
     with (
-        patch.object(
-            hc_update, "read_stored_helper_item", AsyncMock(return_value=None)
-        ),
+        patch.object(chc, "read_stored_helper_item", AsyncMock(return_value=None)),
         patch(_FETCH_SCHEMAS, AsyncMock(return_value=None)),
     ):
         result: dict[str, Any] = await hc_update._execute_update_simple_helper(
@@ -174,9 +172,7 @@ async def test_a_bare_id_no_helper_has_updates_nothing() -> None:
     rows = [{"entity_id": "input_boolean.attic", "platform": "input_boolean",
              "unique_id": "hall"}]  # fmt: skip
     with (
-        patch.object(
-            hc_update, "read_stored_helper_item", AsyncMock(return_value=None)
-        ),
+        patch.object(chc, "read_stored_helper_item", AsyncMock(return_value=None)),
         pytest.raises(ToolError) as exc_info,
     ):
         await hc_update._execute_update_simple_helper(
@@ -222,8 +218,8 @@ async def test_a_component_reply_without_an_entity_names_none() -> None:
                       "registry_applied": {}, "warnings": []}
     )  # fmt: skip
     with (
-        patch.object(hc_update, "read_stored_helper_item", read),
-        patch.object(hc_update, "write_helper_item", write),
+        patch.object(chc, "read_stored_helper_item", read),
+        patch.object(chc, "write_helper_item", write),
         patch(_FETCH_SCHEMAS, AsyncMock(return_value=None)),
     ):
         result = await hc_update._execute_update_simple_helper(
@@ -240,8 +236,8 @@ async def test_an_error_names_no_guessed_entity_when_the_component_read_none() -
         return_value={"success": True, "item_id": "z", "item": _STORED_ZONE}
     )
     with (
-        patch.object(hc_update, "read_stored_helper_item", read),
-        patch.object(hc_update, "write_helper_item", AsyncMock()),
+        patch.object(chc, "read_stored_helper_item", read),
+        patch.object(chc, "write_helper_item", AsyncMock()),
         pytest.raises(ToolError) as exc_info,
     ):
         await hc_update._execute_update_simple_helper(
