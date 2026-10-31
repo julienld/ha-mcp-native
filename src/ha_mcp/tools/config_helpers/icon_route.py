@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from ..component_helper_collections import fetch_helper_schemas
+from ha_mcp.runtime.helper_payload import collection_icon_from_schema
+
+from .. import component_helper_collections
 
 
 async def collection_icon(
@@ -22,10 +24,5 @@ async def collection_icon(
     """
     if icon is None or icon == "" or helper_type == "zone":
         return icon
-    schemas = await fetch_helper_schemas(client)
-    fields = schemas.get(helper_type, {}).get(action) if schemas else None
-    if isinstance(fields, list) and any(
-        isinstance(f, dict) and f.get("name") == "icon" for f in fields
-    ):
-        return icon
-    return None
+    schemas = await component_helper_collections.fetch_helper_schemas(client)
+    return collection_icon_from_schema(helper_type, action, icon, schemas)

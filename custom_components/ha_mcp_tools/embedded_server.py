@@ -88,7 +88,9 @@ from .embedded_worker_teardown import (
     teardown_worker_loop,
 )
 from .loopback_url import derive_loopback_url
+from .paired_wheel import paired_wheel_matches
 from .pip_compat import pip_kwargs
+from .runtime_generation import RESTART_REQUIRED, native_bound_version
 from .server_credentials import (
     CredentialNeeded,
     async_release_credentials,
@@ -511,38 +513,24 @@ class EmbeddedServerManager:
         return DIST_NAME_STABLE if target == DIST_NAME_DEV else DIST_NAME_DEV
 
     def _maybe_purge_stale_modules(self, ready_version: str | None) -> None:
-        """Purge cached ha_mcp modules unless doing so is unsafe or pointless.
+        """Reuse unchanged modules and preserve native class identity.
 
-        The purge makes the next worker import the code that is on disk NOW.
-        Without it, a reload after a pip install keeps serving the OLD code
-        forever: all workers are threads of the one HA core process, and
-        Python resolves ``import ha_mcp`` from sys.modules — installs only
-        took effect after a full HA core restart (observed live: options
-        saves reinstalled the package, the web UI footer showed the new
-        on-disk version, yet the serving worker kept reporting the version
-        it was first imported with).
-
-        SKIPPED while any previous worker may still be importing — ripping
-        entries out of sys.modules under a live importer corrupts its import
-        in progress. Two guards cover that: the per-manager orphan (a worker
-        this manager's stop could not join), and the process-global
-        ``_IMPORTING_WORKERS`` registry, because every bring-up constructs a
-        FRESH manager (async_bring_up_server) and an entry reload during a
-        slow cold import otherwise hands the purge to a manager that has
-        never heard of the still-importing worker — which then crashed
-        mid-import with KeyError: 'ha_mcp.config' (issue #1904, live on
-        1.1.1-dev.107). The post-start staleness check surfaces the
-        consequence (old code possibly serving) instead.
-
-        Also skipped when the cached modules already ARE the generation on
-        disk: purging on every attempt made each retry pay the full cold
-        import again, so slow hardware that missed the readiness window once
-        could never recover (#1904). Never skipped under a pip-spec override
-        — the one workflow where a reinstall can change the code without
-        changing the version string (re-pointed tarball/pin), which a
-        version-keyed skip would serve stale; every released or dev build
-        carries a distinct version.
+        Native bindings survive unload: changed/unknown versions require a
+        Core restart; package replacement is refused before installation.
+        Legacy may reuse even a first component import, but replacements and
+        overrides must purge (source can change under the same version).
+        Never purge around live orphan/importing workers. A legacy purge cannot
+        refresh references retained by HA components; Native then needs restart.
         """
+        native_version = native_bound_version()
+        if native_version is not None:
+            if (
+                native_version == "unknown"
+                or ready_version is None
+                or native_version != ready_version
+            ):
+                raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
+            return
         orphan = self._orphaned_thread
         if orphan is not None and not orphan.is_alive():
             self._orphaned_thread = orphan = None
@@ -565,8 +553,12 @@ class EmbeddedServerManager:
         elif (
             not self._pip_spec_override
             and ready_version is not None
-            and _CACHED_IMPORT_VERSION is not None
-            and ready_version == _CACHED_IMPORT_VERSION
+            and ready_version
+            == (
+                getattr(sys.modules.get("ha_mcp"), "__version__", None)
+                if _CACHED_IMPORT_VERSION is None
+                else _CACHED_IMPORT_VERSION
+            )
         ):
             _LOGGER.debug(
                 "Cached ha_mcp modules already match installed version %s; "
@@ -576,17 +568,21 @@ class EmbeddedServerManager:
         else:
             _purge_ha_mcp_modules()
 
+    @staticmethod
+    def _check_package_generation(reason: str | None) -> None:
+        if reason is not None and native_bound_version() is not None:
+            raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
+
     async def _async_run_tracked_install_job(
         self, func: Callable[[], object]
     ) -> object:
-        """Run a package-mutating executor job, tracked process-wide.
+        """Track package mutation process-wide until its executor job finishes.
 
-        Registration happens BEFORE dispatch and completion is signalled on
-        the executor thread in a finally, so a bring-up cancelled mid-job
-        (install or uninstall) leaves behind a waitable job instead of an
-        invisible one.
+        Register before dispatch; signal completion from the executor's finally.
+        A cancelled bring-up leaves a waitable job for the next manager.
         """
-        global _PENDING_INSTALL_DONE
+        global _PENDING_INSTALL_DONE, _CACHED_IMPORT_VERSION
+        _CACHED_IMPORT_VERSION = ""  # Replacement can keep the same version.
         done = threading.Event()
         with _PENDING_INSTALL_LOCK:
             _PENDING_INSTALL_DONE = done
@@ -688,28 +684,14 @@ class EmbeddedServerManager:
     ) -> str | None:
         """Ensure ``ha-mcp`` is importable at the effective spec, installing if needed.
 
-        Returns the installed version that the worker is about to run, for the
-        caller's warm-cache purge decision.
+        Returns the installed version for the caller's warm-cache purge decision.
 
-        Without an override the spec is the manifest pin, which Home Assistant
-        installed before setup like any integration requirement — so the
-        normal start installs nothing. An install happens only when:
-
-        * an override is set (a URL is always reinstalled; an index pin when
-          the installed version does not match it — Home Assistant puts the
-          manifest pin back on every restart),
-        * the spec changed since the last install in a way the installed
-          version cannot prove (a cleared override that installed the same
-          version string, issue #1914 — see _async_remove_replaced_source),
-        * the other server distribution is installed beside the target (a
-          component 2.x dev-channel install, a HACS pre-release swapping
-          ``ha-mcp`` for ``ha-mcp-dev`` or back, or an override on the other
-          one). It is removed first, and because both distributions own the
-          same ``ha_mcp`` files, that removal deletes the target's files too,
-          so the target is then REINSTALLED rather than upgraded,
-        * the package repair asked for a reinstall (``DATA_REINSTALL_REQUESTED``):
-          even a satisfied pin is reinstalled, and the flag is cleared only
-          once that install succeeds.
+        The manifest's paired wheel can reuse installed PEP 610 evidence:
+        URL, SHA-256 and runtime/distribution versions must agree. Overrides
+        and requested reinstalls never use this exemption. Index pins retain
+        their version check; source changes follow _async_remove_replaced_source
+        (#1914). A conflicting distribution is removed then the target is
+        reinstalled, since both distributions own the same ha_mcp files.
 
         ``defer_mutations=True`` (a previous bring-up's worker is still
         importing) downgrades any would-be uninstall/install to the
@@ -751,8 +733,20 @@ class EmbeddedServerManager:
                 installed_version=installed_version,
                 target_version=target_version,
                 conflicting=conflicting if conflict_present else None,
+                paired_wheel=(
+                    not self._pip_spec_override
+                    and self._paired_spec == self._pip_spec
+                    and await self._hass.async_add_executor_job(
+                        paired_wheel_matches,
+                        self._pip_spec,
+                        installed_version,
+                        target_version,
+                    )
+                    and native_bound_version() in (None, installed_version)
+                ),
             )
         )
+        self._check_package_generation(reason)
         deferred = False
         if reason is None:
             pass
@@ -1073,6 +1067,8 @@ class EmbeddedServerManager:
 
     async def _async_process_requirements_fast(self) -> None:
         """Fast path: let HA's requirements manager satisfy the override spec."""
+        global _CACHED_IMPORT_VERSION
+        _CACHED_IMPORT_VERSION = ""
         try:
             await async_process_requirements(
                 self._hass,
@@ -1648,7 +1644,7 @@ class EmbeddedServerManager:
                 else:
                     stop_task.cancel()
                     with suppress(asyncio.CancelledError):
-                        await stop_task
+                        _ = await stop_task
                     # Surface a server that exited on its own (bind failure,
                     # etc.).
                     serve_task.result()
@@ -1804,11 +1800,10 @@ _PENDING_INSTALL_LOCK = threading.Lock()
 _PENDING_INSTALL_DONE: threading.Event | None = None
 
 
-# Version of the ha_mcp generation currently cached in sys.modules — set by
-# the worker right after its first import lands, cleared by the purge. Process-wide
-# (the module cache it describes is process-wide too). Lets a retry with an
-# unchanged install keep the warm cache instead of paying the full cold import
-# again (issue #1904).
+# Process-wide worker import version: reuse unchanged modules on retries (#1904).
+# None permits checking the component's first import; an empty string forbids
+# that fallback after any package-mutating dispatch (even failure/cancellation)
+# until purge clears it. Only the worker records a successfully imported version.
 _CACHED_IMPORT_VERSION: str | None = None
 
 
@@ -1876,14 +1871,16 @@ def _purge_ha_mcp_modules() -> None:
     The in-process server runs as a thread of the HA core Python process, and
     Python resolves imports from the process-wide ``sys.modules`` cache — so
     after a pip install the next worker would silently reuse the OLD code
-    unless the cache is purged first. Safe here because ``ha_mcp`` is pure
-    Python and is only ever imported inside worker threads, and the caller's
-    gate guarantees no registered worker is mid-import when this runs (a
-    worker past its imports keeps its already-bound modules regardless);
+    unless the cache is purged first. This operation is restricted to a
+    legacy-only process; native bindings reject it even after entry unload.
+    The caller also guarantees no registered worker is mid-import (a worker
+    past its imports keeps its already-bound modules regardless);
     third-party dependencies are deliberately NOT purged (they are shared
     with the rest of Home Assistant), so a dependency-version change still
     needs an HA core restart.
     """
+    if native_bound_version() is not None:
+        raise EmbeddedServerError(RESTART_REQUIRED, kind="start")
     global _CACHED_IMPORT_VERSION
     _CACHED_IMPORT_VERSION = None
     # Snapshot the keys: sys.modules can be mutated by concurrent imports on
@@ -2283,6 +2280,7 @@ def _install_reason(
     installed_version: str | None,
     target_version: str | None,
     conflicting: str | None,
+    paired_wheel: bool = False,
 ) -> str | None:
     """Name the first reason ``_async_ensure_managed_package`` installs, or None.
 
@@ -2299,7 +2297,9 @@ def _install_reason(
     if conflicting is not None:
         return f"{conflicting} is installed beside {target_dist}"
     if _spec_is_url_requirement(spec):
-        return f"{spec!r} is a direct URL, which always installs"
+        if paired_wheel and _is_compatible_embedded_version(target_version):
+            return None
+        return f"{spec!r} is a direct URL without matching paired-wheel evidence"
     if not _spec_satisfied_by(spec, target_version):
         return f"installed {target_dist} {target_version} does not satisfy {spec!r}"
     if not _is_compatible_embedded_version(target_version):

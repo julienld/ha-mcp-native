@@ -31,8 +31,11 @@ from packaging.version import Version
 from .const import (
     CONF_ENTRY_TYPE,
     DATA_ACCESS_TOKEN,
+    DATA_ADMIN_TOKEN,
     DATA_DCR_SIGNING_KEY,
+    DATA_ISSUED_TOKEN_ID,
     DATA_LAST_PIP_SPEC,
+    DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
     DATA_OAUTH_CLIENT_SECRET,
     DATA_OAUTH_SIGNING_KEY,
@@ -53,10 +56,12 @@ from .const import (
     OPT_OAUTH_CLIENT_ID,
     OPT_OAUTH_CLIENT_SECRET,
     OPT_PIP_SPEC,
+    OPT_RUNTIME_MODE,
     OPT_SECRET_PATH_OVERRIDE,
     OPT_SERVER_URL,
     OPT_WEBHOOK_AUTH,
     OPT_WEBHOOK_ID_OVERRIDE,
+    RUNTIME_NATIVE,
     WEBHOOK_AUTH_NONE,
 )
 from .embedded_entry import access_enabled, bring_up_in_progress, server_running
@@ -84,6 +89,9 @@ _SECRET_DATA_KEYS = (
     DATA_SERVER_USER_ID,
     DATA_REFRESH_TOKEN_ID,
     DATA_ACCESS_TOKEN,
+    DATA_ADMIN_TOKEN,
+    DATA_ISSUED_TOKEN_ID,
+    DATA_NATIVE_OWNER_ID,
     DATA_LAST_PIP_SPEC,
 )
 _SECRET_OPTION_KEYS = (
@@ -150,7 +158,11 @@ async def _async_server_summary(
     )
 
     options = entry.options
-    pip_spec = str(options.get(OPT_PIP_SPEC) or "").strip()
+    pip_spec = (
+        ""
+        if options.get(OPT_RUNTIME_MODE) == RUNTIME_NATIVE
+        else str(options.get(OPT_PIP_SPEC) or "").strip()
+    )
     # Same test as EmbeddedServerManager: the default spec is no override.
     override = pip_spec if pip_spec != DEFAULT_PIP_SPEC else ""
     # The effective spec, as EmbeddedServerManager._resolve_pip_spec resolves it.
