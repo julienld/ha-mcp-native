@@ -288,6 +288,12 @@ class TestFieldConstraints:
 class TestUnionMetadata:
     """Metadata belongs to the branch that declared it."""
 
+    def test_outer_metadata_keeps_union_types_without_promoting_branch_bounds(self):
+        info = _field_info(
+            "Annotated[Annotated[int, Field(ge=0)] | str, Field(description='Cursor.')]"
+        )
+        assert info == {"type": "int | str", "description": "Cursor."}
+
     def test_metadata_from_the_single_annotated_branch_applies(self):
         info = _field_info("Annotated[int, Field(ge=1, description='n')] | None")
 
@@ -695,13 +701,13 @@ class TestImportResolution:
     def test_an_aliased_name_is_bound_under_its_local_spelling(self):
         scope = extract_tools.ModuleScope({}, {})
         extract_tools._apply_imports(
-            extract_tools.TOOLS_DIR / "tools_logs.py",
+            extract_tools.PACKAGE_ROOT / "runtime" / "log_tools.py",
             ast.parse("from .log_common import MAX_LIMIT as CAP"),
             scope,
         )
 
         source_scope = extract_tools._module_scope(
-            extract_tools.TOOLS_DIR / "log_common.py"
+            extract_tools.PACKAGE_ROOT / "runtime" / "log_common.py"
         )
 
         assert scope.consts["CAP"] == source_scope.consts["MAX_LIMIT"]
@@ -778,16 +784,25 @@ class TestModuleScope:
     @pytest.fixture(scope="class")
     def logs_scope(self):
         return extract_tools._module_scope(
-            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_logs.py"
+            REPO_ROOT / "src" / "ha_mcp" / "runtime" / "log_tools.py"
         )
 
     def test_constants_are_pulled_through_relative_imports(self, logs_scope):
         assert isinstance(logs_scope.consts.get("MAX_LIMIT"), int)
 
     def test_zero_arg_helpers_resolve_across_modules(self):
-        scope = extract_tools._module_scope(
-            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_config_scenes.py"
+        from extract_tools_shared import SharedToolExtractor
+
+        resolver = SharedToolExtractor(
+            extract_tools._import_source,
+            extract_tools._module_scope,
+            extract_tools._extract_tool_from_node,
         )
+        method = resolver.resolve_function(
+            REPO_ROOT / "src" / "ha_mcp" / "tools" / "tools_config_scenes.py",
+            "ha_config_set_scene",
+        )
+        scope = extract_tools._module_scope(method._source_path)
 
         resolved = scope.funcs["get_security_documentation"]
 

@@ -476,7 +476,7 @@ def _annotated_metadata(slice_node: ast.expr, scope: ModuleScope) -> dict:
     if not isinstance(slice_node, ast.Tuple) or not slice_node.elts:
         return info
 
-    info["type"] = ast.unparse(slice_node.elts[0])
+    info.update(_extract_field_info(slice_node.elts[0], scope))
     # Everything after the type is metadata, but only ``Field(...)`` carries
     # keywords this catalog describes. A bare validator (JSON_STRING_COERCION)
     # is a name rather than a call; another metadata call's keywords are its
@@ -718,6 +718,15 @@ def _extract_tool_from_node(
 
 def extract_tools() -> list[dict]:
     """Extract all tool metadata from source files via AST parsing."""
+    spec = importlib.util.spec_from_file_location(
+        "extract_tools_shared", Path(__file__).with_name("extract_tools_shared.py")
+    )
+    assert spec is not None and spec.loader is not None
+    shared_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shared_module)
+    shared = shared_module.SharedToolExtractor(
+        _import_source, _module_scope, _extract_tool_from_node
+    )
     tools = []
 
     for f in TOOL_FILES:
@@ -727,9 +736,12 @@ def extract_tools() -> list[dict]:
         scope = _module_scope(f)
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.AsyncFunctionDef):
+            if isinstance(node, ast.AsyncFunctionDef):
+                tool = _extract_tool_from_node(node, f.name, scope)
+            elif isinstance(node, ast.Assign | ast.Expr):
+                tool = shared.extract(node, f)
+            else:
                 continue
-            tool = _extract_tool_from_node(node, f.name, scope)
             if tool is not None:
                 tools.append(tool)
 

@@ -4,7 +4,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 # A new push to a PR makes the previous commit's lanes dead weight: nothing
@@ -33,6 +33,10 @@ env:
   TESTCONTAINERS_RYUK_DISABLED: "true"
 
 jobs:
+  core-window:
+    needs: [fast-checks]
+    uses: ./.github/workflows/core-window.yml
+
   # Decide whether the heavy E2E Validation lanes need to run. Default is RUN;
   # we skip ONLY when every changed file is pure docs/website (*.md, *.mdx,
   # docs/**, site/**, .github/ISSUE_TEMPLATE/*.yml). `*` crosses `/` in a case
@@ -49,6 +53,7 @@ jobs:
   # pinning a server, other than the release it is part of. The job keeps its
   # old name so a branch rule requiring it stays satisfied.
   component-version-gate:
+    needs: [fast-checks]
     name: Component Version Gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -159,7 +164,7 @@ jobs:
     # variants: it always runs, passes when the suite was skipped (docs/website)
     # or every variant succeeded, and fails if any variant failed.
     name: E2E Validation Gate
-    needs: [changes, e2e-validation, e2e-validation-no-component, e2e-validation-embedded, e2e-validation-embedded-server-only, e2e-validation-update-path]
+    needs: [core-window, changes, e2e-validation, e2e-validation-no-component, e2e-validation-embedded, e2e-validation-embedded-server-only, e2e-validation-update-path]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -173,6 +178,10 @@ jobs:
           # judge them on their results. Keep this branch equivalent to the lane
           # `if:` predicates above; if they diverge, this gate demands success
           # from a lane that never ran.
+          if [ "${{ needs.core-window.result }}" != "success" ]; then
+            echo "::error::Core window qualification or floor elevation failed"
+            exit 1
+          fi
           classifier_result="${{ needs.changes.result }}"
           if [ "$classifier_result" != "success" ]; then
             echo "::warning::change classifier did not succeed (result=$classifier_result); judging the lanes on their own results."
@@ -440,6 +449,7 @@ jobs:
   # over the built pages — all blocking. The baseline is clean, so any
   # regression fails the PR.
   site-checks:
+    needs: [fast-checks]
     name: Site (astro check + eslint a11y)
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -478,6 +488,7 @@ jobs:
 
   # Fast unit tests (no Docker, no HA instance needed)
   unit-tests:
+    needs: [fast-checks]
     name: Unit Tests
     runs-on: ubuntu-latest
     container:
@@ -570,7 +581,7 @@ jobs:
   # Comprehensive E2E validation for all PRs
   e2e-validation:
     name: E2E Validation (${{ matrix.os }})
-    needs: changes
+    needs: [changes, fast-checks]
     # A skipped job reports Success to the required status check, so a
     # docs/website-only PR doesn't wedge the merge waiting on these lanes.
     # Skipping requires a classifier that succeeded and said `false` out loud;
@@ -676,7 +687,7 @@ jobs:
   # and both architectures already run the component-present suite above.
   e2e-validation-no-component:
     name: E2E Validation (no component)
-    needs: changes
+    needs: [changes, fast-checks]
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
     # gate waiting on this lane (mirrors e2e-validation).
     # Skipping requires a classifier that succeeded and said `false` out loud;
@@ -773,7 +784,7 @@ jobs:
   # the larger timeout covers that per-worker preinstall window.
   e2e-validation-embedded:
     name: E2E Validation (embedded, ${{ matrix.os }})
-    needs: changes
+    needs: [changes, fast-checks]
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
     # gate waiting on this lane (mirrors e2e-validation).
     # Skipping requires a classifier that succeeded and said `false` out loud;
@@ -876,7 +887,7 @@ jobs:
   # above.
   e2e-validation-embedded-server-only:
     name: E2E Validation (embedded, server entry only)
-    needs: changes
+    needs: [changes, fast-checks]
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
     # gate waiting on this lane (mirrors e2e-validation).
     # Skipping requires a classifier that succeeded and said `false` out loud;
@@ -975,7 +986,7 @@ jobs:
   # e2e-validation-gate.
   e2e-validation-update-path:
     name: E2E Validation (update path)
-    needs: changes
+    needs: [changes, fast-checks]
     # A skipped job reports Success, so a docs/website-only PR doesn't wedge the
     # gate waiting on this lane (mirrors e2e-validation).
     # Skipping requires a classifier that succeeded and said `false` out loud;
@@ -1078,6 +1089,7 @@ jobs:
 
   # Docker and Add-on validation
   docker-validation:
+    needs: [fast-checks]
     name: Docker & Add-on Validation
     runs-on: ubuntu-latest
     timeout-minutes: 15

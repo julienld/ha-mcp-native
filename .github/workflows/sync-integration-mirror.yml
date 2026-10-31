@@ -4,13 +4,9 @@ name: Sync Integration Mirror
 # in lockstep. The component shares the server's version and pins the server
 # build it runs (#2427), so every mirror release is a component + server pair:
 #
-# - stable: after "SemVer Release", the release tag's component (stamped by
-#   semantic-release with the release version and its ha-mcp== pin) is tagged
-#   vX.Y.Z once PyPI serves that ha-mcp build.
-# - dev: after "Publish Dev Channel", the snapshot of the commit it built is
-#   stamped with the next release number and pinned to the exact build it
-#   uploaded (ha-mcp-dev==<next>.devN), and tagged vX.Y.Z-dev.N. Server-only
-#   changes therefore reach pre-release users too, not just component changes.
+# Stable and dev releases copy the publisher's verified native ZIP unchanged.
+# The mirror keeps vX.Y.Z / vX.Y.Z-dev.N tags and records the upstream build
+# metadata in Git. Its release job verifies that record before attaching assets.
 #
 # HACS keys on the GitHub prerelease flag, so stable users never see dev
 # builds; users who enable the repository's HACS "Pre-release" switch entity
@@ -21,7 +17,7 @@ name: Sync Integration Mirror
 # Both tagging legs run on `workflow_run`, NOT on `release`/`push`: the
 # release is created by the release-bot App and its `release: published`
 # event does not reliably fan out to this workflow, and a dev tag must wait
-# for the PyPI build its pin names. A docs-only push still refreshes the
+# for the complete paired release assets. A docs-only push still refreshes the
 # mirror's main branch (README) without tagging.
 permissions:
   contents: read
@@ -46,9 +42,8 @@ on:
     inputs:
       channel:
         description: >-
-          stable re-tags the latest stable release (recovery path when a
-          release run flaked); dev cuts a v<next>-dev.N pre-release from the
-          current master snapshot, pinned to its already-published dev build.
+          Recover the stable or dev mirror from an already-published upstream
+          release. Existing tags and assets are never replaced.
           Dispatch from master only.
         type: choice
         options: [stable, dev]
@@ -69,8 +64,8 @@ jobs:
   # overall conclusion skipped the mirror tag whenever any UNRELATED leg
   # failed (v7.12.2: an app image cache flake failed the release run and HACS
   # never got the component tag), so each leg keys on the one job it needs:
-  # "Semantic Release" for stable, the ha-mcp-dev PyPI publish for dev (the
-  # pin must exist on PyPI). Both legs are idempotent, so the stable leg fails
+  # "Semantic Release" for stable, "Create GitHub pre-release" for dev (the
+  # paired assets must be public). Both legs are idempotent, so the stable leg fails
   # OPEN on an unreadable job list: a spurious run re-confirms the existing
   # tag, while a suppressed one strands HACS on the previous release.
   gate:
@@ -124,7 +119,7 @@ jobs:
           if [ "$TRIGGER_WORKFLOW" = "SemVer Release" ]; then
             job="Semantic Release"; leg=stable
           else
-            job="Publish PyPI (dev channel)"; leg=dev
+            job="Create GitHub pre-release"; leg=dev
           fi
           if ! conclusion=$(gh api \
             "repos/${{ github.repository }}/actions/runs/${TRIGGER_RUN_ID}/jobs?per_page=100" \
@@ -242,7 +237,36 @@ jobs:
             echo "dist=$DIST"
             echo "src=$SRC"
             echo "tag=$TAG"
+            echo "upstream_tag=v$PIN"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Install uv for the Core release guard
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+
+      - name: Require the release snapshot Core floor before mirror publication
+        if: env.CHANNEL != 'none'
+        env:
+          RELEASE_SOURCE: ${{ steps.release.outputs.src }}
+        run: uv run --locked -s scripts/core_window.py --repository "$RELEASE_SOURCE" --check-floor --output "$RUNNER_TEMP/mirror-core-window.json"
+
+      - name: Fetch and verify the publisher's paired assets
+        if: env.CHANNEL != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SOURCE: ${{ steps.release.outputs.src }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$UPSTREAM_TAG" --jq .draft)" = false
+          uv run --locked -s scripts/native_published_assets.py fetch \
+            --repository "$GITHUB_REPOSITORY" --tag "$UPSTREAM_TAG" \
+            --checkout "$RELEASE_SOURCE" --output "$RUNNER_TEMP/native-release"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$UPSTREAM_TAG" --jq .sha)" = "$(jq -r '.release_revision // .revision' "$RUNNER_TEMP/native-release/native-build.json")"
+          uv run --locked -s scripts/native_release_delivery.py verify \
+            --repository "$GITHUB_REPOSITORY" --tag "$UPSTREAM_TAG" \
+            --revision "$(git -C "$RELEASE_SOURCE" rev-parse HEAD)" --assets "$RUNNER_TEMP/native-release"
 
       - name: Set up mirror push key
         env:
@@ -265,22 +289,21 @@ jobs:
           PIN: ${{ steps.release.outputs.pin }}
           DIST: ${{ steps.release.outputs.dist }}
           SRC: ${{ steps.release.outputs.src }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
         run: |
           if [ "$CHANNEL" = none ]; then
             # A docs-only push refreshes the README and repo files; the
             # component stays exactly as the last tagged sync left it.
-            cp hacs.json LICENSE /tmp/mirror/
+            # Keep install metadata paired with the last component snapshot.
+            cp LICENSE /tmp/mirror/
           else
             # From the snapshot, so hacs.json's Home Assistant minimum always
             # matches the component it ships with.
             cp "$SRC/hacs.json" "$SRC/LICENSE" /tmp/mirror/
-            rm -rf /tmp/mirror/custom_components
-            mkdir -p /tmp/mirror/custom_components
-            cp -r "$SRC/custom_components/ha_mcp_tools" /tmp/mirror/custom_components/
-            rm -rf /tmp/mirror/custom_components/ha_mcp_tools/__pycache__
-            python3 scripts/stamp_component_version.py \
-              --component-dir /tmp/mirror/custom_components/ha_mcp_tools \
-              --version "$VER" --pin "$PIN" --dist "$DIST"
+            uv run --locked -s scripts/native_release_delivery.py stage-mirror \
+              --repository "$GITHUB_REPOSITORY" --tag "$UPSTREAM_TAG" \
+              --revision "$(git -C "$SRC" rev-parse HEAD)" --assets "$RUNNER_TEMP/native-release" \
+              --mirror /tmp/mirror
           fi
           python3 scripts/build_mirror_readme.py \
             --prefix .github/integration-mirror-readme-prefix.md \
@@ -293,6 +316,9 @@ jobs:
           mkdir -p /tmp/mirror/.github/workflows
           cp .github/integration-mirror-workflows/release-on-tag.yml \
             /tmp/mirror/.github/workflows/release-on-tag.yml
+          mkdir -p /tmp/mirror/scripts
+          cp scripts/native_release_delivery.py scripts/native_release_delivery.py.lock \
+             scripts/native_published_assets.py scripts/native_published_assets.py.lock /tmp/mirror/scripts/
 
       - name: Commit and push
         env:
@@ -310,25 +336,6 @@ jobs:
             git push origin main
           fi
 
-      - name: Wait for the pinned server build on PyPI
-        # The tag is what HACS installs, and Home Assistant installs the pin
-        # from PyPI on the next restart: a tag ahead of its PyPI build would
-        # fail every install that picks it up in between.
-        if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
-        env:
-          PIN: ${{ steps.release.outputs.pin }}
-          DIST: ${{ steps.release.outputs.dist }}
-        run: |
-          for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null "https://pypi.org/pypi/${DIST}/${PIN}/json"; then
-              echo "PyPI serves ${DIST} ${PIN}"
-              exit 0
-            fi
-            sleep 30
-          done
-          echo "::error::PyPI never served ${DIST} ${PIN}; not tagging a component that pins it."
-          exit 1
-
       - name: Tag the mirror
         if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
         env:
@@ -343,7 +350,10 @@ jobs:
           # so an existing tag only means this run already happened.
           existing=$(git -C /tmp/mirror ls-remote --tags origin "refs/tags/${TAG}")
           if [ -n "$existing" ]; then
-            echo "mirror tag ${TAG} exists - nothing to do"
+            git -C /tmp/mirror fetch --quiet origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            git -C /tmp/mirror show "${TAG}:native-build.json" > "$RUNNER_TEMP/tagged-native-build.json"
+            cmp "$RUNNER_TEMP/tagged-native-build.json" "$RUNNER_TEMP/native-release/native-build.json"
+            echo "mirror tag ${TAG} already identifies this exact build"
             exit 0
           fi
           if [ "$CHANNEL" = stable ]; then

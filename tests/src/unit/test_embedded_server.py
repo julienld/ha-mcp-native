@@ -1047,7 +1047,7 @@ class TestDistHelpers:
 
         args = calls["args"]
         assert "--target" in args
-        assert args[args.index("--target") + 1] == "/config/deps"
+        assert args[args.index("--target") + 1] == os.path.abspath("/config/deps")
         assert "--python" not in args
 
     def test_uninstall_nonzero_exit_is_swallowed(self, monkeypatch):
@@ -1181,13 +1181,12 @@ class TestSafeInvalidateCaches:
     def test_prunes_stale_entries_then_retries(self, monkeypatch):
         calls = self._raise_once(monkeypatch)
         sys.path_importer_cache.clear()
-        sys.path_importer_cache["/abs/deps/dir"] = object()  # abs + live → kept
+        live_path = os.path.abspath("/abs/deps/dir")
+        sys.path_importer_cache[live_path] = object()  # abs + live → kept
         sys.path_importer_cache[self._EDITABLE_KEY] = None  # non-abs None → pruned
         sys.path_importer_cache[""] = None  # relative None → pruned
-        # Non-absolute key with a LIVE (non-None) finder: the None disjunct is
-        # False here, so ONLY the ``not os.path.isabs`` disjunct can prune it —
-        # this independently exercises the abspath branch (a real editable
-        # placeholder has a live finder, not None).
+        # A live non-absolute finder exercises only the not-isabs branch;
+        # real editable placeholders can have a live finder, not None.
         sys.path_importer_cache["rel/not/absolute"] = object()
 
         es._safe_invalidate_caches()
@@ -1196,7 +1195,7 @@ class TestSafeInvalidateCaches:
         assert self._EDITABLE_KEY not in sys.path_importer_cache
         assert "" not in sys.path_importer_cache
         assert "rel/not/absolute" not in sys.path_importer_cache
-        assert "/abs/deps/dir" in sys.path_importer_cache
+        assert live_path in sys.path_importer_cache
 
     def test_propagates_non_keyerror(self, monkeypatch):
         def _boom():
@@ -1319,7 +1318,7 @@ class TestThreadEnvStaging:
             "http://ha.local:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
         )
         # _serve raised on the ha_mcp.server import → captured, thread didn't hang.
         assert mgr._thread_exc is not None
@@ -1348,7 +1347,7 @@ class TestThreadEnvStaging:
             "https://127.0.0.1:8123",
             "tok-xyz",
             config_dir=mgr._hass_config_dir,
-            llm_api_enabled=True,
+            llm_api_enabled=False,
             verify_ssl=False,
         )
 
@@ -2303,7 +2302,7 @@ class TestLifecycle:
 
         with pytest.raises(
             es.EmbeddedServerError,
-            match=r"requires Home Assistant 2026\.8\.0 or newer",
+            match=r"requires Home Assistant 2026\.10\.0 or newer",
         ) as exc:
             await mgr.async_start()
 

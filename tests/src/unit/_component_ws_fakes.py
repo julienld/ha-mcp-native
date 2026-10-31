@@ -107,6 +107,19 @@ class _FakeWSApi:
         self.registered[handler._ws_command] = handler
 
 
+def register_empty_surface(
+    api: Any, cache_bridge: Any, hass: Any, monkeypatch: Any, schema: Any
+) -> _FakeWSApi:
+    """Bind every registration owner to the same functional test transport."""
+    fake = _FakeWSApi()
+    monkeypatch.setattr(api, "websocket_api", fake)
+    monkeypatch.setattr(cache_bridge, "websocket_api", fake)
+    monkeypatch.setattr(api, "vol", schema)
+    monkeypatch.setattr(api, "_resolve_registries", lambda hass: api._RegistryView())
+    api.async_register_commands(hass)
+    return fake
+
+
 class _FakeCallServices:
     """``hass.services`` stand-in with the write surface ``call_service`` drives.
 

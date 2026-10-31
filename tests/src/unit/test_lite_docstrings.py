@@ -583,23 +583,16 @@ class TestBackupLiteDescriptionSize:
     cannot: it fails if someone re-inflates the lite value toward the full
     one, and it does not need touching when the wording changes.
 
-    ``ha_manage_backup``'s advertised text is the ``description=`` f-string
-    built in ``register_backup_tools()``, not a docstring (``__doc__`` is 73
-    chars), so the full side is measured by extracting that template and
-    substituting the hint the same way registration does.
+    ``ha_manage_backup`` uses the shared facade's full document and substitutes
+    the operator hint during registration. Measure that authoritative producer.
     """
 
     def _full_description(self, hint_level: str, monkeypatch) -> str:
         monkeypatch.setenv("BACKUP_HINT", hint_level)
+        from ha_mcp.runtime.backup_tools import backup_description
         from ha_mcp.tools.backup import _get_backup_hint_text
 
-        source = (REPO_ROOT / "src" / "ha_mcp" / "tools" / "backup.py").read_text(
-            encoding="utf-8"
-        )
-        opener = 'manage_backup_description = f"""'
-        start = source.index(opener) + len(opener)
-        template = source[start : source.index('"""', start)]
-        return template.replace("{backup_hint_text}", _get_backup_hint_text())
+        return backup_description(_get_backup_hint_text())
 
     @pytest.mark.parametrize("hint_level", ["strong", "normal", "weak"])
     def test_backup_lite_description_stays_substantially_smaller(
@@ -777,8 +770,16 @@ def _tool_response_has_field(tool_name: str, field: str) -> bool:
                 return True
         return False
 
-    for source in sources:
-        tree = ast.parse((tools_dir / source).read_text(encoding="utf-8"))
+    shared_producers = {
+        "ha_report_issue": [
+            (REPO_ROOT / "src/ha_mcp/runtime/report_rendering.py", "render_report")
+        ]
+    }
+    producers = shared_producers.get(
+        tool_name, [(tools_dir / source, tool_name) for source in sources]
+    )
+    for source, function_name in producers:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             # ast.walk, not module-level lookup: registered tools are
             # methods on registrar classes (ha_report_issue lives inside
@@ -786,7 +787,7 @@ def _tool_response_has_field(tool_name: str, field: str) -> bool:
             # the scan of its BODY stops at nested scope boundaries.
             if (
                 isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-                and node.name == tool_name
+                and node.name == function_name
             ):
                 if _dict_with_field_in_scope(node):
                     return True

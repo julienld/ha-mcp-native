@@ -1,0 +1,267 @@
+name: Native migration
+
+on:
+  push:
+    branches: [feat/native-hacs]
+    paths:
+      - 'src/**'
+      - 'custom_components/**'
+      - 'tests/**'
+      - 'scripts/native_*.py'
+      - 'scripts/core_window.py*'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/native-migration.yml'
+      - '.github/workflows/core-window.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Qualification to run (live opens a temporary fork-only HA environment)'
+        required: true
+        type: choice
+        options: [native, hacs_owners, protocol, live]
+        default: native
+      published_tag:
+        description: 'Existing public native release tag to qualify from its unchanged manifest URL'
+        required: false
+        type: string
+      track_ref:
+        description: 'live only: SHA or branch in this fork to install, independent of the workflow ref'
+        required: false
+        type: string
+      public_key:
+        description: 'live only: base64 RSA-4096 PUBLIC key (PEM) for encrypted endpoint URLs'
+        required: false
+        type: string
+      minutes:
+        description: 'live only: lifetime in minutes (integer, 1–330)'
+        type: string
+        default: '60'
+      platform:
+        description: 'live only: Home Assistant install type'
+        type: choice
+        options: [docker, haos]
+        default: docker
+      server:
+        description: 'live only: server mode (app requires haos; oauth requires docker)'
+        type: choice
+        options: [standalone, embedded, app, oauth]
+        default: embedded
+      embedded_runtime:
+        description: 'live only: embedded implementation; native requires server=embedded'
+        type: choice
+        options: [legacy, native]
+        default: legacy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-migration-${{ github.ref }}-${{ inputs.target || 'native' }}-${{ inputs.published_tag || 'candidate' }}-${{ inputs.track_ref || 'self' }}-${{ inputs.platform || 'matrix' }}-${{ inputs.server || 'default' }}-${{ inputs.embedded_runtime || 'legacy' }}
+  cancel-in-progress: true
+
+jobs:
+  select-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      route: ${{ steps.select.outputs.route }}
+    steps:
+      - name: Validate the requested qualification before starting jobs
+        id: select
+        env:
+          TARGET: ${{ inputs.target || 'native' }}
+          PUBLISHED_TAG: ${{ inputs.published_tag }}
+          TRACK_REF: ${{ inputs.track_ref }}
+          PUBLIC_KEY: ${{ inputs.public_key }}
+          MINUTES: ${{ inputs.minutes }}
+          SERVER: ${{ inputs.server }}
+          E2E_EMBEDDED_RUNTIME: ${{ inputs.embedded_runtime || 'legacy' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          target, tag = os.environ["TARGET"], os.environ["PUBLISHED_TAG"]
+          if target not in {"native", "hacs_owners", "protocol", "live"}:
+              raise SystemExit("Unknown qualification target")
+          if target != "native" and tag:
+              raise SystemExit("published_tag is only valid with target=native")
+          ref, key = os.environ["TRACK_REF"], os.environ["PUBLIC_KEY"]
+          runtime = os.environ.get("E2E_EMBEDDED_RUNTIME", "legacy")
+          if runtime not in {"legacy", "native"}:
+              raise SystemExit("Unknown embedded runtime")
+          if target == "live":
+              if os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch":
+                  raise SystemExit("live requires a manual workflow dispatch")
+              if os.environ["GITHUB_REPOSITORY"] == "homeassistant-ai/ha-mcp":
+                  raise SystemExit("live must run on a fork")
+              if not ref.strip() or not key.strip():
+                  raise SystemExit("live requires track_ref and public_key")
+              if runtime == "native" and os.environ.get("SERVER", "embedded") != "embedded":
+                  raise SystemExit("native requires server=embedded")
+              minutes = os.environ["MINUTES"]
+              if not minutes.isascii() or not minutes.isdecimal() or not 1 <= int(minutes) <= 330:
+                  raise SystemExit("live minutes must be an integer from 1 to 330")
+          elif ref or key or runtime != "legacy":
+              raise SystemExit("track_ref, public_key and embedded_runtime are only valid with target=live")
+          route = "published" if tag else target
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"route={route}\n")
+          PY
+
+  hacs_owners:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'hacs_owners' }}
+    uses: ./.github/workflows/native-hacs-owner-qualification.yml
+
+  protocol:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'protocol' }}
+    uses: ./.github/workflows/native-protocol-comparison.yml
+
+  live:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'live' }}
+    uses: ./.github/workflows/dev-ha-env.yml
+    with:
+      track_ref: ${{ inputs.track_ref }}
+      public_key: ${{ inputs.public_key }}
+      minutes: ${{ inputs.minutes }}
+      platform: ${{ inputs.platform }}
+      server: ${{ inputs.server }}
+      embedded_runtime: ${{ inputs.embedded_runtime }}
+
+  core-window:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
+    uses: ./.github/workflows/core-window.yml
+
+  unit:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked project and browser test dependencies
+        run: |
+          uv sync --frozen --group dev
+          npm ci --prefix tests/js
+      - name: Run complete unit suite
+        working-directory: tests
+        run: uv run --frozen pytest src/unit/ -n 2 --tb=short -q --maxfail=0 --junitxml=unit-results.xml
+      - name: Preserve unit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-unit-results
+          path: tests/unit-results.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package:
+    name: Native HTTP bench (current stable, amd64)
+    needs: [select-qualification, core-window]
+    if: ${{ needs.select-qualification.outputs.route == 'native' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+      HA_IMAGE_GHCR: ghcr.io/home-assistant/home-assistant:${{ needs.core-window.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+          python-version: '3.14'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: core-window-candidate
+          path: dist/native
+      - name: Validate library against Home Assistant constraints
+        run: docker build --build-arg "HA_IMAGE=$HA_IMAGE_GHCR" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+      - name: Exercise candidate on the real HA HTTP server
+        run: uv run -s tests/native/run_container.py
+      - name: Reject Core deprecations and blocking calls attributed to HA-MCP
+        run: uv run -s scripts/native_core_warnings.py tests/native/out/ha.log --output tests/native/out/core-warnings.json
+      - name: Preserve sanitized native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-container-evidence-HA${{ needs.core-window.outputs.latest }}-${{ runner.arch }}
+          path: |
+            tests/native/out/evidence.json
+            tests/native/out/candidate-install.json
+            tests/native/out/minimal-install.json
+            tests/native/out/minimal-install.log
+            tests/native/out/ha.log
+            tests/native/out/core-warnings.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Preserve HACS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-hacs-candidate-HA${{ needs.core-window.outputs.latest }}-${{ runner.arch }}
+          path: dist/native/
+          retention-days: 14
+      - name: Stop disposable HA
+        if: always()
+        run: docker rm -f ha-mcp-native-migration 2>/dev/null || true
+
+  published:
+    needs: select-qualification
+    if: ${{ needs.select-qualification.outputs.route == 'published' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+      PUBLISHED_TAG: ${{ inputs.published_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+          python-version: '3.14'
+      - name: Verify publicly available assets against this checkout
+        run: uv run --locked -s scripts/native_published_assets.py fetch --tag "$PUBLISHED_TAG" --repository "$GITHUB_REPOSITORY"
+      - name: Build Core without preinstalling the published wheel
+        run: docker build --target published --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)" --build-arg "RELEASE_REPOSITORY=$GITHUB_REPOSITORY" -f tests/native/Dockerfile -t ha-mcp-native-candidate .
+      - name: Exercise managed installation and the complete existing Core bench
+        run: uv run -s tests/native/run_container.py --published-tag "$PUBLISHED_TAG"
+      - name: Preserve published-install qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-published-container-evidence
+          path: |
+            tests/native/out/evidence.json
+            tests/native/out/published-install.json
+            tests/native/out/ha.log
+            dist/native/native-build.json
+            dist/native/published-verification.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stop disposable HA
+        if: always()
+        run: docker rm -f ha-mcp-native-migration 2>/dev/null || true

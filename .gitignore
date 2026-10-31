@@ -60,6 +60,8 @@ htmlcov/
 
 # Test environment runtime data
 tests/haconfig/
+tests/native/out/
+tests/native/.ha-test/
 
 # Test WIP files for review
 tests/WIP/
