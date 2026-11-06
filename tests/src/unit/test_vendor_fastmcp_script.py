@@ -209,11 +209,36 @@ def test_patch_fails_loudly_when_traceback_suppression_changes_shape():
         vendor.patch_package("fastmcp", "utilities/logging.py", "x = 1\n", _PINS)
 
 
-def test_stage_package_refuses_an_unpatched_package_lookup(tmp_path):
+def test_rich_unicode_loader_uses_private_tables_and_rejects_source_drift() -> None:
+    source = 'return import_module(module_name, "rich._unicode_data")\n'
+    patched = vendor.patch_package("rich", "_unicode_data/__init__.py", source, _PINS)
+    assert (
+        patched
+        == 'return import_module(module_name, "ha_mcp._vendor.rich._unicode_data")\n'
+    )
+    with pytest.raises(SystemExit, match="unicode table loader changed shape"):
+        vendor.patch_package("rich", "_unicode_data/__init__.py", "changed\n", _PINS)
+
+
+def test_rich_absolute_and_dynamic_imports_stay_private() -> None:
+    source = (
+        'from rich.console import Console\nimport rich\nimport_module("rich.cells")\n'
+    )
+    rewritten = vendor.rewrite_imports(source)
+    assert rewritten == (
+        "from ha_mcp._vendor.rich.console import Console\n"
+        "from ha_mcp._vendor import rich\n"
+        'import_module("ha_mcp._vendor.rich.cells")\n'
+    )
+    assert vendor.remaining_vendored_imports(rewritten) == []
+
+
+@pytest.mark.parametrize("lookup", ["mcp", "rich"])
+def test_stage_package_refuses_an_unpatched_package_lookup(tmp_path, lookup):
     spec = vendor.VendoredPackage("mcp", "mcp")
     wheel = _wheel(
         {
-            "mcp/__init__.py": 'import importlib.util\nimportlib.util.find_spec("mcp")\n',
+            "mcp/__init__.py": f'import importlib.util\nimportlib.util.find_spec("{lookup}")\n',
             "mcp-8.8.8.dist-info/METADATA": "",
         }
     )
@@ -288,7 +313,8 @@ def test_main_leaves_live_trees_untouched_when_a_download_fails(tmp_path, monkey
     vendor_dir = tmp_path / "_vendor"
     vendor_dir.mkdir()
     (vendor_dir / "requirements.txt").write_text(
-        "fastmcp-slim==9.9.9\nmcp==8.8.8\nmcp-types==8.8.8\n", encoding="utf-8"
+        "fastmcp-slim==9.9.9\nmcp==8.8.8\nmcp-types==8.8.8\nrich==15.0.0\n",
+        encoding="utf-8",
     )
     for spec in vendor.PACKAGES:
         (vendor_dir / spec.package).mkdir()
@@ -305,6 +331,14 @@ def test_main_leaves_live_trees_untouched_when_a_download_fails(tmp_path, monkey
     def download_wheel(distribution, version):
         if distribution == "mcp":
             raise SystemExit("network down")
+        if distribution == "rich":
+            return _wheel(
+                {
+                    "rich/__init__.py": "",
+                    "rich-15.0.0.dist-info/METADATA": "",
+                    "rich-15.0.0.dist-info/licenses/LICENSE": "MIT",
+                }
+            )
         return good
 
     monkeypatch.setattr(vendor, "_download_wheel", download_wheel)

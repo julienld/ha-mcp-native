@@ -63,7 +63,10 @@ def _client(
     replies: dict[str, Any] | None = None,
     states: dict[str, dict[str, Any]] | None = None,
 ) -> MagicMock:
-    """A client answering by WebSocket command type and entity_id."""
+    """Answer zone commands and the registry reads shared with helper tests.
+
+    Single-entry overrides seed bulk reads unless the caller supplies a list.
+    """
     answers: dict[str, Any] = {
         "config/entity_registry/list": {"success": True, "result": REGISTRY},
         "zone/list": {"success": True, "result": [OFFICE]},
@@ -77,6 +80,18 @@ def _client(
         },
     }
     answers.update(replies or {})
+    if (
+        replies
+        and "config/entity_registry/get" in replies
+        and "config/entity_registry/list" not in replies
+    ):
+        reply = replies["config/entity_registry/get"]
+        row = reply.get("result") if isinstance(reply, dict) else None
+        if isinstance(row, dict) and row.get("platform") != "zone":
+            answers["config/entity_registry/list"] = {
+                "success": True,
+                "result": [*REGISTRY, row],
+            }
     known = {"zone.office": {"entity_id": "zone.office", "attributes": {}}}
     known.update(states or {})
 
@@ -107,6 +122,21 @@ def _sent(client: MagicMock, kind: str) -> list[dict[str, Any]]:
     ]
 
 
+async def test_registry_connection_failure_prevents_zone_deletion() -> None:
+    client = _client(
+        {
+            "config/entity_registry/list": HomeAssistantConnectionError(
+                "registry unavailable"
+            )
+        }
+    )
+    with pytest.raises(ToolError) as error:
+        await ZoneTools(client).ha_remove_zone(zone_id="office")
+    assert _error(error)["code"] != "RESOURCE_NOT_FOUND"
+    assert "registry unavailable" in _error(error)["message"]
+    assert not _sent(client, "zone/delete")
+
+
 def _error(exc_info: pytest.ExceptionInfo[ToolError]) -> dict[str, Any]:
     return json.loads(str(exc_info.value))["error"]  # type: ignore[no-any-return]
 
@@ -121,7 +151,7 @@ def registered() -> AsyncMock:
     return AsyncMock(return_value=True)
 
 
-_FETCH_SCHEMAS = "ha_mcp.tools.config_helpers.icon_route.fetch_helper_schemas"
+_FETCH_SCHEMAS = "ha_mcp.tools.component_helper_collections.fetch_helper_schemas"
 
 
 @pytest.fixture(autouse=True)
@@ -133,23 +163,19 @@ def _no_component(removed: AsyncMock, registered: AsyncMock) -> Iterator[None]:
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "ha_mcp.tools.config_helpers.update.read_stored_helper_item",
+            "ha_mcp.tools.component_helper_collections.read_stored_helper_item",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "ha_mcp.tools.config_helpers.create.write_helper_item",
+            "ha_mcp.tools.component_helper_collections.write_helper_item",
             new=AsyncMock(return_value=None),
         ),
         patch(_FETCH_SCHEMAS, new=AsyncMock(return_value=None)),
         patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new=registered,
         ),
-        patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
-            new=AsyncMock(return_value=True),
-        ),
-        patch("ha_mcp.tools.tools_zones.wait_for_entity_removed", new=removed),
+        patch("ha_mcp.tools.ws_waiters.wait_for_entity_removed", new=removed),
     ):
         yield
 

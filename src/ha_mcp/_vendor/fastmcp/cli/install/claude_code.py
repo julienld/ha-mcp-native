@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
-from rich import print
+from ha_mcp._vendor.rich import print
 
 from ha_mcp._vendor.fastmcp.utilities.logging import get_logger
 from ha_mcp._vendor.fastmcp.utilities.mcp_server_config.v1.environments.uv import UVEnvironment

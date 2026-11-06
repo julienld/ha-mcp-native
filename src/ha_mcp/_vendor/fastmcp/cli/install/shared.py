@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from pydantic import ValidationError
-from rich import print
+from ha_mcp._vendor.rich import print
 
 from ha_mcp._vendor.fastmcp.utilities.logging import get_logger
 from ha_mcp._vendor.fastmcp.utilities.mcp_server_config import MCPServerConfig

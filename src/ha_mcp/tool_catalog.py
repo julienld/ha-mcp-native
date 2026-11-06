@@ -90,8 +90,14 @@ class ToolCatalogInstructionsMiddleware(Middleware):
     (2026-07-28) both carry the instructions.
     """
 
-    def __init__(self, instructions_for: Callable[[CatalogMode], str]) -> None:
+    def __init__(
+        self,
+        instructions_for: Callable[[CatalogMode], str],
+        *,
+        catalog_mode_for: Callable[[], CatalogMode] = current_catalog_mode,
+    ) -> None:
         self._instructions_for = instructions_for
+        self._catalog_mode_for = catalog_mode_for
 
     async def on_initialize(
         self,
@@ -102,7 +108,7 @@ class ToolCatalogInstructionsMiddleware(Middleware):
         if result is None:
             return None
         return result.model_copy(
-            update={"instructions": self._instructions_for(current_catalog_mode())}
+            update={"instructions": self._instructions_for(self._catalog_mode_for())}
         )
 
     async def on_discover(
@@ -114,7 +120,7 @@ class ToolCatalogInstructionsMiddleware(Middleware):
         if not isinstance(result, mt.DiscoverResult):
             return result
         return result.model_copy(
-            update={"instructions": self._instructions_for(current_catalog_mode())}
+            update={"instructions": self._instructions_for(self._catalog_mode_for())}
         )
 
 
