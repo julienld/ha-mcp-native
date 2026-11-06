@@ -155,7 +155,7 @@ class TestPhantomAreaIdRejected:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -182,7 +182,7 @@ class TestPhantomLabelRejected:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -208,7 +208,7 @@ class TestPhantomCategoryRejected:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -237,7 +237,7 @@ class TestExistingIdsPass:
             )
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -266,7 +266,7 @@ class TestEmptyStringAreaIdSkipsValidation:
             side_effect=_make_ws_handler(area_ids=[])
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -306,7 +306,7 @@ class TestPhantomRejectedAgainstEmptyRegistry:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -328,7 +328,7 @@ class TestPhantomRejectedAgainstEmptyRegistry:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -350,7 +350,7 @@ class TestPhantomRejectedAgainstEmptyRegistry:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -421,7 +421,7 @@ class TestUnreadableRegistryFailsClosed:
         )
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),

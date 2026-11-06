@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..client.rest_client import HomeAssistantClient
+from ..runtime.module_selection import parse_enabled_modules
 
 logger = logging.getLogger(__name__)
 
@@ -78,24 +79,11 @@ class _ServerLike(Protocol):
 
 
 # Preset module groups for common use cases
-MODULE_PRESETS = {
-    "automation": [
-        "tools_config_automations",
-        "tools_config_scripts",
-        "tools_traces",
-        "tools_blueprints",
-        "tools_search",  # Useful for finding entities in automations
-    ],
-}
 
 # Module splits: a configured legacy module name keeps enabling every module
 # its tools moved to, so an existing ENABLED_TOOL_MODULES list keeps the same
 # tool surface across upgrades. The legacy name itself stays valid — it still
 # names a real (smaller) module.
-MODULE_SPLIT_EXPANSIONS = {
-    # ha_get_logs moved out of tools_utility in the #2279 split.
-    "tools_utility": {"tools_logs"},
-}
 
 
 class ToolsRegistry:
@@ -138,23 +126,7 @@ class ToolsRegistry:
         return self._device_tools
 
     def _get_enabled_module_list(self) -> set[str] | None:
-        """Parse enabled_modules config into a set of module names.
-
-        Returns None if all modules should be enabled.
-        """
-        if self._enabled_modules.lower() == "all":
-            return None
-
-        # Check for preset names
-        if self._enabled_modules.lower() in MODULE_PRESETS:
-            return set(MODULE_PRESETS[self._enabled_modules.lower()])
-
-        # Parse comma-separated list
-        modules = {m.strip() for m in self._enabled_modules.split(",") if m.strip()}
-        for legacy, successors in MODULE_SPLIT_EXPANSIONS.items():
-            if legacy in modules:
-                modules |= successors
-        return modules if modules else None
+        return parse_enabled_modules(self._enabled_modules)
 
     def _discover_tool_modules(self) -> list[str]:
         """Discover tool module names without importing them.
@@ -312,3 +284,8 @@ class ToolsRegistry:
             len(failed),
             ", ".join(name for name, _ in failed),
         )
+
+
+__all__ = [
+    "ToolsRegistry",
+]

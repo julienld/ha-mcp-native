@@ -1,10 +1,6 @@
-"""
-Unit tests for module-level helpers in tools_integrations and
-IntegrationTools.ha_remove_helpers_integrations dispatch.
-"""
+"""Integration dispatch and option-schema contracts."""
 
 import json
-from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,15 +11,13 @@ from ha_mcp.client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantConnectionError,
 )
-from ha_mcp.tools.config_entry_flow_walker import ReconfigureStatus
-from ha_mcp.tools.config_entry_identity import ReconfigureIdentity
-from ha_mcp.tools.config_entry_reconfigure import PreparedReconfigure
-from ha_mcp.tools.integration_reconfigure import ReconfigureRunner
 from ha_mcp.tools.tools_integrations import (
     IntegrationTools,
     fetch_entry_options_with_status,
     options_from_form_flow,
 )
+
+from ._helper_removal_reads import stored_removal_images  # noqa: F401 - shared fixture
 
 # Core's <type>/list answers without the target, so stored_helper_target
 # leaves it to the registry lookup a test pins.
@@ -903,7 +897,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(return_value=diag_payload),
             ) as mock_fetch,
         ):
@@ -911,8 +905,9 @@ class TestGetIntegrationDiagnostics:
                 entry_id="entry_abc", include_diagnostics=True
             )
         assert result["diagnostics"] == diag_payload
+        assert mock_fetch.await_args.args[0].backend.client is client
         mock_fetch.assert_awaited_once_with(
-            client,
+            mock_fetch.await_args.args[0],
             "entry_abc",
             None,
             fields=None,
@@ -934,7 +929,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(return_value={"data": {}}),
             ) as mock_fetch,
         ):
@@ -943,8 +938,9 @@ class TestGetIntegrationDiagnostics:
                 include_diagnostics=True,
                 device_id="dev_xyz",
             )
+        assert mock_fetch.await_args.args[0].backend.client is client
         mock_fetch.assert_awaited_once_with(
-            client,
+            mock_fetch.await_args.args[0],
             "entry_abc",
             "dev_xyz",
             fields=None,
@@ -965,7 +961,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -991,7 +987,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -1015,7 +1011,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value=list_payload),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -1038,7 +1034,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(return_value={"data": {}}),
             ) as mock_fetch,
         ):
@@ -1048,8 +1044,9 @@ class TestGetIntegrationDiagnostics:
                 diagnostics_fields='["home_assistant", "issues"]',
                 diagnostics_truncate_at_bytes=15000,
             )
+        assert mock_fetch.await_args.args[0].backend.client is client
         mock_fetch.assert_awaited_once_with(
-            client,
+            mock_fetch.await_args.args[0],
             "entry_abc",
             None,
             fields=["home_assistant", "issues"],
@@ -1072,7 +1069,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"success": True, "entry_id": "entry_abc"}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(return_value={"data": {}}),
             ) as mock_fetch,
         ):
@@ -1083,8 +1080,9 @@ class TestGetIntegrationDiagnostics:
                 diagnostics_data_offset=5,
                 diagnostics_data_limit=10,
             )
+        assert mock_fetch.await_args.args[0].backend.client is client
         mock_fetch.assert_awaited_once_with(
-            client,
+            mock_fetch.await_args.args[0],
             "entry_abc",
             None,
             fields=None,
@@ -1107,7 +1105,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"entries": [], "count": 0}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -1130,7 +1128,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"entries": [], "count": 0}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -1155,7 +1153,7 @@ class TestGetIntegrationDiagnostics:
                 new=AsyncMock(return_value={"entries": [], "count": 0}),
             ),
             patch(
-                "ha_mcp.tools.tools_integrations.fetch_integration_diagnostics",
+                "ha_mcp.runtime.integration_reads.fetch_integration_diagnostics",
                 new=AsyncMock(),
             ) as mock_fetch,
         ):
@@ -1448,7 +1446,7 @@ class TestFetchEntryOptionsWithStatus:
         client.abort_options_flow = AsyncMock()
 
         with patch(
-            "ha_mcp.tools.tools_integrations.options_from_form_flow",
+            "ha_mcp.runtime.integration_inspection.options_from_form_flow",
             side_effect=RuntimeError("parse blew up"),
         ):
             options, ok = await fetch_entry_options_with_status(client, "entry_p")
@@ -1506,7 +1504,7 @@ class TestOptionsProbeFailureWarnings:
         tools = IntegrationTools(client)
 
         with patch(
-            "ha_mcp.tools.tools_integrations.get_logger_levels",
+            "ha_mcp.runtime.integration_entries.get_logger_levels",
             new=AsyncMock(return_value={}),
         ):
             resp = await tools._get_single_entry(
@@ -1530,7 +1528,7 @@ class TestOptionsProbeFailureWarnings:
         tools = IntegrationTools(client)
 
         with patch(
-            "ha_mcp.tools.tools_integrations.get_logger_levels",
+            "ha_mcp.runtime.integration_entries.get_logger_levels",
             new=AsyncMock(return_value={}),
         ):
             resp = await tools._get_single_entry(
@@ -1547,7 +1545,7 @@ class TestOptionsProbeFailureWarnings:
 
     async def test_list_aggregates_probe_failures_into_one_warning(self) -> None:
         client = MagicMock()
-        client._request = AsyncMock(
+        client.list_config_entries = AsyncMock(
             return_value=[self._entry("entry_good"), self._entry("entry_bad")]
         )
 
@@ -1561,7 +1559,7 @@ class TestOptionsProbeFailureWarnings:
         tools = IntegrationTools(client)
 
         with patch(
-            "ha_mcp.tools.tools_integrations.get_logger_levels",
+            "ha_mcp.runtime.integration_list.get_logger_levels",
             new=AsyncMock(return_value={}),
         ):
             resp = await tools._list_entries(None, None, True, None, 50, 0)
@@ -1575,13 +1573,13 @@ class TestOptionsProbeFailureWarnings:
 
     async def test_list_with_no_failures_has_no_warnings(self) -> None:
         client = MagicMock()
-        client._request = AsyncMock(return_value=[self._entry("entry_good")])
+        client.list_config_entries = AsyncMock(return_value=[self._entry("entry_good")])
         client.start_options_flow = AsyncMock(return_value=self._form_flow("f1"))
         client.abort_options_flow = AsyncMock()
         tools = IntegrationTools(client)
 
         with patch(
-            "ha_mcp.tools.tools_integrations.get_logger_levels",
+            "ha_mcp.runtime.integration_list.get_logger_levels",
             new=AsyncMock(return_value={}),
         ):
             resp = await tools._list_entries(None, None, True, None, 50, 0)
@@ -1777,390 +1775,3 @@ class TestIncludeKnxProject:
 
         assert result.get("warnings")
         assert any("include_knx_project" in w for w in result["warnings"])
-
-
-class TestSetIntegrationModes:
-    """Unit tests for ha_set_integration mode routing (issue #1814).
-
-    The three modes — enable/disable, add (config flow), update options
-    (options flow) — are mutually exclusive; the flow drivers themselves
-    are covered by test_flow_error_parsing and the e2e suite, so these
-    tests pin only the routing and parameter-validation layer.
-    """
-
-    @pytest.fixture
-    def mock_client(self):
-        client = MagicMock(get_config_entry=AsyncMock(return_value={"domain": "hue"}))
-        client.send_websocket_message = AsyncMock(
-            return_value={"success": True, "result": {"require_restart": False}}
-        )
-        client.start_config_flow = AsyncMock()
-        client.start_options_flow = AsyncMock()
-        return client
-
-    @pytest.fixture
-    def tools(self, mock_client):
-        return IntegrationTools(mock_client)
-
-    async def _assert_invalid(self, coro, fragment: str):
-        with pytest.raises(ToolError) as exc_info:
-            _ = await coro
-        err = json.loads(str(exc_info.value))
-        assert err["success"] is False
-        assert err["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
-        assert fragment in err["error"]["message"], err["error"]["message"]
-
-    # === Mutual exclusion ===
-
-    async def test_domain_and_entry_id_rejected(self, tools, mock_client):
-        await self._assert_invalid(
-            tools.ha_set_integration(entry_id="abc", domain="hue"),
-            "not both",
-        )
-        mock_client.start_config_flow.assert_not_called()
-        mock_client.send_websocket_message.assert_not_called()
-
-    async def test_enabled_and_domain_rejected(self, tools, mock_client):
-        await self._assert_invalid(
-            tools.ha_set_integration(domain="hue", enabled=True),
-            "mutually exclusive",
-        )
-        mock_client.start_config_flow.assert_not_called()
-
-    async def test_enabled_and_config_rejected(self, tools, mock_client):
-        await self._assert_invalid(
-            tools.ha_set_integration(entry_id="abc", enabled=True, config={"x": 1}),
-            "mutually exclusive",
-        )
-        mock_client.send_websocket_message.assert_not_called()
-        mock_client.start_options_flow.assert_not_called()
-
-    # === Nothing-to-do guards ===
-
-    async def test_no_arguments_rejected(self, tools):
-        await self._assert_invalid(tools.ha_set_integration(), "Nothing to do")
-
-    async def test_entry_id_alone_rejected(self, tools):
-        await self._assert_invalid(
-            tools.ha_set_integration(entry_id="abc"), "Nothing to do"
-        )
-
-    async def test_reconfigure_only_parameters_are_rejected_in_options_mode(
-        self, tools
-    ):
-        """Identity guards and confirmation must not be silently ignored."""
-        with (
-            patch(
-                "ha_mcp.tools.tools_integrations.update_config_entry_options",
-                new=AsyncMock(return_value={"success": True}),
-            ) as options_mock,
-            pytest.raises(ToolError) as exc_info,
-        ):
-            await tools.ha_set_integration(
-                entry_id="abc",
-                config={"scan_interval": 30},
-                expected_device_id="device-1",
-            )
-
-        err = json.loads(str(exc_info.value))
-        assert err["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
-        assert "reconfigure" in err["error"]["message"].lower()
-        options_mock.assert_not_awaited()
-
-    async def test_reconfigure_only_parameters_rejected_outside_reconfigure_mode(
-        self, tools
-    ):
-        """The identity guards must not ride an unguarded options update."""
-        with (
-            patch(
-                "ha_mcp.tools.tools_integrations.update_config_entry_options",
-                new=AsyncMock(return_value={"success": True}),
-            ) as options_mock,
-            pytest.raises(ToolError) as exc_info,
-        ):
-            await tools.ha_set_integration(
-                entry_id="abc",
-                config={"scan_interval": 30},
-                expected_unique_id="unique-1",
-                confirm_token="sha256:whatever",
-            )
-
-        err = json.loads(str(exc_info.value))
-        assert err["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
-        assert "reconfigure" in err["error"]["message"].lower()
-        assert err["rejected_parameters"] == ["confirm_token", "expected_unique_id"]
-        options_mock.assert_not_awaited()
-
-    async def test_set_integration_has_explicit_safety_annotations(self, tools):
-        """The unified tool advertises its state-changing safety semantics."""
-        annotations = tools.ha_set_integration.__fastmcp__.annotations
-        assert annotations.open_world_hint is False
-        assert annotations.destructive_hint is True
-        assert annotations.read_only_hint is False
-        assert annotations.idempotent_hint is False
-
-    # === Reconfigure mode ===
-
-    async def test_reconfigure_mode_delegates_to_shared_handler(
-        self, tools, mock_client
-    ):
-        sentinel = {"success": True, "operation": "reconfigure"}
-        with patch.object(
-            ReconfigureRunner,
-            "run",
-            new=AsyncMock(return_value=sentinel),
-        ) as run_mock:
-            result = await tools.ha_set_integration(
-                entry_id="abc",
-                reconfigure=True,
-                config={"host": "192.0.2.170"},
-                expected_device_id="device-1",
-                confirm_token="sha256:preview",
-            )
-        run_mock.assert_awaited_once_with(
-            "abc",
-            config={"host": "192.0.2.170"},
-            expected_device_id="device-1",
-            expected_unique_id=None,
-            expected_mac=None,
-            expected_entity_ids=None,
-            confirm_token="sha256:preview",
-        )
-        assert result is sentinel
-
-    @pytest.mark.parametrize("confirm_token", ["sha256:stale", "not-a-token"])
-    async def test_reconfigure_rejects_untrusted_token_without_snapshot(
-        self, tools, confirm_token
-    ):
-        """A token that does not match current state must not snapshot.
-
-        The backup boundary sits behind token validation, so a rejected
-        confirmation leaves no phantom `scope="edits"` entry burning the
-        per-entity retention.
-        """
-        entry = {
-            "entry_id": "abc",
-            "domain": "shelly",
-            "supports_reconfigure": True,
-        }
-        identity = ReconfigureIdentity()
-        with (
-            patch(
-                "ha_mcp.tools.integration_reconfigure.prepare_reconfigure_request",
-                new=AsyncMock(
-                    return_value=PreparedReconfigure(
-                        entry_id="abc",
-                        entry=entry,
-                        flow_config={"host": "192.0.2.170"},
-                        identity=identity,
-                        expected_identity={
-                            "device_id": None,
-                            "unique_id": None,
-                            "mac": None,
-                            "entity_ids": [],
-                        },
-                    )
-                ),
-            ),
-            patch(
-                "ha_mcp.tools.integration_reconfigure._reconfigure_preflight_token",
-                return_value="sha256:current",
-            ),
-            patch(
-                "ha_mcp.tools.auto_backup.get_global_settings",
-                return_value=SimpleNamespace(enable_auto_backup=True),
-            ),
-            patch(
-                "ha_mcp.tools.auto_backup._capture_pre_write_snapshot",
-                new=AsyncMock(),
-            ) as capture_mock,
-            pytest.raises(ToolError) as exc_info,
-        ):
-            await tools.ha_set_integration(
-                entry_id="abc",
-                reconfigure=True,
-                config={"host": "192.0.2.170"},
-                confirm_token=confirm_token,
-            )
-
-        capture_mock.assert_not_awaited()
-        payload = json.loads(str(exc_info.value))
-        assert payload["status"] == ReconfigureStatus.STALE_PREFLIGHT
-        # A stale token must force a fresh preflight, so the rejection must not
-        # hand the caller a usable token to resubmit with.
-        assert "confirm_token" not in payload
-        assert "confirm_token" not in payload.get("context", {})
-
-    async def test_reconfigure_mode_reuses_shared_preflight_validation(
-        self, tools, mock_client
-    ):
-        entry = {
-            "entry_id": "abc",
-            "domain": "shelly",
-            "title": "Kitchen",
-            "supports_reconfigure": True,
-        }
-        identity = ReconfigureIdentity()
-        with (
-            patch(
-                "ha_mcp.tools.integration_reconfigure.prepare_reconfigure_request",
-                new=AsyncMock(
-                    return_value=PreparedReconfigure(
-                        entry_id="abc",
-                        entry=entry,
-                        flow_config={"host": "192.0.2.170"},
-                        identity=identity,
-                        expected_identity={
-                            "device_id": None,
-                            "unique_id": None,
-                            "mac": None,
-                            "entity_ids": [],
-                        },
-                    )
-                ),
-            ) as prepare_mock,
-        ):
-            preview = await ReconfigureRunner(mock_client).run(
-                "abc",
-                config={"host": "192.0.2.170"},
-                expected_device_id="device-1",
-            )
-
-        assert preview["success"] is True
-        assert "preview" not in preview  # status is the single signal
-        assert preview["status"] == ReconfigureStatus.PREVIEW
-        assert preview["confirm_token"].startswith("sha256:")
-        prepare_mock.assert_awaited_once_with(
-            mock_client,
-            "abc",
-            config={"host": "192.0.2.170"},
-            expected_identity={
-                "device_id": "device-1",
-                "unique_id": None,
-                "mac": None,
-                "entity_ids": [],
-            },
-        )
-
-    async def test_reconfigure_mode_passes_prepared_identity_to_apply(
-        self, tools, mock_client
-    ):
-        entry = {
-            "entry_id": "abc",
-            "domain": "shelly",
-            "title": "Kitchen",
-            "supports_reconfigure": True,
-        }
-        identity = ReconfigureIdentity(device_ids=["device-1"])
-        with (
-            patch(
-                "ha_mcp.tools.integration_reconfigure.prepare_reconfigure_request",
-                new=AsyncMock(
-                    return_value=PreparedReconfigure(
-                        entry_id="abc",
-                        entry=entry,
-                        flow_config={"host": "192.0.2.170"},
-                        identity=identity,
-                        expected_identity={
-                            "device_id": None,
-                            "unique_id": None,
-                            "mac": None,
-                            "entity_ids": [],
-                        },
-                    )
-                ),
-            ),
-            patch(
-                "ha_mcp.tools.integration_reconfigure.reconfigure_config_entry",
-                new=AsyncMock(return_value={"success": True}),
-            ) as apply_mock,
-        ):
-            preview = await ReconfigureRunner(mock_client).run(
-                "abc",
-                config={"host": "192.0.2.170"},
-                expected_device_id="device-1",
-            )
-            result = await ReconfigureRunner(mock_client).run(
-                "abc",
-                config={"host": "192.0.2.170"},
-                expected_device_id="device-1",
-                confirm_token=preview["confirm_token"],
-            )
-
-        assert result == {"success": True}
-        apply_mock.assert_awaited_once()
-        assert apply_mock.await_args is not None
-        assert apply_mock.await_args.kwargs["prepared"] == PreparedReconfigure(
-            entry_id="abc",
-            entry=entry,
-            flow_config={"host": "192.0.2.170"},
-            identity=identity,
-            expected_identity={
-                "device_id": None,
-                "unique_id": None,
-                "mac": None,
-                "entity_ids": [],
-            },
-        )
-
-    # === Mode delegation ===
-
-    async def test_add_mode_delegates_to_create_config_entry(self, tools, mock_client):
-        sentinel = {"success": True, "entry_id": "new123", "domain": "workday"}
-        with patch(
-            "ha_mcp.tools.tools_integrations.create_config_entry",
-            new=AsyncMock(return_value=sentinel),
-        ) as create_mock:
-            result = await tools.ha_set_integration(
-                domain="workday", config={"name": "Workday"}
-            )
-        create_mock.assert_awaited_once_with(
-            mock_client, "workday", {"name": "Workday"}
-        )
-        assert result is sentinel
-
-    async def test_add_mode_defaults_config_to_empty_dict(self, tools, mock_client):
-        with patch(
-            "ha_mcp.tools.tools_integrations.create_config_entry",
-            new=AsyncMock(return_value={"success": True}),
-        ) as create_mock:
-            await tools.ha_set_integration(domain="sun")
-        create_mock.assert_awaited_once_with(mock_client, "sun", {})
-
-    async def test_options_mode_delegates_to_update_config_entry_options(
-        self, tools, mock_client
-    ):
-        sentinel = {"success": True, "entry_id": "abc", "updated": True}
-        with patch(
-            "ha_mcp.tools.tools_integrations.update_config_entry_options",
-            new=AsyncMock(return_value=sentinel),
-        ) as update_mock:
-            result = await tools.ha_set_integration(
-                entry_id="abc", config={"scan_interval": 30}
-            )
-        update_mock.assert_awaited_once_with(mock_client, "abc", {"scan_interval": 30})
-        assert result is sentinel
-
-    async def test_enable_disable_mode_still_works(self, tools, mock_client):
-        result = await tools.ha_set_integration(entry_id="abc", enabled=False)
-        assert result["success"] is True
-        assert result["entry_id"] == "abc"
-        assert result["require_restart"] is False
-        mock_client.send_websocket_message.assert_awaited_once_with(
-            {
-                "type": "config_entries/disable",
-                "entry_id": "abc",
-                "disabled_by": "user",
-            }
-        )
-
-    async def test_enable_mode_sends_disabled_by_none(self, tools, mock_client):
-        result = await tools.ha_set_integration(entry_id="abc", enabled=True)
-        assert result["success"] is True
-        mock_client.send_websocket_message.assert_awaited_once_with(
-            {
-                "type": "config_entries/disable",
-                "entry_id": "abc",
-                "disabled_by": None,
-            }
-        )

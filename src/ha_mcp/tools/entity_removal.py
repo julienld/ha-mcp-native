@@ -9,7 +9,7 @@ item, so it gets no note.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..client.rest_client import (
@@ -18,17 +18,15 @@ from ..client.rest_client import (
     HomeAssistantError,
 )
 from ..errors import ErrorCode
+from ..runtime.entity_removal_values import (
+    storage_note_unread as _unread,
+)
+from ..runtime.entity_removal_values import (
+    stored_helper_removal_note,
+)
 from .config_helpers.listing import listed_items
 from .config_helpers.schemas import SIMPLE_HELPER_TYPES
 from .helpers import exception_to_structured_error
-
-
-def _unread(entity_id: str, reason: Any) -> list[str]:
-    return [
-        f"Whether {entity_id} belongs to a stored helper could not be read "
-        f"({reason}); if it does, the helper stays and Home Assistant adds its "
-        "entity again when it restarts."
-    ]
 
 
 async def _stored_helper_note(client: Any, entity_id: str) -> list[str]:
@@ -55,19 +53,7 @@ async def _stored_helper_note(client: Any, entity_id: str) -> list[str]:
         str(item.get("id")) == storage_id for item in listed_items(listed["result"])
     ):
         return []
-    remove = (
-        f"ha_remove_zone(zone_id={storage_id!r})"
-        if platform == "zone"
-        else (
-            f"ha_remove_helpers_integrations(helper_type={platform!r}, "
-            f"target={storage_id!r}, confirm=True)"
-        )
-    )
-    return [
-        f"{entity_id} is the entity of the stored {platform} {storage_id!r}, "
-        "which stays: Home Assistant adds its entity again when it restarts. "
-        f"To remove the {platform} itself, use {remove}."
-    ]
+    return stored_helper_removal_note(entity_id, platform, storage_id)
 
 
 async def remove_registry_entry(
@@ -83,7 +69,11 @@ async def remove_registry_entry(
 
 
 async def remove_registry_entries(
-    client: Any, entity_ids: list[str], error_text: Callable[[dict[str, Any]], str]
+    client: Any,
+    entity_ids: list[str],
+    error_text: Callable[[dict[str, Any]], str],
+    *,
+    remove: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Remove each id in turn; each lands in ``removed``, ``skipped`` (Core's
     not_found: already absent) or ``errors``. A lost connection stops the run
@@ -95,8 +85,12 @@ async def remove_registry_entries(
     not_attempted: list[str] = []
     for index, eid in enumerate(entity_ids):
         try:
-            result = await client.send_websocket_message(
-                {"type": "config/entity_registry/remove", "entity_id": eid}
+            result = (
+                await remove(eid)
+                if remove is not None
+                else await client.send_websocket_message(
+                    {"type": "config/entity_registry/remove", "entity_id": eid}
+                )
             )
         except HomeAssistantConnectionError as exc:
             # CONNECTION_FAILED, CONNECTION_TIMEOUT for a timed-out command,

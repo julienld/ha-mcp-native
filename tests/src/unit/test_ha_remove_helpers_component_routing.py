@@ -50,6 +50,7 @@ from ._component_routing_helpers import (
     patch_ws,
     patch_ws_establish_failure,
 )
+from ._helper_removal_reads import stored_removal_images  # noqa: F401 - shared fixture
 
 _CAPS_REGISTRY = {
     "schema_version": 1,
@@ -99,6 +100,9 @@ class RoutingClient:
 
     async def get_entity_state(self, entity_id: str) -> dict[str, Any]:
         return {"state": "on"}
+
+    async def get_config_entry(self, entry_id: str) -> dict[str, Any]:
+        return {"entry_id": entry_id, "domain": "utility_meter"}
 
     async def delete_config_entry(self, entry_id: str) -> dict[str, Any]:
         self.deleted_entries.append(entry_id)
@@ -538,7 +542,7 @@ async def test_set_helper_wait_resolves_via_component_no_dump_no_sleep() -> None
     with (
         patch_ws(ws, component_registry_lookup),
         patch(
-            "ha_mcp.tools.config_helpers.flow.asyncio.sleep", new_callable=AsyncMock
+            "ha_mcp.runtime.flows.helpers.asyncio.sleep", new_callable=AsyncMock
         ) as sleep_mock,
     ):
         entities, warnings = await _wait_for_flow_entities(

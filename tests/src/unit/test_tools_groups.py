@@ -17,6 +17,7 @@ from ha_mcp.backup_manager import _restore_group
 from ha_mcp.client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantAuthError,
+    HomeAssistantClient,
     HomeAssistantCommandNotSent,
     HomeAssistantConnectionError,
 )
@@ -303,14 +304,35 @@ class TestServiceFailures:
         assert _error(exc_info)["code"] == "SERVICE_CALL_FAILED"
         mock_client.send_websocket_message.assert_not_called()
 
-    async def test_lost_reply_says_the_write_may_have_landed(self, tools, mock_client):
-        mock_client.send_websocket_message = AsyncMock(
-            side_effect=HomeAssistantConnectionError("connection closed")
-        )
+    async def test_lost_reply_says_the_write_may_have_landed(
+        self, tools: GroupTools, mock_client: Any
+    ) -> None:
+        """The real bridge must neither replay nor misclassify a landed group write."""
+        effects: list[dict[str, Any]] = []
 
-        with pytest.raises(ToolError) as exc_info:
+        async def mutate_then_disconnect(command: str, **arguments: Any) -> None:
+            assert command == "call_service"
+            effects.append(arguments)
+            raise HomeAssistantConnectionError("reply lost: 403 Forbidden")
+
+        mock_client.send_websocket_message = (
+            HomeAssistantClient.send_websocket_message.__get__(mock_client)
+        )
+        ws = MagicMock()
+        ws.send_command = AsyncMock(side_effect=mutate_then_disconnect)
+        with (
+            patch(
+                "ha_mcp.client.websocket_client.get_websocket_client",
+                new=AsyncMock(return_value=ws),
+            ) as acquire,
+            patch("ha_mcp.client.rest_client.asyncio.sleep", new=AsyncMock()) as sleep,
+            pytest.raises(ToolError) as exc_info,
+        ):
             await tools.ha_config_set_group(object_id="lights")
 
+        assert len(effects) == 1
+        acquire.assert_awaited_once()
+        sleep.assert_not_awaited()
         payload = json.loads(str(exc_info.value))
         assert payload["error"]["code"] == "SERVICE_CALL_FAILED"
         assert payload["write_outcome_unknown"] is True
@@ -327,15 +349,26 @@ class TestServiceFailures:
     async def test_unsent_command_is_not_reported_as_possibly_applied(
         self,
         tools: GroupTools,
-        mock_client: MagicMock,
+        mock_client: Any,
         cause: BaseException | None,
         code: str,
     ) -> None:
+        """The real bridge preserves the readiness guard's never-sent subtype."""
+        mock_client.send_websocket_message = (
+            HomeAssistantClient.send_websocket_message.__get__(mock_client)
+        )
+        ws = MagicMock()
         unsent = HomeAssistantCommandNotSent("not authenticated")
         unsent.__cause__ = cause
-        mock_client.send_websocket_message = AsyncMock(side_effect=unsent)
+        ws.send_command = AsyncMock(side_effect=unsent)
 
-        with pytest.raises(ToolError) as exc_info:
+        with (
+            patch(
+                "ha_mcp.client.websocket_client.get_websocket_client",
+                new=AsyncMock(return_value=ws),
+            ),
+            pytest.raises(ToolError) as exc_info,
+        ):
             await tools.ha_config_set_group(object_id="lights")
 
         payload = json.loads(str(exc_info.value))
