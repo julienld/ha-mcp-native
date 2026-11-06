@@ -19,7 +19,7 @@ class TestMacOSConnectionHints:
     def test_hints_appear_on_darwin_for_connection_failed(self):
         """macOS hints should appear for CONNECTION_FAILED on darwin."""
         error = HomeAssistantConnectionError("All connection attempts failed")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -29,7 +29,7 @@ class TestMacOSConnectionHints:
     def test_hints_appear_on_darwin_for_connection_timeout(self):
         """macOS hints should appear for CONNECTION_TIMEOUT on darwin."""
         error = HomeAssistantConnectionError("Request timeout: timed out")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -39,7 +39,7 @@ class TestMacOSConnectionHints:
     def test_hints_absent_on_linux(self):
         """macOS hints should NOT appear on non-darwin platforms."""
         error = HomeAssistantConnectionError("All connection attempts failed")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "linux"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -49,7 +49,7 @@ class TestMacOSConnectionHints:
     def test_hints_absent_for_non_connection_errors(self):
         """macOS hints should NOT appear for non-connection errors."""
         error = ValueError("invalid parameter")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -60,7 +60,7 @@ class TestMacOSConnectionHints:
         """Caller-provided suggestions should replace defaults, but macOS hints still append."""
         error = HomeAssistantConnectionError("All connection attempts failed")
         caller_suggestions = ["Custom suggestion A", "Custom suggestion B"]
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(
                 error, raise_error=False, suggestions=caller_suggestions
@@ -78,7 +78,7 @@ class TestMacOSConnectionHints:
         guidance instead of replacing it (issue #2698)."""
         error = HomeAssistantConnectionError("All connection attempts failed")
         caller_suggestions = ["Custom suggestion"]
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "linux"
             result = exception_to_structured_error(
                 error, raise_error=False, suggestions=caller_suggestions
@@ -93,7 +93,7 @@ class TestMacOSConnectionHints:
         """Generic exceptions classified as connection errors via string matching
         should also get macOS hints."""
         error = Exception("connection refused to host")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -104,7 +104,7 @@ class TestMacOSConnectionHints:
     def test_hints_include_ssh_tunnel_suggestion(self):
         """macOS hints should include the SSH tunnel workaround."""
         error = HomeAssistantConnectionError("All connection attempts failed")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 
@@ -114,7 +114,7 @@ class TestMacOSConnectionHints:
     def test_hints_include_http_vs_https_suggestion(self):
         """macOS hints should include http vs https guidance."""
         error = HomeAssistantConnectionError("All connection attempts failed")
-        with patch("ha_mcp.tools.helpers.sys") as mock_sys:
+        with patch("ha_mcp.runtime.error_classification.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = exception_to_structured_error(error, raise_error=False)
 

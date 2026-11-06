@@ -5,7 +5,10 @@ on:
     branches: [master]
     paths:
       - 'src/ha_mcp/tools/**'
+      - 'src/ha_mcp/runtime/**'
+      - 'src/ha_mcp/tool_api/**'
       - 'scripts/extract_tools.py'
+      - 'scripts/extract_tools_shared.py'
   # Allow a manual resync against the current master tip — e.g. to recover
   # after a push race dropped a sync commit — without having to land an
   # unrelated tool change just to re-trigger.

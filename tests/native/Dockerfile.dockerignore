@@ -1,0 +1,13 @@
+*
+!dist/
+!dist/native/
+!dist/native/*.whl
+!dist/native/ha_mcp_tools.zip
+!dist/native/native-build.json
+!dist/native/published-verification.json
+!scripts/
+!scripts/native_published_assets.py
+!tests/
+!tests/native/
+!tests/native/fixtures/
+!tests/native/fixtures/**

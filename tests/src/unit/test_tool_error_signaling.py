@@ -451,7 +451,7 @@ class TestSchemaAndAuthClassification:
     async def test_registry_read_keeps_the_auth_cause(self) -> None:
         """The reconfigure registry read re-raises a connection error without
         replacing its cause, so a rejected token still classifies as auth."""
-        from ha_mcp.tools.config_entry_identity import _registry_rows
+        from ha_mcp.backends.remote_reconfigure_identity import _registry_rows
 
         rejected = HomeAssistantConnectionError("WebSocket authentication failed")
         rejected.__cause__ = HomeAssistantAuthError("WebSocket authentication failed")

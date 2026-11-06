@@ -1,10 +1,7 @@
 """Unit tests for the in-process server bring-up orchestration (issue #1527).
 
-``embedded_setup`` is the glue between the server manager and the webhook ingress:
-the background bring-up sequence, repair issues on failure (Home Assistant must
-keep running), connect-URL surfacing, teardown, and credential revocation on
-removal. The integration is always-on — the config entry existing means the
-server runs — so there is no enable/disable gate here.
+Bring-up, repair issues, connection details and cleanup for both runtimes.
+Entry wiring owns Access; this module handles its start and stop.
 
 Home Assistant / aiohttp are stubbed via ``_embedded_stubs`` (which also puts
 the component package on sys.path). The server manager and webhook
@@ -18,6 +15,7 @@ import asyncio
 import sys
 from collections.abc import Iterator
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -83,8 +81,6 @@ def _make_entry(*, options=None, data=None) -> MagicMock:
 def make_fake_manager(monkeypatch: pytest.MonkeyPatch) -> type:
     """Patch EmbeddedServerManager with a real fake class.
 
-    A real class (not a lambda/MagicMock) is required because
-    ``async_teardown_server`` does ``isinstance(manager, EmbeddedServerManager)``.
     The async methods live on the class as shared AsyncMocks so tests assert on
     ``fake_manager.async_start`` regardless of which instance the code built.
     Returns the class.
@@ -166,16 +162,6 @@ class TestBringUp:
             esetup._surface_connect_urls.call_args.kwargs["oauth_creds_active"] is False
         )
 
-    async def test_start_from_the_access_switch_reaches_the_notification_gate(
-        self, fake_manager: type
-    ) -> None:
-        hass = _make_hass()
-        entry = _make_entry()
-
-        await esetup.async_bring_up_server(hass, entry, announce=False)
-
-        assert esetup._surface_connect_urls.call_args.kwargs["announce"] is False
-
     async def test_legacy_restart_needed_files_repair(self, fake_manager, monkeypatch):
         # Review gap: every bring-up test mocked async_register_webhook with
         # restart_needed=False, so the create-issue branch of
@@ -209,7 +195,7 @@ class TestBringUp:
 
     async def test_success_starts_registers_and_surfaces(self, fake_manager):
         hass = _make_hass()
-        entry = _make_entry()
+        entry = _make_entry(options={"enable_llm_api": True})
 
         await esetup.async_bring_up_server(hass, entry)
 
@@ -287,7 +273,7 @@ class TestBringUp:
         import logging
 
         hass = _make_hass()
-        entry = _make_entry(options={esetup.OPT_ENABLE_LLM_API: False})
+        entry = _make_entry(options={"enable_llm_api": False})
 
         with caplog.at_level(logging.INFO):
             await esetup.async_bring_up_server(hass, entry)
@@ -423,6 +409,7 @@ class TestSurfaceConnectUrls:
             cloud_url="https://abc.ui.nabu.casa", local_url="http://192.168.1.5:8123"
         )
         hass = _make_hass()
+        hass.config.components = {"cloud"}
         entry = _make_entry(
             data={DATA_WEBHOOK_ID: "mcp_id", DATA_SECRET_PATH: "/private_x"},
             options={esetup.OPT_BIND_HOST: esetup.BIND_HOST_ALL},
@@ -463,6 +450,7 @@ class TestSurfaceConnectUrls:
             cloud_url="https://abc.ui.nabu.casa", local_url="http://192.168.1.5:8123"
         )
         hass = _make_hass()
+        hass.config.components = {"cloud"}
         entry = _make_entry(
             data={DATA_WEBHOOK_ID: "mcp_id", DATA_SECRET_PATH: "/p"},
             options={esetup.OPT_EXTERNAL_URL: "https://ha.example.com/"},
@@ -470,6 +458,28 @@ class TestSurfaceConnectUrls:
         urls = self._urls(hass, entry)
         assert urls[0] == "https://ha.example.com/api/webhook/mcp_id"
         assert "https://abc.ui.nabu.casa/api/webhook/mcp_id" in urls
+
+    def test_inactive_cloud_is_not_imported_and_local_webhook_stays_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import builtins
+
+        _install_network_cloud(local_url="http://192.168.1.5:8123")
+        original_import = builtins.__import__
+
+        def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "homeassistant.components.cloud":
+                raise AssertionError("Inactive Cloud must never be imported")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+        hass = _make_hass()
+        hass.config.components = set()
+        entry = _make_entry(data={DATA_WEBHOOK_ID: "mcp_id"})
+
+        urls = self._urls(hass, entry)
+
+        assert "http://192.168.1.5:8123/api/webhook/mcp_id" in urls
 
     def test_notification_links_panel_and_carries_title(self):
         # The rename commit's discoverability contract: the running
@@ -985,5 +995,5 @@ class TestComponentCompat:
         # the submodule chain is already imported — and accidentally importing
         # the real ha_mcp here poisons its in-process settings caches for
         # unrelated tests on the same xdist worker.
-        monkeypatch.setitem(sys.modules, "ha_mcp.tools.tools_filesystem", None)
+        monkeypatch.setitem(sys.modules, "ha_mcp.component_contract", None)
         assert esetup._read_min_component_version() is None

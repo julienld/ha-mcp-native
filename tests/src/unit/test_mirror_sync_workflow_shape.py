@@ -52,7 +52,7 @@ class TestMirrorSyncShape:
         assert "head_branch" in gate["env"]["TRIGGER_BRANCH"]
         assert '"$TRIGGER_BRANCH" != master' in gate["run"]
 
-    def test_gate_keys_on_the_jobs_that_publish_the_pin(self) -> None:
+    def test_gate_keys_on_the_jobs_that_publish_the_paired_assets(self) -> None:
         gate = _workflow(_MIRROR)["jobs"]["gate"]["steps"][0]["run"]
         jobs = {
             job["name"]
@@ -64,9 +64,9 @@ class TestMirrorSyncShape:
             if "name" in job
         }
         assert "Semantic Release" in jobs
-        assert "Publish PyPI (dev channel)" in jobs
+        assert "Create GitHub pre-release" in jobs
         assert 'job="Semantic Release"' in gate
-        assert 'job="Publish PyPI (dev channel)"' in gate
+        assert 'job="Create GitHub pre-release"' in gate
 
     def test_dev_leg_pins_the_version_the_dev_build_uploaded(self) -> None:
         # Recomputing the number in the mirror could name a build PyPI never
@@ -91,14 +91,15 @@ class TestMirrorSyncShape:
         )
         assert "dev_version.sh" not in resolve["run"]
 
-    def test_tags_only_after_pypi_serves_the_pin(self) -> None:
+    def test_tags_only_after_verifying_the_published_assets(self) -> None:
         names = _sync_step_names()
-        assert names.index("Stage snapshot") < names.index("Commit and push")
-        assert names.index("Commit and push") < names.index(
-            "Wait for the pinned server build on PyPI"
-        )
-        assert names.index("Wait for the pinned server build on PyPI") < names.index(
-            "Tag the mirror"
+        assert names.index(
+            "Fetch and verify the publisher's paired assets"
+        ) < names.index("Stage snapshot")
+        assert (
+            names.index("Stage snapshot")
+            < names.index("Commit and push")
+            < names.index("Tag the mirror")
         )
 
     def test_stable_leg_keeps_the_workflows_own_scripts(self) -> None:
@@ -113,7 +114,7 @@ class TestMirrorSyncShape:
         )
         stage = next(s for s in steps if s.get("name") == "Stage snapshot")
         assert "git checkout" not in resolve["run"]
-        assert '"$SRC/custom_components/ha_mcp_tools"' in stage["run"]
+        assert "stage-mirror" in stage["run"]
         # hacs.json's Home Assistant minimum ships with the snapshot's component.
         assert 'cp "$SRC/hacs.json" "$SRC/LICENSE" /tmp/mirror/' in stage["run"]
 
@@ -175,90 +176,14 @@ class TestMirrorSyncShape:
         assert result.returncode == 0, result.stderr
         assert f"version={expected}" in output.read_text().splitlines()
 
-    def test_snapshot_is_stamped(self) -> None:
+    def test_snapshot_uses_verified_archive_without_restamping(self) -> None:
         stage = next(
             step
             for step in _workflow(_MIRROR)["jobs"]["sync"]["steps"]
             if step.get("name") == "Stage snapshot"
         )
-        assert "scripts/stamp_component_version.py" in stage["run"]
-
-    def test_a_dev_build_tags_its_stamp_and_leaves_main_on_masters_component(
-        self, tmp_path: Path
-    ) -> None:
-        # The mirror's main matches master; only the dev tag's commit carries
-        # the dev stamp, as publish-dev.yml does here.
-        def git(*args: str, cwd: Path = tmp_path) -> str:
-            return subprocess.run(
-                ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-                cwd=cwd,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-
-        remote = tmp_path / "remote.git"
-        clone = tmp_path / "mirror"
-        src = tmp_path / "src"
-        git("init", "-q", "--bare", "-b", "main", str(remote))
-        git("clone", "-q", f"file://{remote}", str(clone))
-        git("commit", "-q", "--allow-empty", "-m", "previous", cwd=clone)
-        git("push", "-q", "origin", "main", cwd=clone)
-        shutil.copytree(_COMPONENT, src / "custom_components" / "ha_mcp_tools")
-        for name in ("hacs.json", "LICENSE"):
-            shutil.copy(_REPO_ROOT / name, src / name)
-        # The tag step's release notes need the main repository's history.
-        stub = tmp_path / "stub"
-        stub.mkdir()
-        (stub / "python3").write_text(
-            '#!/bin/sh\nfor last; do :; done\necho notes > "$last"\n'
-        )
-        (stub / "python3").chmod(0o755)
-        env = {
-            "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "CHANNEL": "dev",
-            "GITHUB_REPOSITORY": "o/r",
-            "SOURCE_SHA": "abc",
-            "SRC": str(src),
-            "VER": "99.0.0",
-            "PIN": "99.0.0.dev7",
-            "DIST": "ha-mcp-dev",
-            "TAG": "v99.0.0-dev.7",
-        }
-        steps = {s.get("name"): s for s in _workflow(_MIRROR)["jobs"]["sync"]["steps"]}
-
-        for name in (
-            "Stage snapshot",
-            "Commit and push",
-            "Stamp the dev snapshot",
-            "Tag the mirror",
-        ):
-            script = (
-                steps[name]["run"]
-                .replace("/tmp/mirror", str(clone))
-                .replace("${{ steps.release.outputs.pin }}", env["PIN"])
-                .replace("${{ steps.release.outputs.dist }}", env["DIST"])
-            )
-            step_env = env
-            if name == "Tag the mirror":
-                step_env = {**env, "PATH": f"{stub}:/usr/bin:/bin"}
-            result = subprocess.run(
-                ["bash", "-e", "-c", script],
-                cwd=_REPO_ROOT,
-                env=step_env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            assert result.returncode == 0, f"{name}: {result.stderr}"
-
-        manifest = "custom_components/ha_mcp_tools/manifest.json"
-        on_main = json.loads(git("show", f"main:{manifest}", cwd=remote))
-        tagged = json.loads(git("show", f"v99.0.0-dev.7:{manifest}", cwd=remote))
-        assert on_main == json.loads((_COMPONENT / "manifest.json").read_text())
-        assert tagged["version"] == "99.0.0"
-        assert "ha-mcp-dev==99.0.0.dev7" in tagged["requirements"]
+        assert "stage-mirror" in stage["run"]
+        assert "stamp_component_version.py" not in stage["run"]
 
 
 def _release_on_tag_step(name: str) -> dict[Any, Any]:
@@ -269,103 +194,31 @@ def _release_on_tag_step(name: str) -> dict[Any, Any]:
     )
 
 
-# Newest first, as the releases API lists them.
-_DEV_TAGS = ["v9.0.1-dev.1"]
-_DEV_TAGS += [f"v9.0.0-dev.{n}" for n in (1001, 1000, 999, 998, 997, 996)]
-_DEV_TAGS += ["v2.2.3-dev.423"]
-_OLD_DEV_TAGS = ["v2.2.3-dev.423", "v9.0.0-dev.996", "v9.0.0-dev.997"]
-
-
 class TestMirrorReleaseOnTag:
-    def test_keeps_as_many_dev_pre_releases_as_the_main_repository(self) -> None:
-        # Past HACS's 30-release window a stable release behind the dev
-        # builds is no longer seen, so the mirror prunes like publish-dev.yml.
-        prune = _release_on_tag_step("Keep the newest five dev pre-releases")
-        retire = _release_on_tag_step("Retire superseded dev pre-releases")
-        main_cleanup = (_WORKFLOWS / "publish-dev.yml").read_text(encoding="utf-8")
-        keep = re.compile(r"tail -n \+(\d+)")
-        assert keep.findall(prune["run"]) == keep.findall(main_cleanup)
-        # Dev tags prune; stable tags retire.
-        assert prune["if"] == retire["if"].replace("!", "")
-        names = [
-            s.get("name")
-            for s in _workflow(_RELEASE_ON_TAG)["jobs"]["release"]["steps"]
-        ]
-        assert names.index("Create release for tag") < names.index(prune["name"])
-
-    @pytest.mark.parametrize(
-        ("tags", "fail", "attempted", "succeeds"),
-        [
-            pytest.param(_DEV_TAGS, {}, _OLD_DEV_TAGS, True, id="older-builds-pruned"),
-            pytest.param(
-                _DEV_TAGS[1:],
-                {"GITHUB_REF_NAME": _DEV_TAGS[0]},
-                _OLD_DEV_TAGS,
-                True,
-                id="listing-misses-the-new-release",
-            ),
-            pytest.param(
-                [],
-                {"GITHUB_REF_NAME": _DEV_TAGS[0]},
-                [],
-                True,
-                id="first-dev-release",
-            ),
-            pytest.param(
-                _DEV_TAGS,
-                {"FAIL_DELETE": "v9.0.0-dev.996"},
-                _OLD_DEV_TAGS,
-                False,
-                id="failed-delete-still-tries-the-rest",
-            ),
-            pytest.param(_DEV_TAGS, {"FAIL_API": "1"}, [], False, id="failed-listing"),
-        ],
-    )
-    def test_prunes_the_older_dev_pre_releases(
+    def test_keeps_historical_tags_and_assets_available_for_pinned_installs(
         self,
-        tmp_path: Path,
-        tags: list[str],
-        fail: dict[str, str],
-        attempted: list[str],
-        succeeds: bool,
     ) -> None:
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        listing = tmp_path / "listing"
-        listing.write_text("".join(f"{t}\n" for t in tags))
-        deleted = tmp_path / "deleted"
-        deleted.touch()
-        fake_gh = bin_dir / "gh"
-        fake_gh.write_text(
-            "#!/bin/sh\n"
-            'case "$1 $2" in\n'
-            f'  "api --paginate") [ -n "$FAIL_API" ] && exit 1; cat {listing} ;;\n'
-            f'  "release delete") echo "$3" >> {deleted}\n'
-            '    [ "$3" = "$FAIL_DELETE" ] && exit 1 ;;\n'
-            "esac\n"
-            "exit 0\n"
+        active = "\n".join(
+            step.get("run", "")
+            for step in _workflow(_RELEASE_ON_TAG)["jobs"]["release"]["steps"]
         )
-        fake_gh.chmod(0o755)
+        assert "gh release delete" not in active
+        assert "--clobber" not in active
+        assert "git tag -f" not in active
+        assert "git push --force" not in active
 
-        result = subprocess.run(
-            [
-                "bash",
-                "-e",
-                "-c",
-                _release_on_tag_step("Keep the newest five dev pre-releases")["run"],
-            ],
-            env={
-                "PATH": f"{bin_dir}:/usr/bin:/bin",
-                "GITHUB_REPOSITORY": "o/r",
-                **fail,
-            },
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        assert (result.returncode == 0) is succeeds, result.stderr
-        assert sorted(deleted.read_text().split()) == attempted
+    def test_publication_uses_the_verified_assets_and_recorded_provenance(self) -> None:
+        steps = _workflow(_RELEASE_ON_TAG)["jobs"]["release"]["steps"]
+        fetch = _release_on_tag_step("Fetch the recorded upstream assets")
+        publish = _release_on_tag_step("Publish the verified mirror release")
+        assert steps.index(fetch) < steps.index(publish)
+        assert "fetch-recorded" in fetch["run"]
+        assert " publish " in publish["run"]
+        for step in (fetch, publish):
+            assert "--recorded native-build.json" in step["run"]
+        fetched = re.search(r"--assets (\S+)", fetch["run"])
+        published = re.search(r"--assets (\S+)", publish["run"])
+        assert fetched and published and fetched.group(1) == published.group(1)
 
 
 class TestDevVersionScript:

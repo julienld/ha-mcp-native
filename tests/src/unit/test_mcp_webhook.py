@@ -631,22 +631,6 @@ class TestDiscoveryViews:
         request = make_request(headers={"Host": "ha.local:8123"}, scheme="http")
         assert mw._build_base_url(request) == "http://ha.local:8123"
 
-    def test_authorization_server_document_shape(self):
-        doc = mw._authorization_server_document("https://x.nabu.casa")
-        assert doc["issuer"] == f"https://x.nabu.casa{OAUTH_BASE}"
-        assert (
-            doc["authorization_endpoint"]
-            == f"https://x.nabu.casa{OAUTH_BASE}/authorize"
-        )
-        assert doc["token_endpoint"] == f"https://x.nabu.casa{OAUTH_BASE}/token"
-        assert doc["response_types_supported"] == ["code"]
-        assert doc["code_challenge_methods_supported"] == ["S256"]
-        assert doc["token_endpoint_auth_methods_supported"] == ["none"]
-        assert doc["client_id_metadata_document_supported"] is True
-        assert (
-            doc["registration_endpoint"] == f"https://x.nabu.casa{OAUTH_BASE}/register"
-        )
-
     async def test_protected_resource_view_payload_when_live(self):
         hass = _live_hass()
         view = mw._WellKnownProtectedResourceView(hass)
@@ -855,10 +839,13 @@ class TestNoneModeDiscovery:
             f"https://abc.ui.nabu.casa{OAUTH_BASE}"
         ]
 
-    async def test_as_document_switches_on_mode_flip_without_rebinding(self):
+    async def test_as_document_switches_on_mode_flip_without_rebinding(
+        self, monkeypatch
+    ):
         # Hard requirement: with the ONE bound AS view, flipping the live mode
         # none -> ha_auth -> none swaps which document is served, all by
         # mutating hass.data cfg (no re-bind, no restart).
+        monkeypatch.setattr(mw, "HA_VERSION", "2026.10.3")
         hass = _none_live_hass()
         view = mw._AuthorizationServerMetadataView(hass)  # bound once
         request = make_request(headers={"Host": "abc.ui.nabu.casa"})

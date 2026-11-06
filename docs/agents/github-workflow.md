@@ -236,6 +236,7 @@ missing required live-testing evidence blocks merging, not requesting review.
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
+| `legacy-core.yml` | Native candidate qualification or manual | Paired constrained install and Legacy restart/transport contracts on Core 2026.8/9, amd64/aarch64. |
 | `pr.yml` | Pull request or manual | Fast checks and validation orchestration. |
 | `renovate.yml` | Hourly, human dashboard/PR checkbox edit, or manual | Refresh dependency discovery and process eligible updates. |
 | `renovate-validation.yml` | Relevant pull request or manual | Validate configuration with the scanner’s pinned Renovate engine, without credentials. |

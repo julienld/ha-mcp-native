@@ -1,6 +1,11 @@
 {
-  "reason": "PR #2853 adds one container_only screenshot MCP E2E test. It is collected as a skip on each HAOS lane.",
+  "reason": "#2853 adds tests/src/e2e/tools/test_dashboard_screenshot_sidecar.py::test_wpe_supervisor_discovery_returns_dashboard_image under the module's container_only marker: the scenario wires an in-process MCP server to a fake Supervisor and screenshot engine. It skips on every HAOS lane, including stdio, inaddon, embedded and their no-tools variants. The original fragment attributed only haos; the other five HAOS lane keys were missing. Native HAOS-embedded keys inherit these deltas.",
   "deltas": {
-    "haos": 1
+    "haos": 1,
+    "haos_stdio": 1,
+    "haos_inaddon": 1,
+    "haos_embedded": 1,
+    "haos_inaddon_no_tools": 1,
+    "haos_embedded_no_tools": 1
   }
 }

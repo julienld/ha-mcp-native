@@ -10,10 +10,44 @@ name: Dev HA environment
 # run was started with. Cancel the run when done.
 # Usage: docs/dev-ha-env.md
 on:
+  workflow_call:
+    inputs:
+      track_ref:
+        description: SHA or branch of this repository to install (not the workflow checkout)
+        required: true
+        type: string
+      public_key:
+        description: Base64 RSA-4096 public key in PEM format; the private key stays with the operator
+        required: true
+        type: string
+      platform:
+        type: string
+        default: docker
+      server:
+        type: string
+        default: embedded
+      embedded_runtime:
+        type: string
+        default: legacy
+      no_component:
+        type: boolean
+        default: false
+      strict_bps:
+        type: boolean
+        default: true
+      ha_image:
+        type: string
+        default: ""
+      minutes:
+        type: string
+        default: "330"
+      cpu_max:
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       track_ref:
-        description: Branch of this repository to run (server, component and test config)
+        description: SHA or branch of this repository to run (server, component and test config)
         required: true
       public_key:
         description: "Base64 of a throwaway RSA public key (PEM); the tunnel URLs are encrypted to it. See docs/dev-ha-env.md"
@@ -28,6 +62,11 @@ on:
         type: choice
         options: [standalone, embedded, app, oauth]
         default: embedded
+      embedded_runtime:
+        description: "Embedded implementation; native requires server=embedded"
+        type: choice
+        options: [legacy, native]
+        default: legacy
       no_component:
         description: Without the ha_mcp_tools File & YAML Tools entry (like the no-tools E2E lanes)
         type: boolean
@@ -40,7 +79,7 @@ on:
         description: "docker only: HA container image (empty = current stable; accepts version or beta tags)"
         default: ""
       minutes:
-        description: How long to keep the instance up (max 330)
+        description: How long to keep the instance up (integer, 1–330 minutes)
         default: "330"
       cpu_max:
         description: "haos only: cap the VM's total CPU as cgroup cpu.max (e.g. \"25000 100000\" = a quarter of a host core) to stand in for a slow board; empty = no cap"
@@ -50,12 +89,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-ha-env-${{ inputs.track_ref }}-${{ inputs.platform }}-${{ inputs.server }}-${{ inputs.no_component }}
+  group: dev-ha-env-${{ inputs.track_ref }}-${{ inputs.platform }}-${{ inputs.server }}-${{ inputs.no_component }}-${{ inputs.embedded_runtime || 'legacy' }}
   cancel-in-progress: true
 
 env:
   TRACK_REF: ${{ inputs.track_ref }}
   E2E_NO_TOOLS_ENTRY: ${{ inputs.no_component && '1' || '' }}
+  E2E_EMBEDDED_RUNTIME: ${{ inputs.embedded_runtime || 'legacy' }}
   DEVENV_STRICT_BPS: ${{ inputs.strict_bps }}
   HAMCP_ENV_FILE: tests/.env.test
   # A fixed host port survives container restarts, so the tunnel target holds.
@@ -66,8 +106,9 @@ env:
 
 jobs:
   env:
-    # Upstream runners are shared CI capacity; contributors run this on forks.
-    if: github.repository != 'homeassistant-ai/ha-mcp'
+    # Reusable workflows retain the caller event. Never boot PR/push code
+    # automatically, and keep upstream's shared CI capacity out of this path.
+    if: github.repository != 'homeassistant-ai/ha-mcp' && github.event_name == 'workflow_dispatch'
     runs-on: ${{ inputs.platform == 'haos' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 355
     steps:
@@ -76,7 +117,26 @@ jobs:
           PUBLIC_KEY: ${{ inputs.public_key }}
           PLATFORM: ${{ inputs.platform }}
           SERVER: ${{ inputs.server }}
+          DEVENV_MINUTES: ${{ inputs.minutes }}
         run: |
+          python3 - <<'PY'
+          import os
+          if not os.environ["TRACK_REF"].strip() or not os.environ["PUBLIC_KEY"].strip():
+              raise SystemExit("track_ref and public_key are required")
+          platform, server = os.environ["PLATFORM"], os.environ["SERVER"]
+          if platform not in {"docker", "haos"} or server not in {"standalone", "embedded", "app", "oauth"}:
+              raise SystemExit("Unknown platform or server")
+          if (platform, server) in {("docker", "app"), ("haos", "oauth")}:
+              raise SystemExit("app requires haos; oauth requires docker")
+          runtime = os.environ.get("E2E_EMBEDDED_RUNTIME", "legacy")
+          if runtime not in {"legacy", "native"}:
+              raise SystemExit("Unknown embedded runtime")
+          if runtime == "native" and server != "embedded":
+              raise SystemExit("native requires server=embedded")
+          minutes = os.environ["DEVENV_MINUTES"]
+          if not minutes.isascii() or not minutes.isdecimal() or not 1 <= int(minutes) <= 330:
+              raise SystemExit("minutes must be an integer from 1 to 330")
+          PY
           KEY="$RUNNER_TEMP/url-key.pem"
           printf '%s' "$PUBLIC_KEY" | openssl base64 -d -A > "$KEY" || true
           # Trial-encrypt as the URLs will be, so a non-RSA or too-small key
@@ -85,14 +145,6 @@ jobs:
           if ! head -c 470 /dev/zero | openssl pkeyutl -encrypt -pubin -inkey "$KEY" \
             -pkeyopt rsa_padding_mode:oaep -out /dev/null; then
             echo "::error::public_key must be a base64 4096-bit RSA public key. See docs/dev-ha-env.md."
-            exit 1
-          fi
-          if [ "$PLATFORM" = docker ] && [ "$SERVER" = app ]; then
-            echo "::error::The app needs Supervisor: use platform haos."
-            exit 1
-          fi
-          if [ "$PLATFORM" = haos ] && [ "$SERVER" = oauth ]; then
-            echo "::error::oauth mode runs on docker only."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -109,6 +161,23 @@ jobs:
           path: src
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
+
+      - name: Require the real Native host and staging fixture
+        if: inputs.embedded_runtime == 'native'
+        working-directory: src
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          required = (
+              "custom_components/ha_mcp_tools/native_server.py",
+              "tests/src/e2e/_conftest_native_runtime.py",
+              "tests/qualification_artifacts.py",
+          )
+          missing = [name for name in required if not Path(name).is_file()]
+          if missing:
+              raise SystemExit(f"Native live requires the host and staging fixture: {missing}")
+          PY
 
       - name: Compute HAOS image cache keys
         if: inputs.platform == 'haos'
@@ -212,8 +281,6 @@ jobs:
           # the holder applies the branch's copy at boot.
           DEVENV_COMPONENT_STALE: ${{ (inputs.platform == 'haos' && steps.restore-cache.outputs.cache-matched-key != '' && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.cache-key && steps.restore-cache.outputs.cache-matched-key != steps.key.outputs.devenv-key) && '1' || '' }}
         run: |
-          [ "$DEVENV_MINUTES" -le 330 ] 2>/dev/null || DEVENV_MINUTES=330
-          export DEVENV_MINUTES
           if [ "$PLATFORM" = haos ]; then
             export HAOS_TEST_IMAGE_PATH=/tmp/haos-test-image.qcow2
             case "$SERVER" in

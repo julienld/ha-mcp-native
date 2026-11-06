@@ -1,0 +1,65 @@
+name: Paired modern MCP protocol qualification
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    name: U2 legacy and native (600 reads, amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      UV_EXCLUDE_NEWER: '7 days'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: harness
+          submodules: true
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 3690af6e0f62ccec6c7fa70f748494ba2605f419
+          path: baseline
+          submodules: true
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          submodules: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.4"
+          python-version: '3.13'
+      - name: Launch both continuity installations and compare over loopback
+        env:
+          PROTOCOL_STATE: ${{ runner.temp }}/protocol-cleanup.json
+        run: |
+          umask 077
+          uv run --locked -s harness/tests/native/protocol_comparison/launch.py run \
+            --baseline-source "$GITHUB_WORKSPACE/baseline" \
+            --candidate-source "$GITHUB_WORKSPACE/candidate" \
+            --candidate-revision "$GITHUB_SHA" \
+            --output "$GITHUB_WORKSPACE/protocol-results" \
+            --state "$PROTOCOL_STATE"
+      - name: Remove this run's containers, networks and private logs/configs
+        if: always()
+        env:
+          PROTOCOL_STATE: ${{ runner.temp }}/protocol-cleanup.json
+        run: uv run --locked -s harness/tests/native/protocol_comparison/launch.py cleanup --state "$PROTOCOL_STATE"
+      - name: Preserve only sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: protocol-comparison-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            protocol-results/launch.json
+            protocol-results/comparison.json
+          if-no-files-found: warn
+          retention-days: 14

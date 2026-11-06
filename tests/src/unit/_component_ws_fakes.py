@@ -111,15 +111,17 @@ class _FakeWSApi:
         self.registered[handler._ws_command] = handler
 
 
-class FakeServices:
-    """Stand-in for ``hass.services`` (``async_services`` mapping)."""
-
-    def __init__(self, services: Mapping[str, Mapping[str, Any]]) -> None:
-        # services: {domain: {service_name: <anything>}}
-        self._services = {d: dict(s) for d, s in dict(services).items()}
-
-    def async_services(self) -> dict[str, dict[str, Any]]:
-        return dict(self._services)
+def register_empty_surface(
+    api: Any, cache_bridge: Any, hass: Any, monkeypatch: Any, schema: Any
+) -> _FakeWSApi:
+    """Bind every registration owner to the same functional test transport."""
+    fake = _FakeWSApi()
+    monkeypatch.setattr(api, "websocket_api", fake)
+    monkeypatch.setattr(cache_bridge, "websocket_api", fake)
+    monkeypatch.setattr(api, "vol", schema)
+    monkeypatch.setattr(api, "_resolve_registries", lambda hass: api._RegistryView())
+    api.async_register_commands(hass)
+    return fake
 
 
 class _FakeCallServices:
@@ -249,6 +251,7 @@ class FakeRegEntry:
         entity_category=None,
         platform=None,
         disabled_by=None,
+        extended_fields=None,
     ):
         self.entity_id = entity_id
         self.aliases = set(aliases)
@@ -264,6 +267,7 @@ class FakeRegEntry:
         self.entity_category = entity_category
         self.platform = platform
         self.disabled_by = disabled_by
+        self._extended_fields = dict(extended_fields or {})
 
     @property
     def as_partial_dict(self):
@@ -300,7 +304,22 @@ class FakeRegEntry:
             "original_device_class",
             "original_icon",
         )
-        return {
-            **self.as_partial_dict,
-            "aliases": sorted(self.aliases),
-        } | dict.fromkeys(extra)
+        return (
+            {
+                **self.as_partial_dict,
+                "aliases": sorted(self.aliases),
+            }
+            | dict.fromkeys(extra)
+            | self._extended_fields
+        )
+
+
+class FakeServices:
+    """Stand-in for ``hass.services`` (``async_services`` mapping)."""
+
+    def __init__(self, services: Mapping[str, Mapping[str, Any]]) -> None:
+        # services: {domain: {service_name: <anything>}}
+        self._services = {d: dict(s) for d, s in dict(services).items()}
+
+    def async_services(self) -> dict[str, dict[str, Any]]:
+        return dict(self._services)
