@@ -367,6 +367,31 @@ class TestRemoveTodoItem:
         assert client.services() == [("remove_completed_items", {})]
         assert [i["summary"] for i in got["removed"]] == ["Pay", "Bread"]
 
+    async def test_completed_removal_retry_affects_new_items_and_is_not_advertised_safe(
+        self, tools: TodoTools, client: _FakeClient
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from ha_mcp._vendor.fastmcp import Client, FastMCP
+        from ha_mcp.runtime.catalog import build_initial_catalog
+        from ha_mcp.tools.tools_todo import register_todo_tools
+
+        await tools.ha_remove_todo_item(LIST, remove_completed=True)
+        client.items[0]["status"] = "completed"
+        repeated = await tools.ha_remove_todo_item(LIST, remove_completed=True)
+        assert [row["summary"] for row in repeated["removed"]] == ["Buy milk"]
+        server = FastMCP("todo retry contract")
+        register_todo_tools(server, client)
+        async with Client(server) as mcp:
+            advertised = next(
+                t for t in await mcp.list_tools() if t.name == "ha_remove_todo_item"
+            )
+        assert advertised.annotations.idempotentHint is False
+        native = next(
+            t for t in build_initial_catalog(MagicMock()) if t.name == advertised.name
+        )
+        assert native.annotations["idempotentHint"] is False
+
     @pytest.mark.parametrize("kwargs", [{}, {"item": "Pay", "remove_completed": True}])
     async def test_needs_exactly_one_target(
         self, tools: TodoTools, client: _FakeClient, kwargs: dict[str, Any]

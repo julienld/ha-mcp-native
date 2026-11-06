@@ -9,10 +9,9 @@ module. It reads Core's ``GET /api/events`` and returns
 import logging
 from typing import Any, Protocol
 
-logger = logging.getLogger(__name__)
+from ..runtime.event_tools import MATCH_ALL_EVENT_KEY
 
-# Home Assistant's match-all listener bucket in GET /api/events.
-MATCH_ALL_EVENT_KEY = "*"
+logger = logging.getLogger(__name__)
 
 
 class _EventEndpoint(Protocol):

@@ -8,7 +8,7 @@ import pytest
 
 from ha_mcp import backup_manager as bm
 from ha_mcp.client.rest_client import HomeAssistantConnectionError, HomeAssistantError
-from ha_mcp.tools import config_entry_flow
+from ha_mcp.runtime import snapshot_flow_restore as config_entry_flow
 
 OPTIONS = {"name": "Example", "template_type": "sensor", "state": "{{ 12 }}"}
 ENTITY = {

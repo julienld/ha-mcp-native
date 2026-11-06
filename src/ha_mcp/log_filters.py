@@ -183,13 +183,17 @@ def route_fastmcp_logs_to_root() -> None:
     their stdout/stderr and must keep FastMCP's own handler.
     """
     logger = logging.getLogger("fastmcp")
+    if logger.propagate:
+        # Already handed to Core: a reload must preserve logger.set_level and
+        # any handlers the application installed since the first handoff.
+        return
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
     logger.propagate = True
     logger.setLevel(logging.NOTSET)
 
 
-def install_sdk_log_filters() -> None:
+def install_sdk_log_filters(*, embedded: bool | None = None) -> None:
     """Attach the suppression/demotion filters above to their MCP SDK loggers.
 
     Every HTTP launcher must call this: the CLI (``ha_mcp.__main__``), the
@@ -203,7 +207,9 @@ def install_sdk_log_filters() -> None:
     # Embedded-only: give FastMCP's own records to Home Assistant's logging so
     # they carry HA's header, respect HA's levels and reach system_log. The CLI
     # and app launchers own their output and keep FastMCP's handler.
-    from .config import is_embedded_mode
+    if embedded is None:
+        from .config import is_embedded_mode
 
-    if is_embedded_mode():
+        embedded = is_embedded_mode()
+    if embedded:
         route_fastmcp_logs_to_root()

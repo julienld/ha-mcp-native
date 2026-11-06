@@ -201,82 +201,52 @@ class TestCalendarEventLifecycle:
         return results[0].get("entity_id")
 
     async def test_create_calendar_event(self, mcp_client, cleanup_tracker):
-        """
-        Test: Create a calendar event
-
-        Creates a test event and verifies it was created successfully.
-        """
+        """A timed event on the writable fixture must survive a read-back."""
         calendar_entity = await self._find_writable_calendar(mcp_client)
         if not calendar_entity:
             pytest.skip("No calendar entities available for testing")
 
-        logger.info(f"Testing ha_config_set_calendar_event in {calendar_entity}...")
-
-        # Create an event for tomorrow
-        now = datetime.now()
-        start = (now + timedelta(days=1)).replace(
+        start = (datetime.now(UTC) + timedelta(days=1)).replace(
             hour=14, minute=0, second=0, microsecond=0
         )
         end = start + timedelta(hours=1)
-
-        event_summary = "E2E Test Event - Safe to Delete"
-
-        try:
-            result = await mcp_client.call_tool(
-                "ha_config_set_calendar_event",
-                {
-                    "entity_id": calendar_entity,
-                    "summary": event_summary,
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                    "description": "This is a test event created by E2E tests",
-                    "location": "Test Location",
-                },
-            )
-
-            data = parse_mcp_result(result)
-
-            if data.get("success"):
-                logger.info(f"Event created successfully: {event_summary}")
-                logger.info(f"Event details: {data.get('event', {})}")
-
-                # Track for potential cleanup
-                cleanup_tracker.track(
-                    "calendar_event", f"{calendar_entity}:{event_summary}"
-                )
-
-                # Verify event appears in calendar
-                events_result = await mcp_client.call_tool(
-                    "ha_config_get_calendar_events",
-                    {
-                        "entity_id": calendar_entity,
-                        "start": start.isoformat(),
-                        "end": (end + timedelta(hours=1)).isoformat(),
-                    },
-                )
-
-                events_data = parse_mcp_result(events_result)
-                logger.info(
-                    f"Events after creation: {events_data.get('count', 0)} event(s)"
-                )
-
-            else:
-                # Calendar might not support event creation
-                error_msg = extract_error_message(data) or "Unknown error"
-                if "not supported" in error_msg.lower() or "read" in error_msg.lower():
-                    pytest.skip(
-                        f"Calendar {calendar_entity} does not support event creation"
-                    )
-                else:
-                    logger.warning(f"Event creation failed: {error_msg}")
-                    # Don't fail the test - some calendars are read-only
-                    pytest.skip(f"Calendar event creation not available: {error_msg}")
-
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Event creation test encountered error: {e}")
-            pytest.skip(f"Calendar event creation not available: {e}")
-
-        logger.info("ha_config_set_calendar_event test completed")
+        summary = f"E2E Timed Event {uuid.uuid4().hex[:8]}"
+        description = "This is a test event created by E2E tests"
+        location = "Test Location"
+        mcp = MCPAssertions(mcp_client)
+        await mcp.call_tool_success(
+            "ha_config_set_calendar_event",
+            {
+                "entity_id": calendar_entity,
+                "summary": summary,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "description": description,
+                "location": location,
+            },
+        )
+        cleanup_tracker.track("calendar_event", f"{calendar_entity}:{summary}")
+        # The baked local_calendar is writable. Internal failures must fail the
+        # suite rather than masquerade as an unavailable provider capability.
+        events = await wait_for_tool_result(
+            mcp_client,
+            "ha_config_get_calendar_events",
+            {
+                "entity_id": calendar_entity,
+                "start": start.isoformat(),
+                "end": (end + timedelta(hours=1)).isoformat(),
+            },
+            predicate=lambda data: any(
+                event.get("summary") == summary for event in data.get("events", [])
+            ),
+            timeout=15,
+            description=f"read-back of timed event '{summary}'",
+        )
+        event = next(
+            event for event in events["events"] if event.get("summary") == summary
+        )
+        assert event.get("description") == description, event
+        assert event.get("location") == location, event
 
     async def test_create_all_day_calendar_event(self, mcp_client):
         """

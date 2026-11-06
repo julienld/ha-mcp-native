@@ -7,16 +7,28 @@ Tool Consolidation and Module Size.
 """
 
 import logging
-from typing import Annotated, Any, NoReturn
-
-from pydantic import Field
+from typing import Any, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.backends.legacy import legacy_errors_sync
+from ha_mcp.runtime.template_results import (
+    HA_RENDER_TIMEOUT_TEXT,
+    _command_error_message,
+    condition_failure,
+    condition_result,
+    render_success,
+)
+from ha_mcp.runtime.template_results import (
+    raise_render_failure as _pure_render_failure,
+)
+from ha_mcp.runtime.template_results import (
+    validate_choice as _pure_validate_choice,
+)
+from ha_mcp.runtime.templates import TemplateTools
 
 from ..client.rest_client import HomeAssistantCommandError, HomeAssistantCommandTimeout
 from ..client.websocket_client import get_websocket_client
-from ..errors import ErrorCode, create_error_response
-from .coercion import JSON_STRING_COERCION
 from .component_api import (
     component_supports,
     get_component_caps,
@@ -28,49 +40,8 @@ from .tool_hints import read_only_hints
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_ERROR_SUGGESTIONS = [
-    "Fix the template at the reported line, if one is given, then evaluate it again",
-    "Use default values for missing data: {{ states('sensor.temp') | float(0) }}",
-    "Verify entity_ids exist using ha_get_state() or ha_search()",
-    "Pass values the template expects through 'variables'",
-]
-
-TEMPLATE_TIMEOUT_SUGGESTIONS = ["Simplify the template or raise 'timeout'"]
-
-CONDITION_ERROR_SUGGESTIONS = [
-    "Check the condition against the Home Assistant condition schema",
-    "Verify entity_ids exist using ha_get_state() or ha_search()",
-    "See ha_get_skill_guide for native condition examples",
-]
-
-# Core rejects a render that outlives its ``timeout`` with this message (code
-# ``template_error``, which it also uses for other template failures).
-HA_RENDER_TIMEOUT_TEXT = "Exceeded maximum execution time"
-
-
-def _command_error_message(exc: HomeAssistantCommandError) -> str:
-    return str(exc).removeprefix("Command failed: ")
-
-
-def _render_outcome(
-    error: str,
-    report_errors: bool,
-    result: dict[str, Any],
-    diagnosis: dict[str, Any] | None,
-) -> tuple[str, bool]:
-    """The error to report for a failed render, and whether it timed out."""
-    if not result.get("no_verdict"):
-        return error, False
-    # HA sent no verdict. With report_errors it always sends one, so the render
-    # outran the wait; without it, silence is how HA answers a failed render.
-    # The in-process render, when there is one, is the only place the actual
-    # outcome is known.
-    if diagnosis is not None:
-        if diagnosis.get("error"):
-            return diagnosis["error"], False
-        if diagnosis.get("stage") == "timeout":
-            return error, True
-    return error, report_errors
+_raise_render_failure = legacy_errors_sync(_pure_render_failure)
+_validate_choice = legacy_errors_sync(_pure_validate_choice)
 
 
 class UtilityTools:
@@ -86,17 +57,7 @@ class UtilityTools:
         timeout: int,
         report_errors: bool,
     ) -> dict[str, Any]:
-        if (template is None) == (condition is None):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    "Provide exactly one of 'template' or 'condition'",
-                    suggestions=[
-                        "Use 'template' to render a Jinja2 template",
-                        "Use 'condition' to test an automation condition",
-                    ],
-                )
-            )
+        _validate_choice(template, condition)
         try:
             if condition is not None:
                 return await self._test_condition(condition, variables)
@@ -153,15 +114,7 @@ class UtilityTools:
         result = await self._client.send_websocket_message(message)
 
         if result.get("success"):
-            response: dict[str, Any] = {
-                "success": True,
-                "template": template,
-                "result": result.get("result"),
-                "listeners": result.get("listeners", {}),
-            }
-            if result.get("warnings"):
-                response["warnings"] = result["warnings"]
-            return response
+            return render_success(template, result)
 
         await self._raise_render_failure(
             template, variables, strict, timeout, report_errors, result
@@ -177,59 +130,15 @@ class UtilityTools:
         report_errors: bool,
         result: dict[str, Any],
     ) -> NoReturn:
-        reported = result.get("error")
-        error = reported if isinstance(reported, str) else "Template evaluation failed"
-        context: dict[str, Any] = {"template": template}
-        if result.get("error_code"):
-            context["ha_error_code"] = result["error_code"]
-        if result.get("warnings"):
-            context["warnings"] = result["warnings"]
-
-        if result.get("client_error"):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.SERVICE_CALL_FAILED,
-                    error,
-                    context=context,
-                    suggestions=["Check Home Assistant WebSocket connection"],
-                )
+        diagnosis, unavailable = None, None
+        if not result.get("client_error") and HA_RENDER_TIMEOUT_TEXT not in str(
+            result.get("error", "")
+        ):
+            diagnosis, unavailable = await self._diagnose_template(
+                template, variables, strict, timeout
             )
-        if HA_RENDER_TIMEOUT_TEXT in error:
-            # A second render would only time out again.
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.TIMEOUT_OPERATION,
-                    error,
-                    context=context,
-                    suggestions=TEMPLATE_TIMEOUT_SUGGESTIONS,
-                )
-            )
-
-        diagnosis, unavailable = await self._diagnose_template(
-            template, variables, strict, timeout
-        )
-        error, timed_out = _render_outcome(error, report_errors, result, diagnosis)
-        if diagnosis is not None and isinstance(diagnosis.get("line"), int):
-            context["line"] = diagnosis["line"]
-            if diagnosis.get("source_line"):
-                context["source_line"] = diagnosis["source_line"]
-        elif unavailable:
-            context["line_unavailable"] = unavailable
-
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.TIMEOUT_OPERATION
-                if timed_out
-                else ErrorCode.VALIDATION_FAILED,
-                error,
-                context=context,
-                suggestions=(
-                    TEMPLATE_TIMEOUT_SUGGESTIONS
-                    if timed_out
-                    else TEMPLATE_ERROR_SUGGESTIONS
-                ),
-            )
-        )
+        _raise_render_failure(template, report_errors, result, diagnosis, unavailable)
+        raise AssertionError("unreachable")
 
     async def _diagnose_template(
         self,
@@ -297,125 +206,28 @@ class UtilityTools:
             response = await ws.send_command("test_condition", **params)
         except HomeAssistantCommandError as exc:
             raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_FAILED,
-                    _command_error_message(exc),
-                    context={"condition": condition, "ha_error_code": exc.code},
-                    suggestions=CONDITION_ERROR_SUGGESTIONS,
-                )
+                condition_failure(condition, _command_error_message(exc), exc.code)
             )
             raise AssertionError("unreachable: raise_tool_error always raises") from exc
-        result = response.get("result") or {}
-        data: dict[str, Any] = {
-            "success": True,
-            "condition": condition,
-            "result": result.get("result"),
-        }
-        # Home Assistant 2026.7+ returns template errors hit while checking a
-        # template condition that still evaluated (e.g. an undefined variable).
-        if result.get("template_errors"):
-            data["warnings"] = list(result["template_errors"])
-        return data
+        return condition_result(condition, response.get("result") or {})
 
 
 def register_utility_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
-    """Register Home Assistant utility tools."""
-    tools = UtilityTools(client)
+    tools = LegacyTemplateTools(client)
+    mcp.add_tool(tools.ha_eval_template)
 
-    @mcp.tool(
+
+class LegacyTemplateTools(TemplateTools):
+    def __init__(self, client: Any) -> None:
+        super().__init__(UtilityTools(client).eval_template)
+
+    ha_eval_template = tool(
         tags={"Utilities"},
         annotations=read_only_hints("Evaluate Template", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_eval_template(
-        template: Annotated[
-            str | None,
-            Field(
-                description="Jinja2 template to render. Omit when using 'condition'."
-            ),
-        ] = None,
-        condition: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Automation condition to test instead of a template, e.g. "
-                    "{'condition': 'numeric_state', 'entity_id': 'sensor.temp', "
-                    "'above': 20}. Test several at once with {'condition': 'and', "
-                    "'conditions': [...]}."
-                )
-            ),
-        ] = None,
-        variables: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Variables available to the template or condition, e.g. "
-                    "sample trigger data: {'trigger': {'to_state': {'state': 'on'}}}"
-                )
-            ),
-        ] = None,
-        strict: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Template only: fail on undefined variables instead of "
-                    "rendering them as empty (reported in warnings when "
-                    "report_errors is on)"
-                )
-            ),
-        ] = False,
-        timeout: Annotated[
-            int,
-            Field(
-                ge=1,
-                le=60,
-                description="Template only: maximum render time in seconds",
-            ),
-        ] = 3,
-        report_errors: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Template only: have Home Assistant report render errors and "
-                    "warnings. With false, a failed render is only written to "
-                    "Home Assistant's log."
-                )
-            ),
-        ] = True,
-    ) -> dict[str, Any]:
-        """Execute a Jinja2 template render, or an automation condition check, in Home Assistant.
+    )(log_tool_usage(TemplateTools.ha_eval_template))
 
-        Renders templates with Home Assistant's template engine (all states,
-        functions and filters available), or checks a condition block the way
-        an automation would and returns true/false.
 
-        When to use: any one-shot answer DERIVED from current HA state (an
-        average across sensors, a count of entities matching a condition, a
-        rendered message with live values), and testing a template or condition
-        before embedding it in an automation. One render beats fetching N states
-        and doing the math yourself.
-
-        When NOT to use: a plain single-entity value is ha_get_state /
-        ha_search. Templates in automation `condition:` / `trigger:` positions
-        or templated action names: prefer native constructs, which are validated
-        at config load, where a template only errors at runtime and a non-truthy
-        render is silently false — see ha_get_skill_guide for the anti-pattern
-        list. Test the native condition here with `condition`.
-
-        Results: a render that works but hits something suspect (an undefined
-        variable, a missing attribute) still returns its result with the
-        messages in `warnings`; strict=true makes those hard errors. A failed
-        render returns Home Assistant's error text and, with the ha_mcp_tools
-        component installed, the template `line` and `source_line` it failed on
-        when the error names one.
-
-        EXAMPLES:
-        - ha_eval_template(template="{{ states.light | selectattr('state', 'eq', 'on') | list | count }}")
-        - ha_eval_template(template="Hello {{ name }}", variables={"name": "Alice"})
-        - ha_eval_template(condition={"condition": "numeric_state", "entity_id": "sensor.temperature", "above": 20})
-        """
-        return await tools.eval_template(
-            template, condition, variables, strict, timeout, report_errors
-        )
+__all__ = [
+    "UtilityTools",
+    "register_utility_tools",
+]

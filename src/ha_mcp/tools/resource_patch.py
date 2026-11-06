@@ -7,23 +7,23 @@ content as it stands when that edit is applied, or nothing is saved.
 """
 
 from contextlib import AbstractAsyncContextManager, nullcontext
-from typing import Annotated, Any, NoReturn, TypedDict
+from typing import Any
 
-from pydantic import ConfigDict, Field
-
+from ..backends.legacy import legacy_errors_sync
 from ..errors import ErrorCode, create_error_response
+from ..runtime.resource_edits import MAX_EDITS as MAX_EDITS
+from ..runtime.resource_edits import ResourceEdit as ResourceEdit
+from ..runtime.resource_edits import _count_occurrences as _count_occurrences
+from ..runtime.resource_edits import apply_resource_edits as _apply_resource_edits
+from ..runtime.resource_edits import check_config_hash as _check_config_hash
 from ..utils.registry_update_lock import registry_update_lock
 from .helpers import raise_tool_error, ws_failure_code
 from .resource_codec import (
     _DATA_URI_MIME,
     _MAX_ECHOED_URL,
-    MAX_CONTENT_SIZE,
     _check_ws_error,
     _decode_inline_content,
-    content_sha256,
 )
-
-MAX_EDITS = 100
 
 # Lock key shared with _restore_dashboard_resource in backup_manager (the
 # auto-backup domain name), so a restore and a tool write serialize too.
@@ -43,115 +43,7 @@ def resource_write_lock(resource_id: str | None) -> AbstractAsyncContextManager[
     return registry_update_lock(RESOURCE_LOCK_REGISTRY, resource_id)
 
 
-class ResourceEdit(TypedDict):
-    """One exact-match replacement in an inline resource."""
-
-    old: Annotated[
-        str,
-        Field(
-            description="Exact text to replace. Must occur exactly once in the "
-            "content at the point this edit is applied; include surrounding "
-            "context to make it unique."
-        ),
-    ]
-    new: Annotated[str, Field(description="Replacement text (may be empty).")]
-
-
 # Pydantic reads this at schema time; mypy allows only fields in the body.
-ResourceEdit.__pydantic_config__ = ConfigDict(extra="forbid")  # type: ignore[attr-defined]
-
-
-def _count_occurrences(haystack: str, needle: str) -> int:
-    """Count occurrences of ``needle``, overlapping ones included.
-
-    ``str.count`` skips overlaps ("aa" in "aaa" is 1), which would let an
-    ambiguous ``old`` pass the exactly-once check.
-    """
-    count = 0
-    start = haystack.find(needle)
-    while start != -1:
-        count += 1
-        start = haystack.find(needle, start + 1)
-    return count
-
-
-def _raise_edit_error(
-    reason: str, message: str, context: dict[str, Any], suggestions: list[str]
-) -> NoReturn:
-    raise_tool_error(
-        create_error_response(
-            code=ErrorCode.VALIDATION_INVALID_PARAMETER,
-            message=f"{message}. Nothing was saved.",
-            context={"reason": reason, **context},
-            suggestions=suggestions,
-        )
-    )
-
-
-def apply_resource_edits(content: str, edits: list[ResourceEdit]) -> str:
-    """Apply ``edits`` in order to a copy of ``content`` and return the result.
-
-    Raises a structured ``ToolError`` (``reason`` in its context) on the first
-    edit that cannot apply, so the caller never sees a partial result.
-    """
-    invalid = [
-        index
-        for index, edit in enumerate(edits)
-        if not edit["old"] or edit["old"] == edit["new"]
-    ]
-    if invalid:
-        _raise_edit_error(
-            "invalid_edit",
-            f"Edit(s) at index {', '.join(map(str, invalid))} have an empty "
-            "'old' or an 'old' identical to 'new'",
-            {"edit_index": invalid[0], "invalid_edit_indexes": invalid},
-            ["Every edit needs a non-empty 'old' that differs from its 'new'"],
-        )
-    # Bound the work before the loop: each edit scans and copies the whole
-    # intermediate text, and the result's own size check only runs after it.
-    added = 0
-    for index, edit in enumerate(edits):
-        try:
-            added += len(edit["new"].encode("utf-8"))
-        except UnicodeEncodeError:
-            _raise_edit_error(
-                "invalid_edit",
-                f"Edit {index}: 'new' contains an unpaired surrogate, which "
-                "is not valid UTF-8",
-                {"edit_index": index, "invalid_edit_indexes": [index]},
-                ["Send 'new' as valid Unicode text"],
-            )
-    if added > MAX_CONTENT_SIZE:
-        _raise_edit_error(
-            "edits_too_large",
-            f"The edits' 'new' texts total {added:,} bytes (max {MAX_CONTENT_SIZE:,})",
-            {"size": added, "limit": MAX_CONTENT_SIZE},
-            ["Replace most of a resource with content= instead of edits"],
-        )
-
-    result = content
-    for index, edit in enumerate(edits):
-        matches = _count_occurrences(result, edit["old"])
-        if matches == 0:
-            _raise_edit_error(
-                "old_not_found",
-                f"Edit {index}: 'old' text not found in the resource",
-                {"edit_index": index},
-                [
-                    "Match the stored text exactly, including whitespace and quotes",
-                    "Earlier edits apply first; account for text they changed",
-                    "Fetch the current code with ha_config_list_dashboard_resources(include_content=True)",
-                ],
-            )
-        if matches > 1:
-            _raise_edit_error(
-                "old_not_unique",
-                f"Edit {index}: 'old' text occurs {matches} times in the resource",
-                {"edit_index": index, "matches": matches},
-                ["Extend 'old' with surrounding context so it matches exactly once"],
-            )
-        result = result.replace(edit["old"], edit["new"], 1)
-    return result
 
 
 class ResourceLookupError(Exception):
@@ -268,19 +160,19 @@ async def load_inline_resource(client: Any, resource_id: str) -> tuple[str, str]
     return content, resource_type
 
 
-def check_config_hash(content: str, config_hash: str | None) -> None:
-    """Refuse the patch when the stored content no longer has the caller's hash."""
-    if config_hash is None:
-        return
-    current = content_sha256(content)
-    if config_hash.strip().lower() != current:
-        _raise_edit_error(
-            "hash_mismatch",
-            "The stored resource does not match config_hash; it changed "
-            "since you last read it",
-            {"current_config_hash": current},
-            [
-                "Re-read it with ha_config_list_dashboard_resources(include_hash=True, include_content=True)",
-                "Rebuild the edits against the current content",
-            ],
-        )
+apply_resource_edits = legacy_errors_sync(_apply_resource_edits)
+check_config_hash = legacy_errors_sync(_check_config_hash)
+
+
+__all__ = [
+    "MAX_EDITS",
+    "RESOURCE_LOCK_REGISTRY",
+    "ResourceEdit",
+    "ResourceLookupError",
+    "_count_occurrences",
+    "apply_resource_edits",
+    "check_config_hash",
+    "find_resource",
+    "load_inline_resource",
+    "resource_write_lock",
+]

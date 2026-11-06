@@ -242,7 +242,7 @@ class TestAutomationConfigGetAlwaysLegacy:
         factory = AsyncMock(return_value=ws)
         with patch.object(component_api, "get_websocket_client", factory):
             resp = await AutomationConfigTools(client).ha_config_get_automation(
-                entity_id="automation.morning"
+                entity_id="automation.morning", config_format="stored"
             )
         assert resp["automation_id"] == "automation.morning"
         # The stored body, verbatim, plus the category from the registry.

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, tzinfo
 from typing import Any
 
-from .response_helpers import resolve_local_timezone
+from ha_mcp.runtime.projection import resolve_local_timezone
 
 _FIELD_NAMES = {
     "s": "state",

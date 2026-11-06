@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.backup_manager import MandatoryBackupError
 from ha_mcp.backup_todo import unbacked_removals
 from ha_mcp.client.rest_client import (
     HomeAssistantAuthError,
@@ -57,7 +58,13 @@ class _Bridge:
         if self.refusal and action != "resolve":
             return {"success": False, "error": self.refusal}
         if action == "resolve":
-            return {"success": True, "items": [self._find(r) for r in fields["refs"]]}
+            return {
+                "success": True,
+                "items": [
+                    dict(row) if (row := self._find(r)) else None
+                    for r in fields["refs"]
+                ],
+            }
         if action == "add":
             row = {"uid": "9", "summary": fields["data"]["item"].strip()}
             self.client.items.append(row | {"status": "needs_action"})
@@ -331,14 +338,22 @@ class _Snapshots:
         # Another client's change while a backup is taken.
         self.during: Any = None
 
-    async def maybe_snapshot(self, domain: str, entity_id: str, **kwargs: Any) -> None:
+    async def maybe_snapshot_known(
+        self, domain: str, entity_id: str, config: dict[str, Any], **kwargs: Any
+    ) -> None:
         assert domain == "todo_item"
+        ref = entity_id.partition("::")[2]
+        original = next(i for i in self.client.items if i["uid"] == ref)
+        assert config == {"todo_entity_id": LIST, **original}
         self.keys.append(entity_id)
         self.seen.append(([dict(i) for i in self.client.items], self.client.writes))
         if self.during:
             self.during()
         if entity_id.endswith("::3"):
-            kwargs["skip_reasons"].append("No pre-write backup of 3")
+            assert kwargs["mandatory"] is True
+            raise MandatoryBackupError(
+                "Fixture disk failure", safe_detail="Fixture disk failure"
+            )
 
 
 _GONE = (
@@ -346,13 +361,16 @@ _GONE = (
     "the list was read, so no backup of it was taken"
 )
 
+_BACKUP_WARNING = f"No pre-write backup of {LIST}::3 was taken: Fixture disk failure"
+
 
 @pytest.fixture
 def snapshots(client: _FakeClient) -> Iterator[_Snapshots]:
     fake = _Snapshots(client)
     settings = type("S", (), {"enable_auto_backup": True})()
     with (
-        patch("ha_mcp.backup_todo.get_global_settings", return_value=settings),
+        patch("ha_mcp.config.get_global_settings", return_value=settings),
+        patch("ha_mcp.runtime.todo_values.get_global_settings", return_value=settings),
         patch("ha_mcp.backup_manager.get_backup_manager", return_value=fake),
     ):
         yield fake
@@ -369,12 +387,33 @@ class TestBackups:
         assert snapshots.keys == [f"{LIST}::2", f"{LIST}::1"]
         assert "warnings" not in got
 
+    async def test_removal_keeps_snapshot_uid_when_its_summary_is_reused(
+        self, tools, client, bridge, snapshots
+    ) -> None:
+        snapshots.during = lambda: client.items.insert(
+            0, {"uid": "new", "summary": "Pay", "status": "needs_action"}
+        )
+        result = await tools.ha_remove_todo_item(LIST, item="Pay")
+        assert snapshots.keys == [f"{LIST}::2"]
+        assert [row["uid"] for row in result["removed"]] == ["2"]
+        assert client.items[0]["uid"] == "new"
+        assert bridge.calls[-1] == ("remove", {"refs": ["2"]})
+
+    async def test_changed_item_after_snapshot_is_refused_before_bridge_write(
+        self, tools, client, bridge, snapshots
+    ) -> None:
+        snapshots.during = lambda: client.items[1].update(summary="Changed elsewhere")
+        with pytest.raises(ToolError) as caught:
+            await tools.ha_set_todo_item(LIST, item="Pay", status="completed")
+        assert _error(caught)["error"]["code"] == "CONFIG_CONFLICT"
+        assert [action for action, _fields in bridge.calls] == ["resolve"]
+
     async def test_remove_completed_backs_up_the_completed_items(
         self, tools: TodoTools, client: _FakeClient, snapshots: _Snapshots
     ) -> None:
         got = await tools.ha_remove_todo_item(LIST, remove_completed=True)
         assert snapshots.keys == [f"{LIST}::2", f"{LIST}::3"]
-        assert got["warnings"] == ["No pre-write backup of 3"]
+        assert got["warnings"] == [_BACKUP_WARNING]
 
     async def test_remove_completed_names_an_item_completed_after_the_read(
         self, tools: TodoTools, client: _FakeClient, snapshots: _Snapshots
@@ -386,7 +425,7 @@ class TestBackups:
         assert snapshots.keys == [f"{LIST}::2", f"{LIST}::3"]
         assert client.items == []
         assert [i["uid"] for i in got["removed"]] == ["2", "3"]
-        assert got["warnings"] == ["No pre-write backup of 3", _GONE]
+        assert got["warnings"] == [_BACKUP_WARNING, _GONE]
 
     async def test_remove_completed_names_an_open_item_deleted_meanwhile(
         self, tools: TodoTools, client: _FakeClient, snapshots: _Snapshots
@@ -398,7 +437,7 @@ class TestBackups:
         snapshots.during = delete_buy_milk
         got = await tools.ha_remove_todo_item(LIST, remove_completed=True)
         assert [i["uid"] for i in got["removed"]] == ["2", "3"]
-        assert got["warnings"] == ["No pre-write backup of 3", _GONE]
+        assert got["warnings"] == [_BACKUP_WARNING, _GONE]
 
     async def test_remove_completed_names_nothing_gone_when_the_read_back_fails(
         self, tools: TodoTools, client: _FakeClient, snapshots: _Snapshots
@@ -406,7 +445,7 @@ class TestBackups:
         client.read_back_fails = True
         got = await tools.ha_remove_todo_item(LIST, remove_completed=True)
         assert got["removed"] is None
-        assert got["warnings"][0] == "No pre-write backup of 3"
+        assert got["warnings"][0] == _BACKUP_WARNING
         assert len(got["warnings"]) == 2
         assert "could not be read back" in got["warnings"][1]
 
@@ -416,7 +455,9 @@ class TestBackups:
     ) -> None:
         settings = type("S", (), {"enable_auto_backup": enabled})()
         before = [{"uid": "1", "summary": "Buy milk", "status": "needs_action"}]
-        with patch("ha_mcp.backup_todo.get_global_settings", return_value=settings):
+        with patch(
+            "ha_mcp.runtime.todo_values.get_global_settings", return_value=settings
+        ):
             assert len(unbacked_removals(before, [])) == count
             assert unbacked_removals(before, None) == []
 
@@ -461,21 +502,23 @@ class TestBackups:
         self, tools: TodoTools, client: _FakeClient, snapshots: _Snapshots
     ) -> None:
         got = await tools.ha_set_todo_item(LIST, item="Bread", rename="Rye")
-        assert got["warnings"] == ["No pre-write backup of 3"]
+        assert got["warnings"] == [_BACKUP_WARNING]
 
     async def test_capture_error_is_a_warning_and_the_write_goes_ahead(
         self, tools: TodoTools, client: _FakeClient
     ) -> None:
         settings = type("S", (), {"enable_auto_backup": True})()
         with (
-            patch("ha_mcp.backup_todo.get_global_settings", return_value=settings),
+            patch("ha_mcp.config.get_global_settings", return_value=settings),
             patch(
                 "ha_mcp.backup_manager.get_backup_manager",
                 side_effect=OSError("disk full"),
             ),
         ):
             got = await tools.ha_remove_todo_item(LIST, item="Pay")
-        assert got["warnings"] == ["No pre-write backup was taken: OSError"]
+        assert got["warnings"] == [
+            f"No pre-write backup of {LIST}::2 was taken: OSError"
+        ]
         assert client.services() == [("remove_item", {"item": ["Pay"]})]
 
     async def test_no_backup_with_auto_backup_off(
@@ -484,8 +527,8 @@ class TestBackups:
         settings = type("S", (), {"enable_auto_backup": False})()
         manager = AsyncMock()
         with (
-            patch("ha_mcp.backup_todo.get_global_settings", return_value=settings),
+            patch("ha_mcp.config.get_global_settings", return_value=settings),
             patch("ha_mcp.backup_manager.get_backup_manager", return_value=manager),
         ):
             await tools.ha_remove_todo_item(LIST, item="Pay")
-        manager.maybe_snapshot.assert_not_called()
+        manager.maybe_snapshot_known.assert_not_called()
