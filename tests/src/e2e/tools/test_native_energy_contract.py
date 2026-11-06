@@ -3,8 +3,10 @@
 from typing import Any
 
 import pytest
+from packaging.version import Version
 
 from ha_mcp._vendor.fastmcp import Client
+from ha_mcp.client import HomeAssistantClient
 
 from ..utilities.assertions import MCPAssertions, assert_mcp_success
 from ..utilities.topology import component_surface_available
@@ -158,6 +160,7 @@ async def test_core_parameter_errors_retain_validation_classification(
 @pytest.mark.parametrize("fields", [None, ["entities"]])
 async def test_history_schema_does_not_warn_when_core_describes_it_completely(
     mcp_client: Client,
+    ha_client: HomeAssistantClient,
     fields: list[str] | None,
 ) -> None:
     result = assert_mcp_success(
@@ -173,9 +176,23 @@ async def test_history_schema_does_not_warn_when_core_describes_it_completely(
     )
     contract = result.get("data", result)["core_contract"]
     if component_surface_available():
-        assert contract["description_complete"] is True
-        assert not any(
-            "cannot be described" in warning for warning in result.get("warnings", [])
-        )
+        version = Version((await ha_client.get_config())["version"])
+        if version.release[:2] < (2026, 9):
+            # Core August supplies Voluptuous validators, without a strict
+            # description codec. Fields remain useful; completeness must not
+            # be invented merely because conversion returned a dictionary.
+            assert contract["description_complete"] is False
+            assert any(
+                "Some Core validators cannot be described." in warning
+                for warning in result.get("warnings", [])
+            )
+            assert "entity_ids" in contract["schema"]["properties"]
+            assert "start_time" in contract["schema"]["properties"]
+        else:
+            assert contract["description_complete"] is True
+            assert not any(
+                "cannot be described" in warning
+                for warning in result.get("warnings", [])
+            )
     else:
         assert contract["status"] == "unavailable"

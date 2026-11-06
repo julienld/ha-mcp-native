@@ -6,14 +6,14 @@ import json
 import sys
 from typing import Literal
 
-from rich import box
-from rich.align import Align
-from rich.console import Console, Group
-from rich.padding import Padding
-from rich.panel import Panel
-from rich.status import Status
-from rich.table import Table
-from rich.text import Text
+from ha_mcp._vendor.rich import box
+from ha_mcp._vendor.rich.align import Align
+from ha_mcp._vendor.rich.console import Console, Group
+from ha_mcp._vendor.rich.padding import Padding
+from ha_mcp._vendor.rich.panel import Panel
+from ha_mcp._vendor.rich.status import Status
+from ha_mcp._vendor.rich.table import Table
+from ha_mcp._vendor.rich.text import Text
 
 from ha_mcp._vendor.fastmcp.cli.deploy.horizon_client import DeviceAuthorization, HorizonUser
 
