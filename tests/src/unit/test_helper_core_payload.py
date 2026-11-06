@@ -83,38 +83,54 @@ def test_tag_create_gets_a_tag_id_unless_given() -> None:
 async def test_update_path_sends_a_step_core_accepts() -> None:
     """A counter step of 0 is Core's to judge (its schema allows it), so the
     update reaches counter/update instead of being refused by the tool."""
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from ha_mcp.tools.config_helpers.update import _execute_legacy_update
 
     stored = {"id": "c1", "name": "Count", "minimum": 0, "maximum": 10, "step": 1}
-    client = AsyncMock()
-    client.send_websocket_message.return_value = {"success": True, "result": [stored]}
-
+    client = MagicMock()
+    client.send_websocket_message = AsyncMock(
+        side_effect=lambda message: {
+            "success": True,
+            "result": [stored]
+            if message["type"] == "counter/list"
+            else {**stored, "step": 0}
+            if message["type"] == "counter/update"
+            else [],
+        }
+    )
     await _execute_legacy_update(
         client, "counter", "counter.count", "c1", None, None, {"step": 0}
     )
-    update = client.send_websocket_message.await_args.args[0]
-    assert update["type"] == "counter/update" and update["step"] == 0
+    update = next(
+        call.args[0]
+        for call in client.send_websocket_message.await_args_list
+        if call.args[0]["type"] == "counter/update"
+    )
+    assert update["step"] == 0
 
 
 async def test_item_vanishing_before_the_update_reports_like_the_read() -> None:
     """Core's not_found on <type>/update is the same missing item the stored
     read reports as CONFIG_NOT_FOUND, so the caller sees one code for it."""
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from ha_mcp.tools.config_helpers.update import _execute_legacy_update
 
     stored = {"id": "c1", "name": "Count", "minimum": 0, "maximum": 10, "step": 1}
-    client = AsyncMock()
-    client.send_websocket_message.side_effect = [
-        {"success": True, "result": [stored]},
-        {
+    client = MagicMock()
+    replies = {
+        "counter/list": {"success": True, "result": [stored]},
+        "config/entity_registry/list": {"success": True, "result": []},
+        "counter/update": {
             "success": False,
             "error": "Unable to find counter_id c1",
             "error_code": "not_found",
         },
-    ]
+    }
+    client.send_websocket_message = AsyncMock(
+        side_effect=lambda message: replies[message["type"]]
+    )
     with pytest.raises(ToolError) as exc_info:
         await _execute_legacy_update(
             client, "counter", "counter.count", "c1", "Renamed", None, {}

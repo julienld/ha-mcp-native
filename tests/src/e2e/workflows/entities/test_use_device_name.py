@@ -103,18 +103,20 @@ class TestUseDeviceName:
                 "Core supports Use device name; the refusal path is for older Cores"
             )
         mcp = MCPAssertions(mcp_client)
+        before = await _entry(mcp_client)
         data = await mcp.call_tool_failure(
             "ha_set_entity", {"entity_id": ENTITY, "use_device_name": True}
         )
         assert data["error"]["code"] == "VALIDATION_INVALID_PARAMETER", data
         assert "2026.10" in json.dumps(data), data
-        assert (await _entry(mcp_client))["name"] is None
+        assert await _entry(mcp_client) == before
 
     async def test_rejected_together_with_name(self, mcp_client: Client) -> None:
         mcp = MCPAssertions(mcp_client)
+        before = await _entry(mcp_client)
         data = await mcp.call_tool_failure(
             "ha_set_entity",
             {"entity_id": ENTITY, "name": "Dawn", "use_device_name": True},
         )
         assert data["error"]["code"] == "VALIDATION_INVALID_PARAMETER", data
-        assert (await _entry(mcp_client))["name"] is None
+        assert await _entry(mcp_client) == before

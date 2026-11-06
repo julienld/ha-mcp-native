@@ -12,14 +12,17 @@ from __future__ import annotations
 
 import time
 import weakref
-from typing import Any, NoReturn
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp.backends.legacy_flows import legacy_flow
+from ha_mcp.runtime.flows.helpers import (
+    _raise_unknown_helper_type as _shared_unknown_helper,
+)
 
 from ..client.rest_client import HomeAssistantConnectionError
-from ..errors import ErrorCode, create_error_response
 from .config_helpers.schemas import SIMPLE_HELPER_TYPES
-from .helpers import exception_to_structured_error, raise_tool_error
+from .helpers import exception_to_structured_error
 
 _TTL_SECONDS = 300.0
 _CACHE: weakref.WeakKeyDictionary[Any, tuple[float, frozenset[str]]] = (
@@ -95,18 +98,4 @@ async def require_helper_type(client: Any, helper_type: str, *also: str) -> None
         _raise_unknown_helper_type(helper_type, flow_types)
 
 
-def _raise_unknown_helper_type(
-    helper_type: str, flow_types: frozenset[str]
-) -> NoReturn:
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.VALIDATION_INVALID_PARAMETER,
-            f"Unknown helper_type {helper_type!r}: it is neither a storage helper "
-            "nor one of the helper flows this Home Assistant lists.",
-            context={"helper_type": helper_type},
-            suggestions=[
-                "Storage helpers: " + ", ".join(sorted(SIMPLE_HELPER_TYPES)),
-                "Helper flows on this instance: " + ", ".join(sorted(flow_types)),
-            ],
-        )
-    )
+_raise_unknown_helper_type = legacy_flow(_shared_unknown_helper)

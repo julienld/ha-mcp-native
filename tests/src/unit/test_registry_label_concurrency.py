@@ -22,7 +22,10 @@ from ha_mcp.tools.config_helpers.update import _apply_update_icon_area_labels
 from ha_mcp.tools.tools_areas import AreaTools
 from ha_mcp.tools.tools_entities import EntityTools
 from ha_mcp.tools.tools_labels import LabelTools
-from ha_mcp.utils.registry_update_lock import registry_update_lock
+from ha_mcp.utils.registry_update_lock import (
+    registry_update_lock,
+    registry_update_locks,
+)
 
 
 class Registry:
@@ -204,7 +207,9 @@ async def test_area_replacement_waits_for_inflight_add(
         async with registry_update_lock(registry, resource_id):
             yield
 
-    monkeypatch.setattr("ha_mcp.tools.tools_areas.registry_update_lock", observed_lock)
+    monkeypatch.setattr(
+        "ha_mcp.runtime.area_writes.registry_update_lock", observed_lock
+    )
 
     async def send(message: dict[str, Any]) -> dict[str, Any]:
         if (
@@ -258,7 +263,11 @@ async def test_area_replacement_waits_for_inflight_add(
         ),
         (
             "area",
-            lambda c: _restore_area_or_floor(c, "area:target", {"labels": ["blue"]}),
+            lambda c: _restore_area_or_floor(
+                c,
+                "area:target",
+                {"kind": "area", "area_id": "target", "labels": ["blue"]},
+            ),
         ),
     ],
     ids=[
@@ -337,7 +346,9 @@ async def test_area_revalidates_references_after_lock_wait(
             return {"success": True, "result": {"area_id": "target", **message}}
         raise AssertionError(f"Unexpected WS message: {message}")
 
-    monkeypatch.setattr("ha_mcp.tools.tools_areas.registry_update_lock", observed_lock)
+    monkeypatch.setattr(
+        "ha_mcp.runtime.area_writes.registry_update_lock", observed_lock
+    )
     client = SimpleNamespace(send_websocket_message=send)
     params = {"floor_id": "reference"} if kind == "floor" else {"labels": ["reference"]}
     async with registry_update_lock("area", "target"):
@@ -354,6 +365,39 @@ async def test_area_revalidates_references_after_lock_wait(
         == "VALIDATION_INVALID_PARAMETER"
     )
     assert updates == []
+
+
+async def test_area_restore_reads_its_before_image_after_the_registry_lock() -> None:
+    registry = Registry()
+    reads: list[str] = []
+    started = asyncio.Event()
+
+    async def send(message: dict[str, Any]) -> dict[str, Any]:
+        if message["type"] == "config/area_registry/list":
+            reads.append(message["type"])
+        return await registry.send_websocket_message(message)
+
+    async def restore() -> Any:
+        started.set()
+        return await _restore_area_or_floor(
+            SimpleNamespace(send_websocket_message=send),
+            "area:target",
+            {"kind": "area", "area_id": "target", "labels": ["blue"]},
+        )
+
+    pending = None
+    try:
+        async with registry_update_lock("area", "target"):
+            pending = asyncio.create_task(restore())
+            await asyncio.wait_for(started.wait(), 1)
+            assert reads == [], (
+                "A restore read outside the writer's lock can become stale"
+            )
+            registry.labels["target"] = ["existing", "red"]
+    finally:
+        if pending is not None:
+            await asyncio.wait_for(pending, 1)
+    assert registry.labels["target"] == ["blue"]
 
 
 @pytest.mark.asyncio
@@ -441,9 +485,9 @@ async def test_template_restore_rereads_after_lock_wait(
     writes: list[dict[str, Any]] = []
 
     @asynccontextmanager
-    async def observed_lock(registry: str, resource_id: str) -> AsyncIterator[None]:
+    async def observed_locks(registry: str, *resource_ids: str) -> AsyncIterator[None]:
         waiting.set()
-        async with registry_update_lock(registry, resource_id):
+        async with registry_update_locks(registry, *resource_ids):
             yield
 
     async def created(client: Any, entry_id: str, unique_id: str) -> dict[str, Any]:
@@ -458,7 +502,9 @@ async def test_template_restore_rereads_after_lock_wait(
         row["name"] = message.get("name", row["name"])
         return dict(row)
 
-    monkeypatch.setattr("ha_mcp.backup_manager.registry_update_lock", observed_lock)
+    monkeypatch.setattr(
+        "ha_mcp.runtime.snapshot_entity_restore.registry_update_locks", observed_locks
+    )
     monkeypatch.setattr("ha_mcp.backup_manager._created_entity", created)
     monkeypatch.setattr("ha_mcp.backup_manager._check_entity_collision", collision)
     monkeypatch.setattr("ha_mcp.backup_manager._ws_send", send)
