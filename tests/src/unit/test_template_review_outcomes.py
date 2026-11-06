@@ -116,7 +116,7 @@ async def test_recreated_identity_read_failure_is_unavailable(recovery, monkeypa
 
 
 async def test_applied_options_refusal_preserves_safe_details(monkeypatch):
-    from ha_mcp.tools import config_entry_flow
+    from ha_mcp.runtime import snapshot_flow_restore as config_entry_flow
 
     snapshot = {"entry_id": "old-entry", "options": OPTIONS}
     monkeypatch.setattr(bm, "_fetch_flow_helper", AsyncMock(return_value=snapshot))

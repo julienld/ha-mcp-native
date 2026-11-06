@@ -564,35 +564,45 @@ class TestSetDashboardUrlPathCreationContract:
         }
 
     @pytest.mark.asyncio
-    async def test_create_without_a_title_gets_cores_refusal_not_an_invented_title(
+    async def test_create_without_title_preserves_the_historical_default(
         self, set_tool: Any, mock_client: MagicMock
     ) -> None:
-        """Core requires a title on create; the tool sends only what it was given
-        (a blank icon is left out) and relays Core's refusal as invalid input."""
-        mock_client.send_websocket_message.side_effect = [
-            {"result": []},
-            {
-                "success": False,
-                "error": "Command failed: required key not provided at 'title'. "
-                "Got None",
-                "error_code": "invalid_format",
-            },
-        ]
+        async def command(message):
+            if message["type"] == "lovelace/dashboards/list":
+                return {"result": []}
+            assert message["type"] == "lovelace/dashboards/create"
+            if "title" not in message:
+                return {
+                    "success": False,
+                    "error": "required key not provided at title",
+                    "error_code": "invalid_format",
+                }
+            return {
+                "success": True,
+                "result": {
+                    "id": "new-dashboard",
+                    "url_path": "new-map",
+                    "title": message["title"],
+                },
+            }
 
-        with pytest.raises(ToolError) as exc_info:
-            await set_tool(
-                url_path="new-map", icon="", require_admin=True, show_in_sidebar=False
-            )
-
-        assert mock_client.send_websocket_message.call_args_list[1].args[0] == {
+        mock_client.send_websocket_message.side_effect = command
+        result = await set_tool(
+            url_path="new-map", icon="", require_admin=True, show_in_sidebar=False
+        )
+        assert result["success"] is True
+        create = next(
+            c.args[0]
+            for c in mock_client.send_websocket_message.call_args_list
+            if c.args[0]["type"] == "lovelace/dashboards/create"
+        )
+        assert create == {
             "type": "lovelace/dashboards/create",
             "url_path": "new-map",
+            "title": "New Map",
             "require_admin": True,
             "show_in_sidebar": False,
         }
-        body = json.loads(str(exc_info.value))
-        assert body["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
-        assert "title" in body["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_existing_hyphenless_dashboard_full_config_update_is_allowed(

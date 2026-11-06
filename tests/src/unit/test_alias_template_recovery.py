@@ -52,14 +52,23 @@ async def test_alias_deletion_captures_before_remove_and_restores_exact_snapshot
         assert entry_id == "old-entry"
         # This check runs before destruction, so a post-delete capture cannot pass.
         fresh_snapshot()
-        recovery.state.entries.clear()
-        recovery.state.records.clear()
-        recovery.state.registry.clear()
+        for collection in (
+            recovery.state.entries,
+            recovery.state.records,
+            recovery.state.registry,
+        ):
+            collection.clear()
         return {}
 
     client.send_websocket_message = AsyncMock(side_effect=send)
     client.delete_config_entry = AsyncMock(side_effect=delete)
+    client.get_config_entry = AsyncMock(
+        side_effect=lambda entry_id: deepcopy(
+            next(row for row in recovery.state.entries if row["entry_id"] == entry_id)
+        )
+    )
     monkeypatch.setattr(auto_backup, "get_global_settings", lambda: manager._settings)
+    monkeypatch.setattr("ha_mcp.config.get_global_settings", lambda: manager._settings)
     monkeypatch.setattr(auto_backup, "get_backup_manager", lambda *_: manager)
     monkeypatch.setattr(
         helper_registry,

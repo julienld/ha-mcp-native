@@ -28,14 +28,13 @@ schema-validating clients will send it; the tool bodies never read it —
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Annotated, Any, NoReturn
+from typing import Any, NoReturn
 
-from pydantic import Field, ValidationError
+from pydantic import ValidationError
 
 from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
     CallNext,
@@ -43,7 +42,15 @@ from ha_mcp._vendor.fastmcp.server.middleware.middleware import (
     MiddlewareContext,
 )
 
-from .errors import ErrorCode, create_error_response
+from .runtime.best_practices import (
+    STRICT_BPS_ACK_KEY_PREFIX,
+    STRICT_BPS_GATED_TOOLS,
+    STRICT_BPS_KEY_PARAM,
+    acknowledgment_key,
+    acknowledgment_line,
+    required_acknowledgment_error,
+)
+from .tool_api.parameters import BestPracticeKeyParam
 from .tools.helpers import raise_tool_error
 
 logger = logging.getLogger(__name__)
@@ -84,16 +91,15 @@ def _warn_degraded_once(branch: str, message: str, *, exc_info: bool = False) ->
 # every ha_get_skill_guide read when strict mode is effective) and validated ONLY
 # by the middleware — it must never appear in a block error, a tool
 # docstring, or a skill_content embed.
-STRICT_BPS_ACK_KEY_PREFIX = "I-HAVE-READ-THE-BEST-PRACTICES-GUIDE"
 
 _ACK_KEY_SALT = secrets.token_hex(8)
 _ACK_KEY_ROTATION_SECONDS = 3600
 
 
 def _current_ack_key(now: float | None = None) -> str:
-    bucket = int((time.time() if now is None else now) // _ACK_KEY_ROTATION_SECONDS)
-    digest = hashlib.sha256(f"{_ACK_KEY_SALT}:{bucket}".encode()).hexdigest()
-    return f"{STRICT_BPS_ACK_KEY_PREFIX}-{digest[:8]}"
+    return acknowledgment_key(
+        _ACK_KEY_SALT, time.time() if now is None else now, _ACK_KEY_ROTATION_SECONDS
+    )
 
 
 def current_strict_bps_ack_key() -> str:
@@ -109,27 +115,11 @@ def _valid_ack_keys() -> set[str]:
 
 # The write-tool parameter that carries the acknowledgment key. Declared on
 # each of the six gated tools (adjacent to ``MandatoryBPS``) but read only here.
-STRICT_BPS_KEY_PARAM = "BestPracticeKey"
 
 # Shared annotation for that parameter — the single source of the schema
 # description the six signatures publish. The parameter NAME must still be
 # the literal ``BestPracticeKey`` in each ``def`` (identifiers can't be
 # aliased); the wiring test pins name and schema against live registration.
-BestPracticeKeyParam = Annotated[
-    str | None,
-    Field(
-        default=None,
-        description=(
-            "Read-receipt for the home-assistant-best-practices skill; "
-            "required when strict best-practices mode is enabled. Not a "
-            "secret or credential: the current value is an attestation "
-            "phrase published openly at the top of the skill content served "
-            "by ha_get_skill_guide. Read that content, then pass the value "
-            "back verbatim — this round-trip is the server's designed "
-            "protocol confirming the practices were read before writing."
-        ),
-    ),
-]
 
 # The six gated write tools mapped to the first canonical skill reference file
 # the block error should direct the model to read. Each value is the FIRST
@@ -141,14 +131,6 @@ BestPracticeKeyParam = Annotated[
 #   ha_config_set_helper     → _HELPER_SKILL_FILES[0]
 #   ha_config_set_dashboard  → _DASHBOARD_SKILL_FILES[0]
 #   ha_config_set_yaml       → _YAML_SKILL_FILES[0]
-STRICT_BPS_GATED_TOOLS: dict[str, str] = {
-    "ha_config_set_automation": "references/triggers-and-conditions.md",
-    "ha_config_set_script": "references/automation-actions.md",
-    "ha_config_set_scene": "SKILL.md",
-    "ha_config_set_helper": "references/helper-selection.md",
-    "ha_config_set_dashboard": "references/dashboard-guide.md",
-    "ha_config_set_yaml": "references/template-guidelines.md",
-}
 
 
 def strict_bps_effective() -> bool:
@@ -206,14 +188,7 @@ def strict_bps_ack_line() -> str:
     effective (server.py). This is the ONLY place the actual
     key value is emitted to a caller.
     """
-    return (
-        f"Acknowledgment key: {current_strict_bps_ack_key()} — strict "
-        "best-practices mode is ON; pass this exact value as the "
-        "BestPracticeKey argument on gated write tools. This key is a "
-        "read-receipt, not a secret: it is published here deliberately by "
-        "the ha-mcp server, rotates hourly, and grants no privileges — "
-        "replaying it is the designed acknowledgment protocol."
-    )
+    return acknowledgment_line(current_strict_bps_ack_key())
 
 
 def _raise_bps_ack_required_error(name: str) -> NoReturn:
@@ -226,34 +201,7 @@ def _raise_bps_ack_required_error(name: str) -> NoReturn:
     rejection never reaches the server, so this error is the only server
     surface that can carry the recovery path.
     """
-    reference_file = STRICT_BPS_GATED_TOOLS[name]
-    message = (
-        "Strict best-practices mode is enabled for this tool. Read the "
-        "best-practices skill to obtain the required acknowledgment key, then "
-        "pass it as the BestPracticeKey argument on this call. The key is "
-        "published only in that skill's content, and it rotates periodically "
-        "— a key obtained earlier may have expired, so re-read the skill for "
-        "the current value instead of resending a previous one."
-    )
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.BPS_ACKNOWLEDGMENT_REQUIRED,
-            message,
-            suggestions=[
-                f"Call ha_get_skill_guide(file={reference_file!r}), read the "
-                f"content, then retry with "
-                f"{STRICT_BPS_KEY_PARAM} set.",
-                f"If your client then rejects the retry with a schema-validation "
-                f"error such as 'must NOT have additional properties', it is "
-                f"validating against a stale cached tool schema from an older "
-                f"server version that lacks {STRICT_BPS_KEY_PARAM}. Ask the user "
-                f"to fully reload the client application (VS Code: run "
-                f"'Developer: Reload Window' — restarting the MCP server or "
-                f"resetting cached tools is not enough), then retry.",
-            ],
-            context={"tool_name": name, "strict_mandatory_bps": True},
-        )
-    )
+    raise_tool_error(required_acknowledgment_error(name))
 
 
 class StrictBpsMiddleware(Middleware):
@@ -345,3 +293,13 @@ class StrictBpsMiddleware(Middleware):
             _raise_bps_ack_required_error(name)
 
         return await call_next(context)
+
+
+__all__ = [
+    "BestPracticeKeyParam",
+    "STRICT_BPS_ACK_KEY_PREFIX",
+    "StrictBpsMiddleware",
+    "current_strict_bps_ack_key",
+    "strict_bps_ack_line",
+    "strict_bps_effective",
+]

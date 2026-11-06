@@ -2,14 +2,18 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from .._version import is_embedded
-from ..client.rest_client import HomeAssistantConnectionError
+from ..client.rest_client import (
+    HomeAssistantCommandNotSent,
+    HomeAssistantConnectionError,
+)
+from ..client.service_errors import HomeAssistantWebSocketServiceError
 from ..errors import ErrorCode, create_error_response
 from .helpers import exception_to_structured_error, raise_tool_error
 
@@ -32,17 +36,21 @@ def _schedule_embedded_restart(client: Any, data: dict[str, Any]) -> None:
         try:
             await client.call_service("homeassistant", "restart", data)
         except Exception as exc:
-            # No caller left to answer; WARNING is the level HA surfaces. A
-            # lost reply means the restart reached HA and it went down first
-            # (expected); a connect error or timeout may never have
-            # dispatched, so those keep the traceback.
-            if isinstance(exc.__cause__, httpx.ReadError | httpx.RemoteProtocolError):
+            # No caller remains. A lost acknowledgement does not prove either
+            # restart success or rejection, and must not trigger a retry.
+            if _restart_was_refused(exc):
                 logger.warning(
-                    "Deferred Home Assistant restart dispatched; HA closed the "
-                    "connection before replying (expected)"
+                    "Deferred Home Assistant restart was refused", exc_info=True
+                )
+            elif isinstance(exc.__cause__, httpx.ReadError | httpx.RemoteProtocolError):
+                logger.warning(
+                    "Deferred Home Assistant restart outcome is unknown; "
+                    "the connection closed before acknowledgement"
                 )
             else:
-                logger.warning("Deferred Home Assistant restart failed", exc_info=True)
+                logger.warning(
+                    "Deferred Home Assistant restart outcome is unknown", exc_info=True
+                )
 
     task = asyncio.get_running_loop().create_task(_restart())
     _RESTART_TASKS.add(task)
@@ -62,64 +70,15 @@ async def _core_info(client: Any, msg_type: str) -> dict[str, Any] | None:
 
 
 async def _embedded_precheck(client: Any, *, safe_mode: bool) -> list[str]:
-    """Refuse what Core would refuse; return the warnings for the reply."""
-    warnings = [
-        "Calls may fail while this server starts. Try again after a few seconds."
-    ]
-    if safe_mode:
-        warnings.append(
-            "Safe mode loads no custom integrations, and this server is "
-            "one: it stays down until Home Assistant is next "
-            "restarted normally."
-        )
-    # A missing field (older Core, renamed key) means the check was not made,
-    # so it warns like an unanswered command instead of passing silently.
+    from ha_mcp.runtime.system_values import restart_precheck_warnings
+    from ha_mcp.tool_api import ToolFailure
+
     recorder = await _core_info(client, "recorder/info")
-    if recorder is None or not isinstance(recorder.get("migration_in_progress"), bool):
-        warnings.append(
-            "Could not read the recorder status to check for a database "
-            "upgrade; Home Assistant refuses to restart during one."
-        )
-    elif recorder.get("migration_in_progress"):
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.RESOURCE_LOCKED,
-                "A database upgrade is in progress - restart refused",
-                details=(
-                    "Home Assistant cannot restart while the recorder "
-                    "is upgrading its database."
-                ),
-                context={"recorder": recorder},
-                suggestions=[
-                    "Wait for the upgrade to finish, then call "
-                    "ha_restart(confirm=True) again"
-                ],
-            )
-        )
     backup = await _core_info(client, "backup/info")
-    state = backup.get("state") if backup else None
-    if not isinstance(state, str):
-        warnings.append(
-            "Could not read the backup status to check for a running "
-            "backup; Home Assistant cannot restart during one."
-        )
-    elif state != "idle":
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.RESOURCE_LOCKED,
-                f"Backup manager is busy ({state}) - restart refused",
-                details=(
-                    "Home Assistant cannot restart while the backup manager is "
-                    "busy creating, receiving or restoring one."
-                ),
-                context={"backup_state": state},
-                suggestions=[
-                    "Wait for the backup to finish, then call "
-                    "ha_restart(confirm=True) again"
-                ],
-            )
-        )
-    return warnings
+    try:
+        return restart_precheck_warnings(recorder, backup, safe_mode=safe_mode)
+    except ToolFailure as error:
+        return raise_tool_error(error.data)
 
 
 async def restart_home_assistant(
@@ -131,6 +90,7 @@ async def restart_home_assistant(
             create_error_response(
                 ErrorCode.VALIDATION_INVALID_PARAMETER,
                 "Restart not confirmed",
+                context={"execution_status": "not_started"},
                 details=(
                     "You must set confirm=True to restart Home Assistant. "
                     "This is a safety measure to prevent accidental restarts."
@@ -158,7 +118,10 @@ async def restart_home_assistant(
                         "Home Assistant configuration has errors. "
                         "Fix the errors before restarting."
                     ),
-                    context={"config_errors": errors},
+                    context={
+                        "config_errors": errors,
+                        "execution_status": "not_started",
+                    },
                 )
             )
 
@@ -175,6 +138,8 @@ async def restart_home_assistant(
             _schedule_embedded_restart(client, data)
             return {
                 "success": True,
+                "requested": True,
+                "scheduled": True,
                 "message": (
                     "Home Assistant restart scheduled. This MCP server runs "
                     "inside Home Assistant and goes down with it; calls fail "
@@ -190,9 +155,10 @@ async def restart_home_assistant(
 
         return {
             "success": True,
+            "requested": True,
             "message": (
-                "Home Assistant restart initiated. "
-                "The system will be unavailable for 1-5 minutes."
+                "Home Assistant accepted the restart request. "
+                "Completion is not confirmed; the system may be unavailable for 1-5 minutes."
             ),
             "warnings": [
                 "Connection will be lost during restart. "
@@ -202,30 +168,35 @@ async def restart_home_assistant(
 
     except ToolError:
         raise
-    except Exception as e:  # noqa: BLE001
-        error_msg = str(e)
-        # Connection errors after restart initiated are expected
-        # (HA closes connections during restart)
-        if restart_initiated and any(
-            pattern in error_msg.lower()
-            for pattern in (
-                "connect",
-                "closed",
-                "504",
-                "502",
-                "503",
-                "gateway",
-                "unavailable",
-            )
-        ):
-            return {
-                "success": True,
-                "message": (
-                    "Home Assistant restart initiated. "
-                    "Connection was closed as expected during restart."
-                ),
-                "warnings": ["Wait 1-5 minutes for Home Assistant to restart."],
-            }
+    except Exception as error:
+        _raise_restart_error(error, dispatched=restart_initiated)
+        raise
 
-        exception_to_structured_error(e)
-        return None  # unreachable: exception_to_structured_error always raises
+
+def _restart_was_refused(error: Exception) -> bool:
+    if isinstance(error, HomeAssistantCommandNotSent):
+        return True
+    if isinstance(error, HomeAssistantWebSocketServiceError):
+        # Core catches validation/not-found/auth errors around async_call, so
+        # native provenance does not prove no handler work happened. Only the
+        # router's unknown command guarantees no service handler was selected.
+        return error.code == "unknown_command"
+    return False
+
+
+def _raise_restart_error(error: Exception, *, dispatched: bool) -> NoReturn:
+    if not dispatched or _restart_was_refused(error):
+        payload = exception_to_structured_error(error, raise_error=False)
+        payload["execution_status"] = "not_started"
+    else:
+        payload = create_error_response(
+            ErrorCode.SERVICE_CALL_FAILED,
+            "Home Assistant restart was requested but its outcome is unknown.",
+            details=str(error),
+            context={"operation": "restart", "write_outcome_unknown": True},
+            suggestions=[
+                "Check Home Assistant's availability and uptime before retrying; the restart may already have happened.",
+            ],
+        )
+        payload["execution_status"] = "outcome_unknown"
+    raise_tool_error(payload)

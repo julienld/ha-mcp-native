@@ -13,7 +13,6 @@ import httpx
 from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp._vendor.fastmcp.tools import tool
 
 from ..client.event_listeners import MATCH_ALL_EVENT_KEY, get_event_listeners
 from ..client.rest_client import (
@@ -38,10 +37,8 @@ from .event_listener_fields import event_listener_fields
 from .helpers import (
     _parse_json_dict_param,
     exception_to_structured_error,
-    log_tool_usage,
     raise_tool_error,
 )
-from .tool_hints import write_hints
 
 logger = logging.getLogger(__name__)
 
@@ -233,14 +230,6 @@ class EventCallMixin:
     # in isolation (same pattern as smart_search._base._SearchBase).
     _client: HomeAssistantClient
 
-    @tool(
-        name="ha_call_event",
-        tags={"Service & Device Control"},
-        annotations=write_hints(
-            "Call Event", destructive=True, idempotent=False, open_world=False
-        ),
-    )
-    @log_tool_usage
     async def ha_call_event(
         self,
         event_type: Annotated[
