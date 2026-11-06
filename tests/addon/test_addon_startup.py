@@ -522,16 +522,21 @@ class TestWidenFastmcpLogConsole:
     def addon(self):
         self.addon = _load_addon_start()
 
-    def test_startup_url_stays_on_one_line(self):
+    @pytest.mark.parametrize("private_sdk", [False, True])
+    def test_startup_url_stays_on_one_line(self, private_sdk):
         import io
         import logging
 
-        from rich.console import Console
-        from rich.logging import RichHandler
+        if private_sdk:
+            import ha_mcp._vendor.rich.logging as rich_logging
+            from ha_mcp._vendor.rich.console import Console
+        else:
+            import rich.logging as rich_logging
+            from rich.console import Console
 
         stream = io.StringIO()
         # Explicit width=80 mirrors rich's non-TTY default in the container.
-        handler = RichHandler(console=Console(file=stream, width=80))
+        handler = rich_logging.RichHandler(console=Console(file=stream, width=80))
         logger = logging.getLogger("fastmcp")
         # Detach any real fastmcp handlers so the widen only touches the
         # test's handler (and the fake URL line stays out of stderr).
@@ -559,12 +564,14 @@ class TestWidenFastmcpLogConsole:
         import io
         import logging
 
+        import rich.logging as rich_logging
         from rich.console import Console
-        from rich.logging import RichHandler
 
         logger = logging.getLogger("fastmcp")
         plain = logging.StreamHandler()
-        rich_handler = RichHandler(console=Console(file=io.StringIO(), width=80))
+        rich_handler = rich_logging.RichHandler(
+            console=Console(file=io.StringIO(), width=80)
+        )
         saved = logger.handlers[:]
         for pre_existing in saved:
             logger.removeHandler(pre_existing)
