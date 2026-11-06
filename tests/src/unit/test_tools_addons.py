@@ -3006,9 +3006,10 @@ class TestCallAddonWsNewParams:
         # Patch the size cap to something tiny so a single message triggers it.
         with (
             patch(
-                "ha_mcp.tools.tools_addons._MAX_RESPONSE_SIZE",
+                "ha_mcp.runtime.app_proxy_results._MAX_RESPONSE_SIZE",
                 10,
             ),
+            patch("ha_mcp.tools.tools_addons._MAX_RESPONSE_SIZE", 10),
             patch(
                 "ha_mcp.tools.tools_addons.get_addon_info",
                 new_callable=AsyncMock,
@@ -3447,18 +3448,10 @@ class TestManageAddon:
     @pytest.fixture
     def mock_mcp(self):
         """Create a mock MCP server that captures registered tools."""
-        mcp = MagicMock()
+        from ._tool_capture import capture_tool_registration
+
         self.registered_tools = {}
-
-        def tool_decorator(*args, **kwargs):
-            def wrapper(func):
-                self.registered_tools[func.__name__] = func
-                return func
-
-            return wrapper
-
-        mcp.tool = tool_decorator
-        return mcp
+        return capture_tool_registration(self.registered_tools)
 
     @pytest.fixture
     def mock_client(self):

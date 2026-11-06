@@ -401,7 +401,7 @@ def test_as_documents_pin_the_claude_cimd_selection_contract():
     from custom_components.ha_mcp_tools.const import OAUTH_BASE
 
     base = "https://ha.example"
-    ha_auth_doc = mcp_webhook._authorization_server_document(base)
+    ha_auth_doc = mcp_webhook._authorization_server_document(base, "2026.10.3")
     none_doc = mcp_webhook._none_mode_authorization_server_document(base)
     legacy_doc = mcp_webhook._legacy_authorization_server_document(base)
 

@@ -1,0 +1,445 @@
+{
+  "format_version": 1,
+  "retired_revision": "8857277613c45de8cc45582e3cd565a0c1f804f9",
+  "scope": "Scenario-by-scenario replacement of retired entity registry server-adapter tests; test functions are mapped before parameter expansion.",
+  "owners": {
+    "entity": "Public entity-ID keyed history; state and registry-shaped images select their actual owner before target resolution and safety capture",
+    "entity_registry_legacy": "ha_mcp.backends.legacy_entity_snapshots resolves durable UUIDs; reads interim UUID-keyed registry files and upstream entity-ID keyed registry images",
+    "entity_registry_native": "NativeEntityRegistry through NativeSnapshots, UUID resolution with public entity-ID safety captures"
+  },
+  "records": [
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_restore_gives_back_the_snapshot",
+      "status": "transferred",
+      "reason": "Real UUID handler restores full user settings, options and a same-UUID safety image.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_snapshot_holds_the_registry_fields_and_options",
+      "status": "covered",
+      "reason": "Actual automatic captures preserve the complete Core registry row and every bulk target under its public entity ID, retaining its UUID in the image.",
+      "coverage": [
+        "tests/src/unit/test_entity_registry_snapshots.py::test_entity_tools_capture_registry_fields_under_public_entity_ids"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_entity_without_a_registry_entry_has_no_snapshot",
+      "status": "transferred",
+      "reason": "No registration means no registry snapshot, not a fabricated state.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_missing_registry_entry_creates_no_history"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_only_re_enabling_asks_for_a_restart",
+      "status": "transferred",
+      "reason": "The actual legacy UUID handler restores settings and propagates Core restart flags only when re-enabling; metadata is checked from the real Core reply shape.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting",
+        "tests/src/unit/test_entity_backup.py::test_only_enabling_registry_restore_propagates_core_restart_flag"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_a_hider_only_core_sets_is_left_with_cores_refusal",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_entity_of_a_disabled_device_is_left_with_cores_refusal",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_entity_its_integration_hid_since_is_shown_again",
+      "status": "covered",
+      "reason": "Core's registered component command retains its hider behavior; UUID history delegates to the actual registry owner.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_hidden_entity_is_shown_again",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_exposure_is_set_before_the_options_write",
+      "status": "covered",
+      "reason": "Core's component command handles exposure; canonical history restores the saved options without synthetic exposure writes.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_exposure_goes_to_core_before_the_options_write",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_assistant_the_backup_holds_nothing_for_is_reset",
+      "status": "transferred",
+      "reason": "Real UUID handler restores full user settings, options and a same-UUID safety image.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_unreadable_area_registry_refuses_the_restore",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_an_unexpected_core_error_on_a_hider_fails_the_restore",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_a_deleted_area_label_or_category_refuses_the_restore",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_a_registry_read_error_fails_the_snapshot",
+      "status": "transferred",
+      "reason": "A registry read error remains a failed capture.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_capture_propagates_read_failure"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_a_removed_entity_points_to_restarting_home_assistant",
+      "status": "domain_contract_changed",
+      "reason": "Deleted registry UUIDs cannot be recreated by history. Core's command still reports retained deleted entries; history no longer promises that a restart recreates a registration.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_removed_entry_says_what_core_keeps",
+        "tests/src/unit/test_entity_backup.py::test_deleted_registry_history_does_not_recreate_a_state_or_registration"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestEntityBackup::test_a_state_snapshot_from_an_earlier_version_is_refused",
+      "status": "domain_contract_changed",
+      "reason": "State-shaped entity payloads retain their original StateMachine meaning; registry-shaped entity and interim entity_registry images select the registry owner before safety. Mixed formats and state payloads claimed as registry history are refused without writes.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_state_payload_cannot_be_restored_as_registry_history",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_old_entity_state_history_keeps_its_original_domain_semantics",
+        "tests/src/unit/test_native_snapshot_entity_state.py::test_old_entity_snapshot_reads_real_state_and_restores_only_state_attributes",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_upstream_entity_registry_history_restores_by_uuid_before_safety"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestStateSnapshotFromAnEarlierVersion::test_restore_writes_no_safety_backup",
+      "status": "domain_contract_changed",
+      "reason": "State-shaped entity payloads retain their original StateMachine meaning; registry-shaped entity and interim entity_registry images select the registry owner before safety. Mixed formats and state payloads claimed as registry history are refused without writes.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_state_payload_cannot_be_restored_as_registry_history",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_old_entity_state_history_keeps_its_original_domain_semantics",
+        "tests/src/unit/test_native_snapshot_entity_state.py::test_old_entity_snapshot_reads_real_state_and_restores_only_state_attributes",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_upstream_entity_registry_history_restores_by_uuid_before_safety"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestStateSnapshotFromAnEarlierVersion::test_diff_is_refused",
+      "status": "domain_contract_changed",
+      "reason": "State-shaped entity payloads retain their original StateMachine meaning; registry-shaped entity and interim entity_registry images select the registry owner before safety. Mixed formats and state payloads claimed as registry history are refused without writes.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_state_payload_cannot_be_restored_as_registry_history",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_old_entity_state_history_keeps_its_original_domain_semantics",
+        "tests/src/unit/test_native_snapshot_entity_state.py::test_old_entity_snapshot_reads_real_state_and_restores_only_state_attributes",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_upstream_entity_registry_history_restores_by_uuid_before_safety"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedWhileWaiting::test_a_rename_between_lookup_and_lock_writes_nothing",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedWhileWaiting::test_a_rename_back_holds_both_entity_locks_in_order",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::test_the_current_entity_id_follows_the_entry",
+      "status": "covered",
+      "reason": "Alias capture and diff follow the same registration UUID after rename, including a reassigned old alias.",
+      "coverage": [
+        "tests/src/unit/test_entity_registry_capture_identity.py::test_alias_capture_can_restore_the_same_registration_after_rename",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_snapshot_identity_mismatch_is_refused_before_read_or_write"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_restore_backs_up_the_renamed_entity_first",
+      "status": "transferred",
+      "reason": "Real UUID handler restores full user settings, options and a same-UUID safety image.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_rename_during_the_safety_backup_stops_the_restore",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_an_edit_queued_during_the_safety_backup_waits_for_the_write",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_rename_past_the_held_locks_stops_the_restore",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_rename_back_holds_both_ids_from_the_safety_backup",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_failed_lock_lookup_keeps_the_restore_outcome",
+      "status": "covered",
+      "reason": "Canonical restore preserves unknown outcome and cancellation ownership, without replay or further phases.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_failure_after_first_write_never_replays_or_loses_safety",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_confirm_a_last_phase_changed_by_a_listener",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure",
+        "tests/src/unit/test_native_snapshot_restore.py::test_cancellation_does_not_release_source_pin_while_safety_io_runs"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_cancel_during_the_lock_lookup_writes_nothing",
+      "status": "covered",
+      "reason": "Canonical restore preserves unknown outcome and cancellation ownership, without replay or further phases.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_failure_after_first_write_never_replays_or_loses_safety",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_confirm_a_last_phase_changed_by_a_listener",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure",
+        "tests/src/unit/test_native_snapshot_restore.py::test_cancellation_does_not_release_source_pin_while_safety_io_runs"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_an_entry_not_locked_before_the_safety_backup_is_not_written",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_backup_without_an_entity_id_is_refused",
+      "status": "covered",
+      "reason": "Malformed registry identities are refused by the real registry history owner.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_state_payload_cannot_be_restored_as_registry_history",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_snapshot_identity_mismatch_is_refused_before_read_or_write"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_diff_compares_with_the_renamed_entity",
+      "status": "covered",
+      "reason": "Alias capture and diff follow the same registration UUID after rename, including a reassigned old alias.",
+      "coverage": [
+        "tests/src/unit/test_entity_registry_capture_identity.py::test_alias_capture_can_restore_the_same_registration_after_rename",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_snapshot_identity_mismatch_is_refused_before_read_or_write"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_a_removed_entity_is_named_by_its_entity_id",
+      "status": "domain_contract_changed",
+      "reason": "Deleted registry UUIDs cannot be recreated by history. Core's command still reports retained deleted entries; history no longer promises that a restart recreates a registration.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_removed_entry_says_what_core_keeps",
+        "tests/src/unit/test_entity_backup.py::test_deleted_registry_history_does_not_recreate_a_state_or_registration"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::TestRenamedEntity::test_an_entity_now_holding_the_old_id_stops_the_rename_back",
+      "status": "concurrency_contract_replaced",
+      "reason": "Canonical owners admit an exact UUID/image and refuse changes rather than rebase. Tests check no wrong-target write before/after safety I/O; obsolete lock-hook ordering is not a public contract.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_restore_rejects_identity_changes_during_safety_io",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_update_a_replacement_after_first_phase",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_history_conflict_after_safety_capture_never_rebases"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup.py::test_a_bulk_call_backs_up_no_entity",
+      "status": "covered",
+      "reason": "Actual automatic captures preserve the complete Core registry row and every bulk target under its public entity ID, retaining its UUID in the image.",
+      "coverage": [
+        "tests/src/unit/test_entity_registry_snapshots.py::test_entity_tools_capture_registry_fields_under_public_entity_ids"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_the_component_writes_a_hider_only_core_sets",
+      "status": "covered",
+      "reason": "Core's registered component command retains its hider behavior; UUID history delegates to the actual registry owner.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_hidden_entity_is_shown_again",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_a_disabler_change_stays_in_the_component_write",
+      "status": "transport_contract_replaced",
+      "reason": "The retired server adapter's warnings/enable split are not produced by the new native owner. Core's actual registered command remains covered; history uses Core's typed settings/options owner and preserves failure phases.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_every_field_goes_in_one_update",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_the_components_warnings_reach_the_result",
+      "status": "transport_contract_replaced",
+      "reason": "The retired server adapter's warnings/enable split are not produced by the new native owner. Core's actual registered command remains covered; history uses Core's typed settings/options owner and preserves failure phases.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_every_field_goes_in_one_update",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_the_component_enables_through_cores_update",
+      "status": "transport_contract_replaced",
+      "reason": "The retired server adapter's warnings/enable split are not produced by the new native owner. Core's actual registered command remains covered; history uses Core's typed settings/options owner and preserves failure phases.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_every_field_goes_in_one_update",
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_the_component_says_what_core_keeps_of_a_removed_entity",
+      "status": "domain_contract_changed",
+      "reason": "Deleted registry UUIDs cannot be recreated by history. Core's command still reports retained deleted entries; history no longer promises that a restart recreates a registration.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_removed_entry_says_what_core_keeps",
+        "tests/src/unit/test_entity_backup.py::test_deleted_registry_history_does_not_recreate_a_state_or_registration"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_an_entry_removed_before_the_component_write_is_reported",
+      "status": "domain_contract_changed",
+      "reason": "Deleted registry UUIDs cannot be recreated by history. Core's command still reports retained deleted entries; history no longer promises that a restart recreates a registration.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_removed_entry_says_what_core_keeps",
+        "tests/src/unit/test_entity_backup.py::test_deleted_registry_history_does_not_recreate_a_state_or_registration"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_a_core_refusal_in_the_component_writes_nothing",
+      "status": "transferred",
+      "reason": "Core owns reference/hider/device validation; refusal leaves the current registration unchanged.",
+      "coverage": [
+        "tests/src/unit/test_component_entity_restore.py::test_a_disabler_core_sets_from_a_parent_needs_that_parent_disabled",
+        "tests/src/unit/test_component_entity_restore.py::test_cores_refusal_writes_nothing",
+        "tests/src/unit/test_entity_backup.py::test_core_refusal_of_registry_restore_never_changes_the_entity"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_a_component_refusal_says_what_it_knows_was_written",
+      "status": "covered",
+      "reason": "Canonical restore preserves unknown outcome and cancellation ownership, without replay or further phases.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_failure_after_first_write_never_replays_or_loses_safety",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_confirm_a_last_phase_changed_by_a_listener",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure",
+        "tests/src/unit/test_native_snapshot_restore.py::test_cancellation_does_not_release_source_pin_while_safety_io_runs"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_an_error_after_the_component_write_was_sent_is_unknown",
+      "status": "covered",
+      "reason": "Canonical restore preserves unknown outcome and cancellation ownership, without replay or further phases.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_failure_after_first_write_never_replays_or_loses_safety",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_confirm_a_last_phase_changed_by_a_listener",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure",
+        "tests/src/unit/test_native_snapshot_restore.py::test_cancellation_does_not_release_source_pin_while_safety_io_runs"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_an_empty_component_reply_is_not_followed_by_core_writes",
+      "status": "covered",
+      "reason": "Canonical restore preserves unknown outcome and cancellation ownership, without replay or further phases.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_failure_after_first_write_never_replays_or_loses_safety",
+        "tests/src/unit/test_entity_registry_snapshots.py::test_registry_restore_does_not_confirm_a_last_phase_changed_by_a_listener",
+        "tests/src/unit/test_native_snapshot_entity_registry.py::test_registry_restore_keeps_confirmed_phase_details_on_later_failure",
+        "tests/src/unit/test_native_snapshot_restore.py::test_cancellation_does_not_release_source_pin_while_safety_io_runs"
+      ]
+    },
+    {
+      "retired": "tests/src/unit/test_entity_backup_component.py::TestComponentRestore::test_a_component_without_the_commands_falls_back",
+      "status": "transport_contract_replaced",
+      "reason": "Native history never falls back to component WS commands; legacy UUID history directly uses Core registry commands. Tests exercise both actual owners.",
+      "coverage": [
+        "tests/src/unit/test_entity_backup.py::test_registry_backup_restores_each_user_setting",
+        "tests/src/unit/test_entity_backup_component.py::test_native_registry_restore_refuses_identity_changes_after_safety_capture"
+      ]
+    }
+  ]
+}

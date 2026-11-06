@@ -1,9 +1,9 @@
 """Shared ``sys.modules`` stubs for the in-process embedded-server unit tests.
 
-Home Assistant and ``aiohttp`` are not installed in the unit-test environment,
-so the component modules under test — ``embedded_server``, ``mcp_webhook``, and
-``embedded_setup`` — cannot import their top-level ``homeassistant.*`` / aiohttp
-dependencies. This module installs lightweight fakes for exactly that surface,
+Home Assistant is not installed in the unit-test environment. Component tests
+also use recording aiohttp responses; the genuine dev dependency is exercised
+in isolated HTTP probes and the upstream-contract tests. This module installs
+lightweight fakes for that component import and response surface,
 installing ``sys.modules`` fakes for the auth / requirements / http /
 webhook / issue-registry / aiohttp modules the embedded server and webhook
 ingress need.
@@ -23,10 +23,10 @@ chunks without a real event loop.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -123,6 +123,17 @@ class HomeAssistantError(Exception):
     """Stand-in for ``homeassistant.exceptions.HomeAssistantError``."""
 
 
+class ConfigFlow:
+    """Subclassable config-flow base, accepting Core's domain declaration."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        pass
+
+
+class OptionsFlow:
+    """Subclassable options-flow base with no framework execution."""
+
+
 # ---------------------------------------------------------------------------
 # LLM-API fakes (``homeassistant.helpers.llm``, issue #1745)
 # ---------------------------------------------------------------------------
@@ -133,12 +144,33 @@ class HomeAssistantError(Exception):
 # mirroring the frontend-panel fakes below.
 
 
+@dataclass(slots=True)
+class LlmToolResult:
+    """Core 2026.10's result object; deliberately not a mapping."""
+
+    data: dict[str, Any]
+    error: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LlmToolAnnotations:
+    """Core 2026.10's tool safety metadata and least-safe defaults."""
+
+    read_only: bool = False
+    destructive: bool = True
+    idempotent: bool = False
+    open_world: bool = True
+
+
 class LlmTool:
     """Stand-in for ``homeassistant.helpers.llm.Tool``."""
 
     name: str
+    title: str | None = None
     description: str | None = None
     parameters: Any = None
+    annotations: LlmToolAnnotations = LlmToolAnnotations()
+    integration: str | None = None
 
 
 @dataclass(slots=True)
@@ -158,6 +190,8 @@ class LlmToolInput:
 
     tool_name: str
     tool_args: dict[str, Any] = field(default_factory=dict)
+    id: str = "test-tool-input"
+    external: bool = False
 
 
 @dataclass
@@ -185,7 +219,7 @@ _FAKE_LLM_APIS_KEY = "_fake_llm_apis"
 
 def fake_llm_apis(hass: Any) -> dict[str, Any]:
     """Return the per-hass fake LLM-API registry (tests assert on it)."""
-    return hass.data.setdefault(_FAKE_LLM_APIS_KEY, {})
+    return cast(dict[str, Any], hass.data.setdefault(_FAKE_LLM_APIS_KEY, {}))
 
 
 def _llm_async_register_api(hass: Any, api: Any) -> Any:
@@ -383,7 +417,7 @@ def _pin_llm_on_helpers() -> None:
     helpers = sys.modules.get("homeassistant.helpers")
     llm_mod = sys.modules.get("homeassistant.helpers.llm")
     if helpers is not None and llm_mod is not None:
-        helpers.llm = llm_mod
+        cast(Any, helpers).llm = llm_mod
 
 
 def _install_frontend_and_selector_stubs(
@@ -396,7 +430,7 @@ def _install_frontend_and_selector_stubs(
     _FAKE_PANELS_KEY = "_fake_frontend_panels"
 
     def _panels(hass: Any) -> dict[str, Any]:
-        return hass.data.setdefault(_FAKE_PANELS_KEY, {})
+        return cast(dict[str, Any], hass.data.setdefault(_FAKE_PANELS_KEY, {}))
 
     def _async_panel_exists(hass: Any, frontend_url_path: str) -> bool:
         return frontend_url_path in _panels(hass)
@@ -439,6 +473,10 @@ def _install_frontend_and_selector_stubs(
         DROPDOWN = "dropdown"
         LIST = "list"
 
+    class _SelectOptionDict(TypedDict):
+        value: str
+        label: str
+
     class _TextSelectorType:
         TEXT = "text"
         PASSWORD = "password"
@@ -446,6 +484,7 @@ def _install_frontend_and_selector_stubs(
 
     setmod(
         "homeassistant.helpers.selector",
+        SelectOptionDict=_SelectOptionDict,
         SelectSelector=_SelectSelector,
         SelectSelectorConfig=_SelectSelectorConfig,
         SelectSelectorMode=_SelectSelectorMode,
@@ -453,6 +492,19 @@ def _install_frontend_and_selector_stubs(
         TextSelectorConfig=_SelectSelectorConfig,
         TextSelectorType=_TextSelectorType,
     )
+
+
+def _install_yaml_provider() -> None:
+    if "annotatedyaml" not in sys.modules:
+        provider = ModuleType("annotatedyaml")
+        provider.SECRET_YAML = "secrets.yaml"
+        provider.Secrets = MagicMock()
+        loader = ModuleType("annotatedyaml.loader")
+        loader.FastSafeLoader = SimpleNamespace(
+            yaml_constructors={"!secret": None, "!input": None}
+        )
+        sys.modules["annotatedyaml"] = provider
+        sys.modules["annotatedyaml.loader"] = loader
 
 
 def install() -> None:
@@ -473,6 +525,8 @@ def install() -> None:
             setattr(mod, key, value)
         sys.modules[name] = mod
         return mod
+
+    _install_yaml_provider()
 
     # Generic MagicMock modules — only if a peer test hasn't already stubbed
     # them, so we never clobber a shape another module set up (e.g. the
@@ -496,7 +550,14 @@ def install() -> None:
     # embedded_entry decorates a real closure with it and needs that exact
     # function back. Safe to set unconditionally — the only other module that
     # configures this (test_config_flow.py) uses the same identity function.
-    sys.modules["homeassistant.core"].callback = lambda func: func
+    cast(Any, sys.modules["homeassistant.core"]).callback = lambda func: func
+
+    # A MagicMock base replaces the subclass with another mock, hiding class
+    # attributes such as migration versions. Keep peer-provided real bases.
+    config_entries = sys.modules["homeassistant.config_entries"]
+    for name, base in (("ConfigFlow", ConfigFlow), ("OptionsFlow", OptionsFlow)):
+        if not isinstance(getattr(config_entries, name, None), type):
+            setattr(config_entries, name, base)
 
     # Specific-shape modules the embedded chain imports. Not stubbed by any
     # other unit-test module, so a direct assignment is safe.
@@ -548,6 +609,8 @@ def install() -> None:
     setmod(
         "homeassistant.helpers.llm",
         Tool=LlmTool,
+        ToolResult=LlmToolResult,
+        ToolAnnotations=LlmToolAnnotations,
         LLMContext=LlmLLMContext,
         ToolInput=LlmToolInput,
         APIInstance=LlmAPIInstance,
@@ -555,10 +618,10 @@ def install() -> None:
         async_register_api=_llm_async_register_api,
     )
     _pin_llm_on_helpers()
-    # HA Core's schema conversion dependency differs across supported releases:
-    # stable uses voluptuous_openapi while 2026.9+ provides Probatio. Pass-through
-    # conversion keeps these unit tests focused on wiring; compatibility selection
-    # itself is covered in test_llm_api.
+    # The component declares voluptuous_openapi for schema fidelity on current
+    # Core; Probatio is its degraded fallback if that requirement is missing.
+    # Pass-through conversion keeps these tests focused on wiring; codec
+    # selection itself is covered in test_llm_api.
     setmod(
         "voluptuous_openapi",
         convert_to_voluptuous=lambda schema: {"_converted": schema},
@@ -596,12 +659,20 @@ def install() -> None:
     setmod("homeassistant.exceptions", HomeAssistantError=HomeAssistantError)
     setmod(
         "homeassistant.const",
-        __version__="2026.8.0",
+        __version__="2026.10.0",
     )
 
     aiohttp_mod = _make_fake_aiohttp()
+    helpers = ModuleType("aiohttp.helpers")
+    helpers.must_be_empty_body = lambda method, status: (
+        method.upper() == "HEAD"
+        or 100 <= status < 200
+        or status in {204, 304}
+        or (method.upper() == "CONNECT" and 200 <= status < 300)
+    )
     sys.modules["aiohttp"] = aiohttp_mod
-    sys.modules["aiohttp.web"] = aiohttp_mod.web  # type: ignore[attr-defined]
+    sys.modules["aiohttp.web"] = aiohttp_mod.web
+    sys.modules["aiohttp.helpers"] = helpers
 
     _INSTALLED = True
 
@@ -652,7 +723,7 @@ class FakeUpstream:
     async def read(self) -> bytes:
         return self._body
 
-    async def _iter_any(self):
+    async def _iter_any(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
             yield chunk
         if self._stream_exc is not None:

@@ -208,12 +208,12 @@ volumes:
           </div>`
             : `<div class="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-3">
             <p class="text-slate-300 text-sm font-medium">Your connect URL (via tunnel / reverse proxy)</p>
-            <p class="text-slate-400 text-xs mt-1">Point the tunnel or reverse proxy below at the component's own port (default <code class="bg-slate-800 px-1 rounded">9584</code>). Your MCP URL is then <code class="bg-slate-800 px-1 rounded">https://&lt;your-host&gt;/private_&lt;random&gt;</code> using the direct-access path from the entry's Configure screen. If the tunnel runs on another machine, set <strong>Network access</strong> to <strong>Local network</strong> in the integration options. For most setups the built-in webhook is simpler.</p>
+            <p class="text-slate-400 text-xs mt-1">Point the tunnel or reverse proxy below at Home Assistant's existing HTTP server (default <code class="bg-slate-800 px-1 rounded">8123</code>; use your actual port and TLS configuration). Keep the connect URL's <code>/api/webhook/&lt;webhook-id&gt;</code> path. Native opens no separate server port. Enable <strong>Remote access via webhook</strong> in the integration options; it also supplies local access through Home Assistant.</p>
           </div>`)
         : `<div class="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-3">
             <p class="text-slate-300 text-sm font-medium">Your connect URL (local)</p>
-            <p class="text-slate-400 text-xs mt-1">Use the direct LAN URL from the entry's Configure screen: <code class="bg-slate-800 px-1 rounded">http://&lt;ha-ip&gt;:9584/private_&lt;random&gt;</code>. New server entries listen on the Home Assistant machine only; to reach this URL from another device, set <strong>Network access</strong> to <strong>Local network</strong> in the integration options.</p>
-            <p class="text-slate-400 text-xs mt-2"><strong class="text-slate-300">Want local-only?</strong> Turn off <strong>Remote access via webhook</strong> in the entry options — no webhook is registered at all; the direct port and sidebar panel keep working.</p>
+            <p class="text-slate-400 text-xs mt-1">Use Home Assistant's local base URL with the webhook path from the entry's Configure screen: <code class="bg-slate-800 px-1 rounded">http://&lt;ha-host&gt;:8123/api/webhook/&lt;webhook-id&gt;</code>. Use your actual Home Assistant port and TLS configuration. Enable <strong>Remote access via webhook</strong> for this endpoint, including local clients; Native opens no separate port.</p>
+            <p class="text-slate-400 text-xs mt-2"><strong class="text-slate-300">Local-only access:</strong> use a Home Assistant address reachable only on your trusted network and review your existing external proxies. Turning the webhook off removes the MCP endpoint; the administrator sidebar panel remains available.</p>
           </div>`;
       deployInstr = `<div class="instruction-block">
           <h3 class="instruction-title">HA Custom Component (in-process server)</h3>
@@ -224,7 +224,7 @@ volumes:
           <ol class="text-sm text-slate-300 space-y-2 list-decimal list-inside">
             <li>Install <strong>HA-MCP Custom Component</strong> from HACS, the Marketplace on Home Assistant 2026.11+ (or copy <code class="bg-slate-800 px-1 rounded">custom_components/ha_mcp_tools/</code> into <code class="bg-slate-800 px-1 rounded">config/custom_components/</code>), then restart Home Assistant.</li>
             <li>Go to <strong>Settings → Devices &amp; Services → Add Integration</strong>, search <strong>HA-MCP Custom Component</strong>, and choose <strong>HA-MCP Server</strong>.</li>
-            <li>In the form, paste an <strong>Administrator access token</strong> (your profile → <strong>Security</strong> → <strong>Long-lived access tokens</strong> → <strong>Create token</strong>; your own works from anywhere if it leaks and the server's changes show under your name), or, safer, enter the user name and password of an account made just for HA-MCP under <strong>Settings → People</strong> with <strong>Local access only</strong> and <strong>Administrator</strong> on (never your own login), and HA-MCP creates its token. Then pick how clients may connect (this form is from version 9.0.0 (October 28, 2026); earlier versions show a shorter one). Both options start off, so a client on another device needs one of them: <strong>Remote access through Home Assistant</strong> — start with <strong>Secret URL</strong> (the connect URL is the credential, nothing else to set up; switch to <strong>Home Assistant sign-in</strong> later if you want a login) — and/or <strong>Network access: Local network</strong> for clients on your LAN. Leaving both off keeps the server reachable only from the Home Assistant machine. Submit — creating the entry starts the server (the first start takes a little longer while it installs the package).</li>
+            <li>New entries use the <strong>Native</strong> runtime. Select an active human <strong>administrator owner</strong> for the server; Native does not need an internal access token. Enable <strong>Remote access through Home Assistant</strong> to expose the MCP webhook, including for local clients. Choose <strong>Secret URL</strong> (the URL is the credential), <strong>Home Assistant sign-in</strong>, or legacy OAuth when required by your client. Submit to start the server. Existing entries keep their runtime and connection settings; inspect them before switching from Legacy.</li>
             <li>Copy the connect URL from the entry's <strong>Configure</strong> screen (a notification points you there).</li>
             <li>Paste it into ${state.client.name} using the config below.</li>
           </ol>
@@ -268,10 +268,11 @@ sudo apt update && sudo apt install cloudflared
 # Or use Docker
 docker run cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:${serverPort}</code></pre>
           <p class="text-xs text-slate-500 mt-2 mb-3">More options: <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Cloudflare Downloads</a></p>
-          <p class="text-slate-300 mb-2">Quick tunnel (temporary URL - changes on restart):</p>
+          ${isComponent ? '<p class="text-amber-200 text-sm mb-3"><strong>Home Assistant shares this listener.</strong> This quick tunnel publishes all Home Assistant routes, including its UI and API. Keeping the webhook path in your MCP URL does not restrict tunnel routing. Use it only when you intend to expose the full Home Assistant web service; use the MCP-only named-tunnel example below for a restricted secret-URL or bearer endpoint.</p>' : ''}
+          <p class="text-slate-300 mb-2">${isComponent ? 'Full Home Assistant quick tunnel' : 'Quick tunnel'} (temporary URL - changes on restart):</p>
           <pre class="code-block"><code>cloudflared tunnel --url http://localhost:${serverPort}</code></pre>
           <p class="text-sm text-slate-400 mt-2">This gives you a URL like <code>https://random-words.trycloudflare.com</code></p>
-          <p class="text-sm text-brand font-medium">Your MCP URL: <code>https://random-words.trycloudflare.com/${hasOwnPath ? '&lt;your-secret-path&gt;' : 'private_{{RANDOM_STRING}}'}</code></p>
+          <p class="text-sm text-brand font-medium">Your MCP URL: <code>https://random-words.trycloudflare.com/${isComponent ? 'api/webhook/&lt;webhook-id&gt;' : hasOwnPath ? '&lt;your-secret-path&gt;' : 'private_{{RANDOM_STRING}}'}</code></p>
           <p class="text-xs text-slate-500 mt-1">${isComponent ? "Keep the path from the connect URL on the HA-MCP Server entry's Configure screen" : isAddon ? "Keep the path from the URL in the app log (the /private_... part)" : 'Use the secret path you set in the server config above'}</p>
           <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-3 mt-4">
             <p class="text-blue-300 text-sm font-medium">Want a permanent URL?</p>
@@ -279,11 +280,11 @@ docker run cloudflare/cloudflared:latest tunnel --url http://host.docker.interna
             <pre class="code-block mt-2 text-xs"><code># One-time setup (requires Cloudflare account)
 cloudflared tunnel login
 cloudflared tunnel create ha-mcp
-cloudflared tunnel route dns ha-mcp mcp.yourdomain.com
+cloudflared tunnel route dns ha-mcp ha-mcp.yourdomain.com
 
 # Run with permanent URL
 cloudflared tunnel run ha-mcp</code></pre>
-            <p class="text-blue-200/80 text-xs mt-3">Persistent tunnels also need a config file at <code class="bg-slate-800 px-1 rounded">~/.cloudflared/config.yml</code> mapping the hostname to the local port:</p>
+            <p class="text-blue-200/80 text-xs mt-3">Persistent tunnels also need a config file at <code class="bg-slate-800 px-1 rounded">~/.cloudflared/config.yml</code> mapping the hostname to the local port.${isComponent ? ' This unrestricted example publishes the full Home Assistant web service; it can serve the discovery and login routes required by OAuth.' : ''}</p>
             <pre class="code-block mt-2 text-xs"><code>tunnel: ha-mcp
 credentials-file: /path/to/.cloudflared/&lt;tunnel-id&gt;.json
 
@@ -291,6 +292,22 @@ ingress:
   - hostname: ha-mcp.yourdomain.com
     service: http://localhost:${serverPort}
   - service: http_status:404</code></pre>
+            ${isComponent ? `<h4 class="text-blue-300 text-sm font-medium mt-4">MCP-only named tunnel: secret URL or bearer mode</h4>
+            <p class="text-blue-200/80 text-xs mt-2">For an MCP-only hostname, use this ingress instead. Replace <code>WEBHOOK_ID</code> with this server entry's webhook identifier, and use your actual Home Assistant port and TLS configuration. Only that exact endpoint reaches Home Assistant; all other paths receive a 404.</p>
+            <pre class="code-block mt-2 text-xs"><code>tunnel: ha-mcp
+credentials-file: /path/to/.cloudflared/&lt;tunnel-id&gt;.json
+
+ingress:
+  - hostname: ha-mcp.yourdomain.com
+    path: ^/api/webhook/WEBHOOK_ID$
+    service: http://localhost:${serverPort}
+  - service: http_status:404</code></pre>
+            <p class="text-blue-200/80 text-xs mt-2">This restricted example does not provide OAuth discovery, client registration or Home Assistant login. For OAuth, use an existing Home Assistant remote origin or deliberately choose the full Home Assistant tunnel above. Verify the selected authentication flow; a webhook-only rule cannot serve those additional routes.</p>
+            <p class="text-blue-200/80 text-xs mt-2">Before starting the named tunnel, check its routing locally:</p>
+            <pre class="code-block mt-2 text-xs"><code>cloudflared tunnel ingress validate
+cloudflared tunnel ingress rule https://ha-mcp.yourdomain.com/api/webhook/WEBHOOK_ID
+cloudflared tunnel ingress rule https://ha-mcp.yourdomain.com/api/states</code></pre>
+            <p class="text-blue-200/80 text-xs mt-2">The webhook must match the local service, while <code>/api/states</code> and other Home Assistant routes must match <code>http_status:404</code>. <a href="https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Cloudflare ingress routing reference</a>.</p>` : ''}
           </div>
           <details class="mt-4">
             <summary class="cursor-pointer text-sm text-slate-300 font-medium hover:text-slate-100">Running on Home Assistant OS? Use the Cloudflared app</summary>

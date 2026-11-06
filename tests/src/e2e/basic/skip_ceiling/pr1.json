@@ -1,0 +1,12 @@
+{
+  "reason": "Native adoption retains tests/src/e2e/workflows/auto_backup/test_capture_and_restore.py::TestEntityRegistryCaptureRestore::test_entity_registry_full_loop relative to upstream 1c4b4edfc. It verifies capture/restore of a seeded entity's registry hidden flag through the public tools. Its external_only gate is required because auto-backup settings change in the pytest process, so it adds one collection-time skip on all seven out-of-process lanes. The four duplicated label/category/zone/area scenarios were removed from this monolith; their canonical upstream versions remain in test_registry_capture_restore.py and add no new skips. Native lane keys inherit these deltas; their three legacy raw-transport skips are already owned by native-runtime.json.",
+  "deltas": {
+    "haos_stdio": 1,
+    "haos_inaddon": 1,
+    "haos_inaddon_no_tools": 1,
+    "embedded": 1,
+    "embedded_no_tools": 1,
+    "haos_embedded": 1,
+    "haos_embedded_no_tools": 1
+  }
+}

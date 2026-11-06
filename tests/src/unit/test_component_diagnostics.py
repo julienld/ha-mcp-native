@@ -24,10 +24,13 @@ from custom_components.ha_mcp_tools.const import (  # noqa: E402
     CONF_ENTRY_TYPE,
     DATA_ACCESS_ENABLED,
     DATA_ACCESS_TOKEN,
+    DATA_ADMIN_TOKEN,
     DATA_BRINGUP_TASK,
     DATA_DCR_SIGNING_KEY,
+    DATA_ISSUED_TOKEN_ID,
     DATA_LAST_PIP_SPEC,
     DATA_MANAGER,
+    DATA_NATIVE_OWNER_ID,
     DATA_OAUTH_CLIENT_ID,
     DATA_OAUTH_CLIENT_SECRET,
     DATA_OAUTH_SIGNING_KEY,
@@ -67,6 +70,9 @@ SECRET_DATA = {
         DATA_SERVER_USER_ID,
         DATA_REFRESH_TOKEN_ID,
         DATA_ACCESS_TOKEN,
+        DATA_ADMIN_TOKEN,
+        DATA_ISSUED_TOKEN_ID,
+        DATA_NATIVE_OWNER_ID,
         DATA_LAST_PIP_SPEC,
     )
 }
@@ -130,6 +136,14 @@ def _server_entry(
     options: dict[str, Any] | None = None, data: dict[str, Any] | None = None
 ) -> Any:
     return _entry({CONF_ENTRY_TYPE: ENTRY_TYPE_SERVER, **(data or {})}, options)
+
+
+async def test_native_manager_is_reported_running_without_a_legacy_package_override():
+    entry = _server_entry({"runtime_mode": "native", "pip_spec": "ha-mcp-dev==0.1.0"})
+    hass = FakeHass([entry], data={DATA_MANAGER: SimpleNamespace(is_running=True)})
+    result = await diag.async_get_config_entry_diagnostics(hass, entry)
+    assert result["server"]["running"] is True
+    assert result["server"]["package_override_set"] is False
 
 
 @pytest.fixture(autouse=True)

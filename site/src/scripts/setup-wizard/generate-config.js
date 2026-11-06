@@ -31,9 +31,9 @@ export function generateConfig() {
 
   const derivedDeployment = isStdio ? null : method; // ha-component | ha-addon | docker | uvx
   const derivedPlatform = state.platform?.id || null;
-  // Port the tunnel/proxy instructions target: component 9584, app 9583,
+  // Port the tunnel/proxy instructions target: HA's default 8123, app 9583,
   // docker/uvx HTTP server 8086.
-  const serverPort = isComponent ? '9584' : isAddon ? '9583' : '8086';
+  const serverPort = isComponent ? '8123' : isAddon ? '9583' : '8086';
 
   // Build summary badges
   const badges = [];

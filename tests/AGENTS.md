@@ -22,6 +22,7 @@ before adding a gate:
 | `beta_haos_only` | HAOS beta-image lanes where OS/Supervisor/Core version expectations are configured. If any expectation is set, the test runs so partial configuration fails visibly |
 | `container_only` | the testcontainer backend only (includes the container-embedded lane) |
 | `embedded_only` | the embedded testcontainer backend only (`E2E_BACKEND=embedded`) — the one lane whose session container has ha-mcp installed inside the HA image. Skips everywhere else, including `haos_embedded` |
+| `legacy_runtime_only` | every compatible legacy lane; skips an explicit native runtime for tests whose assertion is the raw REST/WebSocket ABI. Shared validation and dedicated native tools remain separately exercised |
 | `external_only` | anywhere the server-under-test runs IN the pytest process: plain testcontainer and HAOS external. Skips stdio, inaddon, container-embedded and HAOS-embedded, which cannot be reconfigured via test-process env / monkeypatch or reach an in-process mock. The name is historical — it does NOT mean "HAOS external only" |
 | `inaddon_only` | HAOS inaddon mode only (`HAOS_TEST_MODE=inaddon`), where `is_running_in_addon()` paths are live |
 | `haos_stdio_only` | HAOS stdio mode only (`HAOS_TEST_MODE=stdio`), where the installed `ha-mcp` command is exercised through a real subprocess transport |
@@ -191,7 +192,14 @@ await mcp.call_tool("ha_config_get_script", {})
 await mcp.call_tool("ha_config_get_script", {"script_id": "nonexistent"})
 ```
 
-**Automation configs come back as Core stores them:** the automation tools send the config to Core as written and `ha_config_get_automation` returns Core's stored body verbatim, so `python_transform` operates on that body. Core itself renames the singular root keys `trigger`/`condition`/`action` to the plural forms and `service` to `action` while validating a write (Core's backward-compat validators: `cv.renamed` for the root keys, the service schema's own rename for `service`; both rename in place and the config view stores that dict), and refuses a config holding both forms of one key; a trigger's `platform` key is kept. So a config written with singular keys reads back plural, and `test_data_factory.automation_config`'s singular `trigger`/`action` defaults must be overridden with the same singular keys, never the plural ones.
+**Automation views preserve caller compatibility:** writes reach Core as supplied.
+`ha_config_get_automation` defaults to its historical normalized view;
+`config_format="stored"` returns Core's persisted body verbatim. Hashes from
+either view retain the invocation-local raw CAS image. Core renames singular
+root keys and `service` while validating a write and refuses both spellings of
+the same key. Tests must distinguish the selected read view from actual stored
+keys; `python_transform` and writes must preserve the verified raw image.
+
 An automation the registry knows but Core's config API answers "Resource not found" for (defined in YAML or a package) is CONFIG_NOT_FOUND on get, set and remove. The component's lookup reports `loaded`; while Core has not loaded the automation, `references` is None and the get tool warns. With `reference_data_targets`, `reference_data` carries Core's match sentinels (`none`/`all`), which the reference validator skips; without the target ids it reports `validation.unchecked_target_kinds`.
 
 **Poll after creating entities.** After creating an entity (automation, script, helper, etc.), HA needs time to register it. Never search/query immediately — use polling helpers from `tests/src/e2e/utilities/wait_helpers.py`:

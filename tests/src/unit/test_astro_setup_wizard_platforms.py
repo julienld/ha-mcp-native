@@ -9,9 +9,11 @@ command that cannot work.
 from __future__ import annotations
 
 import re
+from html import unescape
 from typing import Any
 
 import pytest
+import yaml
 
 from ._astro_setup_wizard import (
     _assert_clean_init,
@@ -40,6 +42,90 @@ def setup_script() -> str:
 @pytest.fixture(scope="module")
 def wizard_vars() -> dict[str, Any]:
     return load_wizard_vars()
+
+
+@pytest.mark.parametrize(
+    "remote_path", [None, "builtin-webhook", "cloudflared", "custom"]
+)
+def test_native_component_setup_uses_owner_and_home_assistant_webhook(
+    setup_script: str, wizard_vars: dict[str, Any], remote_path: str | None
+) -> None:
+    clicks = (
+        _click("server-method", "ha-component")
+        + _click("client", "cursor")
+        + _click("scope", "remote" if remote_path else "local")
+    )
+    if remote_path:
+        clicks += _click("remote-path", remote_path)
+    result = run_script(
+        setup_script,
+        initial_html=_build_wizard_dom(wizard_vars),
+        invoke=clicks + _CAPTURE,
+    )
+    _assert_clean_init(result)
+    assert "administrator owner" in result.dom
+    assert "/api/webhook/" in result.dom
+    assert ":9584" not in result.dom
+    assert "paste an &lt;strong&gt;Administrator access token" not in result.dom
+
+
+def test_component_tunnel_can_restrict_the_origin_to_one_webhook(
+    setup_script: str, wizard_vars: dict[str, Any]
+) -> None:
+    """The MCP-only example must not publish unrelated Home Assistant routes."""
+    result = run_script(
+        setup_script,
+        initial_html=_build_wizard_dom(wizard_vars),
+        invoke=(
+            _click("server-method", "ha-component")
+            + _click("client", "cursor")
+            + _click("scope", "remote")
+            + _click("remote-path", "cloudflared")
+            + _CAPTURE
+        ),
+    )
+    _assert_clean_init(result)
+    captured = re.search(r'data-instructions-html="([^"]*)"', result.dom)
+    assert captured is not None
+    blocks = re.findall(
+        r"<pre[^>]*><code>(.*?)</code></pre>", unescape(captured.group(1)), re.S
+    )
+    configs = [
+        yaml.safe_load(unescape(block))
+        for block in blocks
+        if block.lstrip().startswith("tunnel:")
+    ]
+    restricted = [
+        config
+        for config in configs
+        if any("path" in rule for rule in config["ingress"])
+    ]
+    assert len(restricted) == 1, "No unambiguous MCP-only ingress example"
+    rules = restricted[0]["ingress"]
+    allowed = next(rule for rule in rules if "path" in rule)
+    denied = rules[-1]["service"]
+    assert denied.startswith("http_status:") and 400 <= int(denied.split(":")[1]) < 500
+    webhook = allowed["path"].removeprefix("^").removesuffix("$")
+    assert webhook.startswith("/api/webhook/")
+
+    def service_for(path: str) -> str:
+        return next(
+            rule["service"]
+            for rule in rules
+            if "path" not in rule or re.search(rule["path"], path)
+        )
+
+    assert service_for(webhook) == allowed["service"]
+    for path in (
+        "/",
+        "/api/states",
+        "/api/websocket",
+        "/auth/token",
+        "/.well-known/oauth-authorization-server",
+        "/api/webhook/another-entry",
+        webhook + "/extra",
+    ):
+        assert service_for(path) == denied, path
 
 
 def _stdio_output(

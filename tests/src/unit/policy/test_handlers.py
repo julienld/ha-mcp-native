@@ -311,13 +311,15 @@ def test_pin_status_starts_unset(tmp_path):
 
 def test_setting_a_pin_reports_it_set_without_echoing_it(tmp_path, fast_hashing):
     c = make_app(tmp_path, ApprovalQueue())
+    # A numeric PIN can occur coincidentally in the status timestamp.
+    pin = "not-a-timestamp-pin"
 
-    r = c.post("/api/policy/decision-pin", json={"pin": "2468"})
+    r = c.post("/api/policy/decision-pin", json={"pin": pin})
 
     assert r.status_code == 200
     assert r.json()["set"] is True
-    assert "2468" not in r.text
-    assert "2468" not in c.get("/api/policy/decision-pin").text
+    assert pin not in r.text
+    assert pin not in c.get("/api/policy/decision-pin").text
 
 
 def test_a_too_short_pin_is_rejected(tmp_path, fast_hashing):

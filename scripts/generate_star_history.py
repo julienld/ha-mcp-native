@@ -348,8 +348,8 @@ def render_svg(history: StarHistory, mode: str) -> str:
   <text x="{end_x - 10:.2f}" y="{max(PLOT_TOP + 14, end_y - 12):.2f}" fill="{theme.text}" font-size="12" font-weight="700" text-anchor="end">{_format_count(history.total)}</text>"""
     description = escape(
         f"{history.repository} grew from {history.points[0].stars:,} stars on "
-        f"{history.started_on:%B %-d, %Y} to {history.total:,} stars on "
-        f"{history.generated_on:%B %-d, %Y}."
+        f"{history.started_on:%B} {history.started_on.day}, {history.started_on:%Y} to {history.total:,} stars on "
+        f"{history.generated_on:%B} {history.generated_on.day}, {history.generated_on:%Y}."
     )
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-labelledby="chart-title chart-description">

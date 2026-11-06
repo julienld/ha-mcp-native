@@ -71,6 +71,27 @@ class TestBringUpRepairs:
         await esetup.async_bring_up_server(hass, entry)
         assert esetup.ir.async_create_issue.call_args.args[2] == ISSUE_START_FAILED
 
+    async def test_shared_generation_refusal_keeps_restart_guidance_in_repairs(
+        self, fake_manager
+    ):
+        from custom_components.ha_mcp_tools.runtime_generation import (
+            SHARED_RESTART_REQUIRED,
+        )
+
+        hass = _make_hass()
+        entry = _make_entry()
+        fake_manager.async_start.side_effect = RuntimeError(SHARED_RESTART_REQUIRED)
+
+        await esetup.async_bring_up_server(hass, entry)
+
+        issue = esetup.ir.async_create_issue.call_args
+        assert issue.args[2] == ISSUE_START_FAILED
+        assert (
+            issue.kwargs["translation_placeholders"]["detail"]
+            == SHARED_RESTART_REQUIRED
+        )
+        esetup.async_register_webhook.assert_not_awaited()
+
     async def test_a_missing_credential_asks_for_a_token_in_repairs(self, fake_manager):
         hass = _make_hass()
         entry = _make_entry()
