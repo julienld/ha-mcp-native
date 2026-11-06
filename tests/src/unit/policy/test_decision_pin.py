@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import stat
 
 import pytest
@@ -71,10 +72,11 @@ def test_a_wrong_pin_does_not_verify(tmp_path):
 
 
 def test_the_pin_is_not_stored_in_the_clear(tmp_path):
-    set_pin(tmp_path, "2468")
+    pin = "the-pin-must-not-be-stored-2468"
+    set_pin(tmp_path, pin)
 
     record = json.loads((tmp_path / PIN_FILENAME).read_text())
-    assert "2468" not in json.dumps(record)
+    assert pin not in json.dumps(record)
     assert record["algorithm"] == "pbkdf2_sha256"
     assert record["salt"] and record["hash"]
 
@@ -91,6 +93,7 @@ def test_two_stores_of_the_same_pin_differ(tmp_path, tmp_path_factory):
     assert first["hash"] != second["hash"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits do not model Windows ACLs")
 def test_the_file_is_not_readable_by_others(tmp_path):
     set_pin(tmp_path, "2468")
 

@@ -7,7 +7,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 import cyclopts
-from rich import print
+from ha_mcp._vendor.rich import print
 
 from ha_mcp._vendor.fastmcp.utilities.logging import get_logger
 

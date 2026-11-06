@@ -18,8 +18,9 @@ concurrently, and it is off-limits for this task.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -42,6 +43,51 @@ from .test_component_ws_search import (
 _REAL_FNS = {
     "ha_mcp_tools/registries": wsapi._do_registries,
 }
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        SimpleNamespace(),
+        SimpleNamespace(async_list_categories=None),
+        SimpleNamespace(
+            async_list_categories=Mock(side_effect=RuntimeError("unavailable"))
+        ),
+        SimpleNamespace(async_list_categories=Mock(return_value=None)),
+    ],
+    ids=["missing", "noncallable", "raises", "malformed"],
+)
+async def test_category_read_failure_uses_legacy_snapshot_instead_of_silent_absence(
+    registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wsapi, "_resolve_registries", lambda hass: make_view())
+    monkeypatch.setattr(wsapi, "_category_registry", lambda hass: registry)
+    row = {"category_id": "cat1", "name": "Lights", "icon": "mdi:lightbulb"}
+    legacy = AsyncMock(return_value=[row])
+    monkeypatch.setattr(backup_manager, "_ws_send", legacy)
+    client = _AreaFloorClient()
+    with patch_ws(_real_registries_ws(FakeHass()), component_registries):
+        result = await backup_manager._fetch_category(client, "automation:cat1")
+    assert result == {"scope": "automation", **row}
+    legacy.assert_awaited_once_with(
+        client, {"type": "config/category_registry/list", "scope": "automation"}
+    )
+
+
+async def test_genuinely_empty_categories_remain_authoritative_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wsapi, "_resolve_registries", lambda hass: make_view())
+    monkeypatch.setattr(wsapi, "_category_registry", lambda hass: FakeCategoryReg({}))
+    legacy = AsyncMock()
+    monkeypatch.setattr(backup_manager, "_ws_send", legacy)
+    with patch_ws(_real_registries_ws(FakeHass()), component_registries):
+        assert (
+            await backup_manager._fetch_category(_AreaFloorClient(), "automation:cat1")
+            is None
+        )
+    legacy.assert_not_awaited()
 
 
 def _real_registries_ws(hass: FakeHass) -> AsyncMock:

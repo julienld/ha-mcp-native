@@ -1,0 +1,12 @@
+*
+!dist/
+!dist/native/
+!dist/native/native-build.json
+!tests/
+!tests/native/
+!tests/native/*.py
+!tests/native/qualification_hacs/
+!tests/native/qualification_hacs/*.py
+!tests/native/qualification_hacs/fixture/
+!tests/native/qualification_hacs/fixture/*.py
+!tests/native/qualification_hacs/fixture/manifest.json

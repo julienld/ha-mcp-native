@@ -1,0 +1,314 @@
+{
+  "format_version": 1,
+  "date": "2026-11-01",
+  "audited_revision": "27d3921d4152e64069e025b9ca7e7bde5b679335",
+  "integrated_upstream": "1c4b4edfcce56f0afe8715261fe46eb7c4866e78",
+  "historical_catalog_baseline": "2dc504fd97d8416f87b6ea7f2fd8ce0332615956",
+  "scope": "Écarts de comportement confirmés et décisions de compatibilité; les propositions ne sont pas des fonctionnalités implémentées.",
+  "intent": "Remplacer le moteur interne en préservant le contrat utilisateur. Native n'impose pas, à lui seul, une rupture fonctionnelle.",
+  "conclusion": "Le candidat comporte encore deux ruptures globales ajoutées par le portage et plusieurs pertes ou différences conditionnelles en Native. Un changement de défaut de restauration vient séparément de l'upstream intégré. Une CI verte et des schémas compatibles ne suffisent pas à démontrer la parité fonctionnelle.",
+  "rollbacks_in_this_change": [
+    {
+      "id": "R1",
+      "title": "Continuer les mises à jour distantes indépendantes",
+      "origin": "Politique élargie après CodeRabbit, commit 67d30381 puis port partagé 527726464.",
+      "before_review": "Le backend distant collecte les erreurs par cible et continue les autres cibles; connexion/authentification sont fatales.",
+      "review_change": "Toute issue incertaine arrêtait également les autres cibles indépendantes.",
+      "decision": "Retrait de cette extension de politique. Les erreurs API/WS restent incertaines mais les autres cibles sont tentées. Perte de connexion/authentification arrête toujours le lot, et la cible incertaine n'est jamais rejouée. Le signal d’erreur MCP et les codes fatals historiques sont conservés; les résultats partiels et les cibles non tentées restent dans le diagnostic.",
+      "evidence": [
+        "src/ha_mcp/tools/tools_updates.py::_call_update_service",
+        "tests/src/unit/test_service_error_consumers.py"
+      ],
+      "validation": "Régressions rouges sur la continuation et le signal fatal avant correction; 72 tests ciblés verts, incluant progression partielle, cible absente et absence de rejeu."
+    },
+    {
+      "id": "R2",
+      "title": "Conserver le routeur Thread par défaut",
+      "origin": "CodeRabbit 4431825384, porté par 50eabf34a.",
+      "before_review": "Sans extended_address, l'ancien outil choisit le premier routeur renvoyé par otbr/info.",
+      "review_change": "Native refusait l'appel dès que plusieurs routeurs étaient chargés.",
+      "decision": "Retrait de ce nouveau refus. Même sélection par défaut que l'ancien outil; une adresse explicite garde priorité. Autorisation, validation, épinglage de cible et absence de rejeu sont conservés.",
+      "evidence": [
+        "upstream:src/ha_mcp/tools/radio/thread.py::_resolve_extended_address",
+        "custom_components/ha_mcp_tools/native_operations/radio_otbr.py::_target_owner",
+        "tests/src/unit/test_native_radios.py"
+      ],
+      "validation": "Trois régressions rouges et trois contrôles d'adresse explicite verts avant retrait; 120 tests radios/Thread/lecture seule verts ensuite."
+    }
+  ],
+  "remaining_changes": [
+    {
+      "id": "G1",
+      "classification": "rupture_globale",
+      "title": "Home Assistant minimum 2026.10",
+      "scope": "Mises à jour et installations du composant, Native ET Legacy",
+      "before": "L'upstream intégré annonce Home Assistant 2026.8.0 au minimum.",
+      "after": "hacs.json annonce 2026.10.0. Le mode Legacy ne contourne pas ce minimum de distribution.",
+      "impact": "Les utilisateurs de HA 2026.8/9 ne peuvent pas installer cette nouvelle version via HACS. Leur ancienne version installée n'expire pas automatiquement.",
+      "origin": "Choix de support/distribution Native, antérieur aux derniers correctifs CodeRabbit.",
+      "recommendation": "Pour être non-breaking, conserver une distribution Legacy compatible 2026.8/9 et réserver le plancher 2026.10 à Native, avec de vrais tests des deux anciens Core. Ne pas abaisser seulement hacs.json sans valider imports et dépendances. À défaut, annoncer une rupture de support explicite et laisser HACS protéger les anciennes installations.",
+      "evidence": [
+        "hacs.json",
+        "custom_components/ha_mcp_tools/runtime_version.py",
+        "docs/native-migration/installation.md"
+      ]
+    },
+    {
+      "id": "G2",
+      "classification": "rupture_globale",
+      "title": "Historique et restauration des captures d’entités",
+      "scope": "Historique des modifications, dans les deux runtimes",
+      "before": "Le baseline 2dc utilise entity pour état/attributs. L’upstream intégré 1c4 utilise aussi entity pour des images de registre (id, réglages, options), indexées par entity_id.",
+      "after": "Le candidat affecte entity aux états et écrit les nouvelles images de registre sous entity_registry avec UUID. Le handler entity par défaut ne sélectionne pas le restore registre pour une ancienne image 1c4.",
+      "impact": "Les anciens filtres ne trouvent plus les nouvelles captures. Des fichiers historiques de registre peuvent aussi être routés vers le mauvais handler de restauration. Un probe de la fonction exacte, avec I/O simulées, produit state=null au lieu de restaurer les réglages; la restauration complète et un effet HA réel ne sont pas revendiqués.",
+      "origin": "Composition du modèle de sauvegardes Native avec plusieurs formats historiques, pas une nécessité du changement de transport.",
+      "recommendation": "Reconnaître le format ancien avant de sélectionner le handler, la cible et la capture de sécurité : état 2dc ou registre 1c4. Préserver les anciens fichiers et le contrat de capture par défaut de l’amont; ajouter l’identité UUID par métadonnée/adaptateur ou version opt-in. À défaut, versionner la nouvelle sémantique avec lecteur rétrocompatible. Ne jamais élargir silencieusement les suppressions.",
+      "evidence": [
+        "upstream:src/ha_mcp/tools/tools_entities.py",
+        "src/ha_mcp/backends/legacy_entity_snapshots.py::capture_entity_registry",
+        "docs/native-migration/compatibility.md",
+        "upstream:src/ha_mcp/backup_entities.py::fetch_entity",
+        "src/ha_mcp/backup_manager.py::_restore_entity_state"
+      ]
+    },
+    {
+      "id": "U1",
+      "classification": "amont_global",
+      "title": "Défaut restore_database : false devient null",
+      "scope": "Restauration complète, différence entre l'ancien catalogue et l'upstream intégré",
+      "before": "Le catalogue historique a restore_database=false par défaut.",
+      "after": "L'upstream 1c4 intégré utilise null : la sélection est dérivée du contenu de l'archive, qui peut inclure la base.",
+      "impact": "Un ancien appel qui omet ce paramètre peut désormais restaurer la base. C'est un changement fonctionnel important, mais il ne vient pas du portage Native ni de la dernière revue.",
+      "origin": "Upstream intégré; exception explicite du comparateur de contrats.",
+      "recommendation": "Pour préserver l'ancien comportement, garder false par défaut et accepter null seulement comme demande explicite d'auto-sélection, ou versionner cette sémantique. Cela crée une divergence à suivre avec l'upstream. Au minimum, montrer les parties restaurées et demander une décision explicite avant une restauration de base implicite.",
+      "evidence": [
+        "docs/native-migration/catalog-baseline.json",
+        "tests/src/unit/test_native_catalog_contract.py::_changed_inputs",
+        "src/ha_mcp/runtime/backup_tools.py"
+      ]
+    },
+    {
+      "id": "N1",
+      "classification": "native_conditionnel",
+      "title": "Port direct, webhook désactivé et tunnel",
+      "scope": "Clients utilisant l'ancien port du serveur puis passant en Native",
+      "before": "Un client peut utiliser le port dédié du composant, par défaut 9584, avec son secret_path; enable_webhook=false peut conserver ce seul accès.",
+      "after": "Native n'ouvre pas ce listener. Il sert l'URL HA /api/webhook/{id}; les URLs de webhook déjà hébergées par HA restent préservées, pas l'ancien port distinct.",
+      "impact": "Le client utilisant le port direct doit migrer son URL ou rester en Legacy. Pointer un tunnel sans filtrage sur le port HA publie aussi les routes UI/API; aucune nouvelle exposition n'a été appliquée à l'installation de Julien.",
+      "origin": "Conséquence du listener HA unique; les exemples et avertissements du wizard ont aussi changé.",
+      "recommendation": "Garder Legacy pour les anciennes URLs, ou proposer un relais de compatibilité facultatif sur l'ancien port. Ce dernier renonce au zéro-listener additionnel. Ne jamais activer silencieusement le webhook. Corriger les consignes selon le runtime et les routes existantes sans imposer le nouveau choix produit MCP seul/HA complet.",
+      "evidence": [
+        "docs/native-migration/compatibility.md::A direct server-port URL is an explicit exception",
+        "site/src/scripts/setup-wizard/generate-config.js",
+        "site/src/scripts/setup-wizard/instructions.js"
+      ]
+    },
+    {
+      "id": "N2",
+      "classification": "native_conditionnel",
+      "title": "Commandes WebSocket et scripts personnalisés bruts",
+      "scope": "ha_call_service(ws_command=...) et custom tools utilisant api_get/api_post/ws_send",
+      "before": "Legacy accepte les commandes et endpoints compatibles avec ses protections.",
+      "after": "Native refuse tout ws_command non nul et ces ABI brutes; les scripts restent stockés. call_tool utilise le moteur commun.",
+      "impact": "Des appels valides auparavant deviennent UNSUPPORTED_OPERATION malgré un schéma d'arguments conservé.",
+      "origin": "Limite du portage direct vers les owners Core, antérieure aux derniers correctifs de revue.",
+      "recommendation": "Porter les commandes connues vers des opérations Core explicites, fournir des adaptateurs pour les scripts et vérifier les usages avant migration. Garder Legacy pour les extensions non portées. Ne pas introduire un fallback transport après un effet possible ni une fausse connexion WebSocket in-process.",
+      "evidence": [
+        "docs/native-migration/compatibility.json::explicit_exceptions",
+        "docs/native-migration/compatibility.md::Bound the arbitrary transport escape hatches"
+      ]
+    },
+    {
+      "id": "N3",
+      "classification": "native_conditionnel",
+      "title": "Principal autorisé et attribution des actions",
+      "scope": "Passage en Native, notamment Assist, satellites et comptes techniques",
+      "before": "Le client distant utilise l'autorité de son jeton HA; des actions portent le contexte du compte serveur.",
+      "after": "Native exige un humain administrateur actif, ou un owner humain configuré pour la capacité. Les comptes système sont refusés; le contexte identifie l'acteur Native.",
+      "impact": "Un owner peut devoir être configuré. Les usages sans utilisateur humain ou avec un compte non-admin peuvent être refusés. Journal et automatisations sensibles à context.user_id peuvent observer un autre acteur.",
+      "origin": "Architecture d'autorisation Native, pas seulement une modification interne invisible.",
+      "recommendation": "Préserver les scopes autorisés existants avec un mapping explicite des identités. Pour Assist sans identité humaine, étudier une délégation de capacité configurée et limitée, pas un admin implicite. Distinguer l'autorisation et l'attribution; maintenir Legacy tant que ce cas n'est pas couvert.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_server.py::_owner_id",
+        "custom_components/ha_mcp_tools/native_backend.py::authorize",
+        "docs/native-migration/compatibility.md"
+      ]
+    },
+    {
+      "id": "N4",
+      "classification": "native_conditionnel",
+      "title": "Backups complets limités à l'agent local",
+      "scope": "Création/restauration Native avec agents distants ou réglages automatiques",
+      "before": "Le chemin distant peut utiliser les sélections et agents gérés par l'API de backup HA.",
+      "after": "Création et restauration Native sélectionnent l'agent local. Une sélection automatique contenant d'autres agents est refusée; des combinaisons impossibles à honorer sont explicitement rejetées.",
+      "impact": "Des workflows de backup cloud/multi-agent ne sont pas portés à parité. L'inventaire et la suppression ont leurs propres règles et ne doivent pas être décrits comme local-only à tort.",
+      "origin": "Périmètre initial du portage des backups, pas une exigence du moteur Native.",
+      "recommendation": "Porter les agents et sélections existants via BackupManager/reader-writer Core. D'ici là, vérifier le besoin avant migration et conserver Legacy pour les workflows concernés; ne pas ignorer les sélections demandées.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/full_backups.py::credentials",
+        "custom_components/ha_mcp_tools/native_operations/full_backups.py::selection",
+        "custom_components/ha_mcp_tools/native_operations/full_backup_restore.py"
+      ]
+    },
+    {
+      "id": "N5",
+      "classification": "native_conditionnel",
+      "title": "Restauration d'un événement calendrier introuvable",
+      "scope": "Restauration Native d'un ancien UID non localisé",
+      "before": "Le chemin historique peut recréer un événement après avoir considéré son identité absente.",
+      "after": "Une recherche bornée ne prouve pas l'absence. Native renvoie calendar_identity_unavailable et les arguments de création, sans recréation automatique.",
+      "impact": "Certaines restaurations demandent une étape explicite. Le changement évite une duplication, mais la restauration automatique n'a pas la même capacité.",
+      "origin": "Limite et politique de récupération Native.",
+      "recommendation": "Utiliser une résolution d'UID autoritative du provider quand elle existe. Sinon, proposer une création explicite après explication plutôt que rétablir un fallback pouvant dupliquer l'événement.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/calendar_restore.py",
+        "docs/native-migration/compatibility.md::Calendar recovery limits"
+      ]
+    },
+    {
+      "id": "N6",
+      "classification": "native_conditionnel",
+      "title": "Informations HACS servies depuis le cache",
+      "scope": "ha_get_hacs_info(action=info) en Native",
+      "before": "Le handler HACS historique peut rafraîchir le dépôt lorsque ses informations ne sont pas chargées.",
+      "after": "Native lit les métadonnées chargées; le rafraîchissement GitHub passe explicitement par update_information. Les releases peuvent être demandées séparément.",
+      "impact": "Même forme d'appel, mais fraîcheur ou README disponibles différents sans étape supplémentaire.",
+      "origin": "Choix de lecture du portage. Retirer le README de search après CodeRabbit ne retire pas un champ de la liste HACS historique, qui n'en fournissait pas.",
+      "recommendation": "Pour une parité stricte, reproduire le rafraîchissement préalable de l'owner HACS; garder un mode cache-only explicite. À défaut, afficher clairement la fraîcheur et le chemin de rafraîchissement.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/hacs_reads.py::_hacs_info",
+        "https://github.com/hacs/integration/blob/2.0.5/custom_components/hacs/websocket/repository.py",
+        "https://github.com/hacs/integration/blob/2.0.5/custom_components/hacs/websocket/repositories.py"
+      ]
+    },
+    {
+      "id": "N7",
+      "classification": "native_conditionnel",
+      "title": "Les lots Native s'arrêtent encore plus largement",
+      "scope": "ha_manage_updates avec plusieurs cibles, Native seulement après R1",
+      "before": "La référence distante continue les autres cibles après les erreurs par item, hors perte transport/auth.",
+      "after": "Native arrête la suite pour les erreurs autres que ENTITY_NOT_FOUND, ainsi que pour une mise à jour Core/OS planifiée.",
+      "impact": "Moins de cibles sont tentées pour un même appel. Le rollback distant R1 ne résout pas cette divergence Native antérieure.",
+      "origin": "Politique du portage Native.",
+      "recommendation": "Aligner le best-effort par cible indépendante tout en réévaluant l'autorité avant chaque effet. Garder l'arrêt si l'autorité est perdue ou le processus doit redémarrer. Ne jamais rejouer la cible à issue incertaine.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/update_writes.py::UpdateWrites._updates",
+        "src/ha_mcp/tools/tools_updates.py::_call_update_service"
+      ]
+    },
+    {
+      "id": "N8",
+      "classification": "native_conditionnel",
+      "title": "Mise à jour de bibliothèque et redémarrage de Core",
+      "scope": "Native et transitions ayant conservé une génération Native en mémoire",
+      "before": "Le runtime isolé peut remplacer sa bibliothèque et redémarrer son serveur séparément.",
+      "after": "Les références Python sont conservées dans Core. Native refuse update_source/pip et une génération changée ou ambiguë nécessite un redémarrage complet de HA.",
+      "impact": "Un reload de l'intégration n'applique pas nécessairement les nouveaux paquets. Le workflow d'exploitation change.",
+      "origin": "Conséquence du partage du processus, avec gardes de compatibilité.",
+      "recommendation": "Mettre à jour par HACS, conserver la génération active jusqu'au redémarrage et signaler pending_restart. Garder Legacy si le redémarrage indépendant est indispensable. Ne pas purger les modules retenus par Core pour simuler une mise à jour à chaud.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/runtime_generation.py",
+        "docs/native-migration/compatibility.md::Keep installation identity and stored intent",
+        "docs/native-migration/compatibility.json::native_administration"
+      ]
+    },
+    {
+      "id": "N9",
+      "classification": "native_conditionnel",
+      "title": "Cinq outils ont des annotations de sûreté différentes",
+      "scope": "Découverte Native et clients qui filtrent les outils read-only",
+      "before": "Les annotations historiques présentent les outils concernés comme des lectures.",
+      "after": "Dashboard get/screenshot/resources, integration get et helper list ont des overrides Native plus stricts, car certaines variantes ou premières lectures peuvent produire un effet.",
+      "impact": "Un client peut demander davantage d'approbations ou masquer ces outils en lecture seule, même quand une variante est une lecture pure.",
+      "origin": "Corrections de classification du portage; la proposition CodeRabbit de remettre dashboard get en read-only a déjà été retirée.",
+      "recommendation": "Conserver les lectures pures accessibles et séparer les variantes à effet, ou supprimer les effets persistants du renderer. Ne pas remettre une annotation read-only mensongère pour retrouver artificiellement la compatibilité.",
+      "evidence": [
+        "docs/native-migration/compatibility.json::native_annotation_overrides",
+        "custom_components/ha_mcp_tools/native_dashboard_tools.py"
+      ]
+    },
+    {
+      "id": "N10",
+      "classification": "native_conditionnel",
+      "title": "Plafonds et capacités liées au processus Core",
+      "scope": "Charge, sessions, images et plateformes Native",
+      "before": "Le serveur isolé et ses transports ont leurs propres budgets et capacités.",
+      "after": "Native ajoute des bornes : 32 flows possédés, expiration inactive de 900 s par défaut, limites HTTP/stream configurées et images caméra bornées. Les opérations opaques incompatibles avec la visibilité sont refusées.",
+      "impact": "Les longs workflows ou clients particuliers peuvent observer expiration, refus de capacité ou reconnexion. Ce ne sont pas des suppressions de noms d'outils, mais des limites d'exploitation à documenter.",
+      "origin": "Protection du Core partagé; certains mécanismes de nettoyage ont été complétés pendant les revues.",
+      "recommendation": "Rendre les limites explicites et ajustables, préserver les budgets des longues opérations et les renouvellements de session, fournir des réponses pré-dispatch exploitables et qualifier les scénarios concernés. Les prérequis Supervisor/HACS doivent rester visibles.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/flows.py::__init__",
+        "custom_components/ha_mcp_tools/native_server.py",
+        "docs/native-migration/compatibility.json::native_apps",
+        "docs/native-migration/compatibility.md::Camera image content"
+      ]
+    }
+  ],
+  "compatible_changes_kept": [
+    {
+      "title": "Identités et forme du contrat MCP",
+      "detail": "Les tests de catalogue couvrent 87 outils historiques et un supplément, les arguments/schémas, les alias conservés et les exceptions explicites. Les 20 tests ciblés passent. Les URLs webhook HA, clés OAuth, IDs d'entrées et APIs Assist ont des cibles de préservation. Cela ne prouve pas la parité de capacité derrière chaque paramètre.",
+      "evidence": [
+        "tests/src/unit/test_native_catalog_contract.py",
+        "tests/src/unit/test_native_catalog_contract_bulk.py",
+        "docs/native-migration/compatibility.json"
+      ]
+    },
+    {
+      "title": "Pas de bascule forcée des anciennes entrées",
+      "detail": "Une ancienne entrée sans runtime_mode reste Legacy; les nouvelles entrées prennent Native. Les installations externes, Docker et apps sont conservées. Ce mécanisme protège les anciennes connexions, mais n'annule pas G1 et G2.",
+      "evidence": [
+        "docs/agents/custom-component.md",
+        "custom_components/ha_mcp_tools/runtime_version.py"
+      ]
+    },
+    {
+      "title": "IDs d'automation générés",
+      "detail": "Native génère une UUID opaque plutôt que l'ID milliseconde historique; les IDs existants sont conservés et l'ID réel est retourné. Pas de rupture du contrat string/opaque, mais les consommateurs qui supposent un entier doivent être identifiés. Réutiliser le générateur historique est une option si ce format est effectivement requis.",
+      "evidence": [
+        "docs/native-migration/compatibility.md::Generated automation IDs"
+      ]
+    },
+    {
+      "title": "Correctifs de revue conservés",
+      "detail": "Pas de rollback des vrais correctifs : absence de rejeu après effet possible, diagnostics et résultats partiels préservés, validation Core et autorisation, nettoyage atomique des fichiers, fsync des reçus, corrections OAuth/env, exports restaurés, erreurs Assist et nettoyage des ressources. Ces corrections évitent des faux succès, pertes de diagnostic ou erreurs existantes.",
+      "evidence": [
+        "src/ha_mcp/runtime/service_outcome.py",
+        "src/ha_mcp/runtime/engine.py",
+        "custom_components/ha_mcp_tools/native_self_update_storage.py"
+      ]
+    },
+    {
+      "title": "safety_backup n'est pas devenu obligatoire",
+      "detail": "Le code actuel respecte ce booléen et les parties sélectionnées. L'affirmation documentaire de sauvegarde de sécurité complète/DB obligatoire était périmée : elle est corrigée dans cette modification. Les protections sur une restauration incertaine sont conservées.",
+      "evidence": [
+        "custom_components/ha_mcp_tools/native_operations/full_backup_restore.py",
+        "tests/src/unit/test_native_backup_contracts.py",
+        "docs/native-migration/compatibility.json::native_backups"
+      ]
+    }
+  ],
+  "recommended_order": [
+    "Traiter d’abord la lecture/restauration multi-format des anciens backups et le minimum Core, si la version doit être non-breaking pour les utilisateurs existants.",
+    "Traiter U1 comme une décision amont distincte : préserver l'ancien défaut, ou annoncer explicitement la nouvelle sémantique de restauration.",
+    "Garder Native explicitement opt-in pendant la fermeture des écarts, y compris envisager Legacy par défaut pour les nouvelles entrées pendant la transition.",
+    "Préflight de migration : détecter URL directe, scripts bruts, comptes/attributions, backups multi-agent et limites utiles avant de changer le runtime.",
+    "Ne retirer le marquage breaking qu'après résolution ou acceptation explicite des ruptures documentées; aucune fonctionnalité nouvelle du wizard n'est un prérequis."
+  ],
+  "validation": {
+    "batch_targeted_passed": 72,
+    "radio_targeted_passed": 120,
+    "catalog_targeted_passed": 20,
+    "new_full_local_suite_run": false,
+    "new_global_local_mypy_run": false,
+    "live_radio_or_update_effects_exercised": false,
+    "prior_ci_revision": "27d3921d4152e64069e025b9ca7e7bde5b679335",
+    "prior_native_live_revision": "3cf72375f7aaf4d08a6adf8afe1729c40f34c198",
+    "note": "Les anciens CI/live gardent leur SHA; la nouvelle CI doit qualifier le rollback. Les propositions de compatibilité restantes ne sont pas implémentées.",
+    "legacy_entity_probe": "Fonction exacte extraite du commit27d, I/O remplacées par AsyncMock uniquement : ancienne image de registre envoyée au handler état produit states/light.example avec state=null. Routage par défaut confirmé statiquement; aucun effet HA ni restauration complète testé."
+  },
+  "contributors": [
+    "01a17809-7a91-7a22-ae32-2477aa97873a"
+  ]
+}

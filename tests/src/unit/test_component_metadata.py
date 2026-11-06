@@ -6,6 +6,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from packaging.version import Version
+
 _REPO_ROOT = Path(__file__).parents[3]
 
 
@@ -18,12 +20,9 @@ def test_hacs_requires_supported_home_assistant_version() -> None:
     entries included, since requirements are installed before the entry type
     is known.
 
-    Across all 106 release tags from 2024.11.0 to 2026.9.0, ``2026.7.0`` is
-    the first whose pin -- ``voluptuous-openapi==0.4.1`` -- the manifest
-    requirement resolves against; every earlier release pins a lower version,
-    and 2026.9.0 is the only one with no such pin at all, Core having moved to
-    ``probatio``. The floor sits deliberately one release above that minimum
-    rather than at it (#2361).
+    Both HACS manifests must agree with the Legacy installation minimum;
+    Native can require a newer Core. Installability against Core's constraints is exercised
+    by the real-Core qualification matrix, not inferred from this metadata.
     """
     metadata = json.loads((_REPO_ROOT / "hacs.json").read_text(encoding="utf-8"))
 
@@ -37,7 +36,13 @@ def test_hacs_requires_supported_home_assistant_version() -> None:
     spec.loader.exec_module(const)
     assert metadata["homeassistant"] == const.MIN_EMBEDDED_HOME_ASSISTANT_VERSION
 
-    assert metadata["homeassistant"] == "2026.8.0"
+    assert Version(metadata["homeassistant"]) <= Version(
+        const.MIN_NATIVE_HOME_ASSISTANT_VERSION
+    )
+    component_metadata = json.loads(
+        (const_path.parent / "hacs.json").read_text(encoding="utf-8")
+    )
+    assert component_metadata["homeassistant"] == metadata["homeassistant"]
 
 
 def test_manifest_declares_the_pre_probatio_schema_converter() -> None:

@@ -859,9 +859,11 @@ class TestComponentPathEndToEndRedaction:
     """Component-served reads through the real formatting paths (issue 2157)."""
 
     def _tools(self, monkeypatch):
+        from ha_mcp.runtime import integration_entries, integration_list
         from ha_mcp.tools import tools_integrations as ti
 
-        monkeypatch.setattr(ti, "get_logger_levels", AsyncMock(return_value={}))
+        for owner in (integration_entries, integration_list):
+            monkeypatch.setattr(owner, "get_logger_levels", AsyncMock(return_value={}))
         client = MagicMock()
         client.start_options_flow = AsyncMock(
             return_value={

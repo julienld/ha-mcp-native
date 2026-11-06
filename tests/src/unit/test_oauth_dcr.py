@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import sys
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -66,7 +68,7 @@ def _module_is(name: str, root: str) -> bool:
 
 
 @pytest.fixture
-async def dcr_view_client_factory():
+async def dcr_view_client_factory(monkeypatch):
     """Build real aiohttp clients around a fake HA view registration.
 
     The shared embedded-component stubs replace ``aiohttp`` in ``sys.modules``.
@@ -95,7 +97,9 @@ async def dcr_view_client_factory():
             dcr_key,
             autoapprove_provider=None,
             resource_server=None,
+            core_version="2026.10.3",
         ):
+            monkeypatch.setattr(oauth_dcr, "HA_VERSION", core_version)
             cfg = {}
             if dcr_key is not None:
                 cfg[CFG_DCR_SIGNING_KEY] = dcr_key
@@ -140,6 +144,55 @@ async def test_register_404s_when_no_dcr_key_live(dcr_view_client_factory):
         json={"redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]},
     )
     assert resp.status == 404
+
+
+@pytest.mark.parametrize(
+    "core_version", ["2026.8.0", "2026.9.4", "unknown", "2026.10.0"]
+)
+@pytest.mark.parametrize("mode", ["ha_auth", "none", "legacy"])
+async def test_registration_obeys_account_login_floor_without_revoking_old_clients(
+    dcr_view_client_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    core_version: str,
+    mode: str,
+) -> None:
+    callback = "https://client.example/callback"
+    old_client = mint_client_id(KEY, [callback])
+    client = await dcr_view_client_factory(
+        dcr_key=None if mode == "legacy" else KEY,
+        resource_server=object() if mode == "ha_auth" else None,
+        autoapprove_provider=object() if mode == "none" else None,
+        core_version=core_version,
+    )
+    mint = Mock(wraps=oauth_dcr.mint_client_id)
+    read = AsyncMock(wraps=oauth_dcr._read_capped_body)
+    monkeypatch.setattr(oauth_dcr, "mint_client_id", mint)
+    monkeypatch.setattr(oauth_dcr, "_read_capped_body", read)
+    response = await client.post(
+        "/api/ha_mcp_tools/oauth/register", json={"redirect_uris": [callback]}
+    )
+    if mode == "legacy":
+        assert response.status == 404
+        mint.assert_not_called()
+    elif mode == "ha_auth" and core_version != "2026.10.0":
+        assert response.status == 400
+        body = await response.json()
+        assert body["error"] == "invalid_client_metadata"
+        assert "2026.10.0" in body["error_description"]
+        assert "client_id" not in body
+        read.assert_not_awaited()
+        mint.assert_not_called()
+    else:
+        assert response.status == 201
+        body = await response.json()
+        assert client_redirect_uris(KEY, body["client_id"]) == [callback]
+        assert body["grant_types"] == (
+            ["authorization_code", "refresh_token"]
+            if mode == "ha_auth"
+            else ["authorization_code"]
+        )
+        mint.assert_called_once()
+    assert client_redirect_uris(KEY, old_client) == [callback]
 
 
 async def test_register_mints_verifiable_client_id(dcr_view_client_factory):

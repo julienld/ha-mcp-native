@@ -4,53 +4,15 @@ Storage-helper field values are validated by Home Assistant itself (see
 ``core_payload``); what remains here is the tool's own call shape.
 """
 
-import functools
 from typing import Any
 
 from ...errors import ErrorCode, create_error_response
 from ..helpers import (
-    hidden_param_names,
     raise_tool_error,
     validate_identifier_not_empty,
 )
 from .flow import _flow_helper_error_context
 from .schemas import SIMPLE_HELPER_TYPES, _simple_helper_error_context
-
-
-@functools.cache
-def _storage_helper_params() -> frozenset[str]:
-    """The tool's hidden storage-helper parameters (folded in from ``config``)."""
-    from ..tools_config_helpers import HelperConfigTools  # the tool imports this
-
-    return frozenset(hidden_param_names(HelperConfigTools.ha_config_set_helper))
-
-
-def _reject_storage_params_on_flow_helper(
-    helper_type: str, passed: dict[str, Any]
-) -> None:
-    """A flow helper takes its fields in ``config``; storage-helper parameters
-    passed top-level would otherwise be dropped silently (issue #1150)."""
-    inapplicable = sorted(
-        name
-        for name, value in passed.items()
-        if value is not None and name in _storage_helper_params()
-    )
-    if not inapplicable:
-        return
-    raise_tool_error(
-        create_error_response(
-            ErrorCode.VALIDATION_INVALID_PARAMETER,
-            f"The following parameters are not applicable for "
-            f"helper_type='{helper_type}': {', '.join(inapplicable)}. Flow "
-            "helpers take their fields inside `config`.",
-            context={"helper_type": helper_type, "inapplicable_params": inapplicable},
-            suggestions=[
-                f"Move {', '.join(inapplicable)} into `config`",
-                f"ha_config_list_helpers({helper_type!r}, describe=True) lists the "
-                "fields",
-            ],
-        )
-    )
 
 
 async def _validate_set_helper_action(

@@ -36,14 +36,18 @@ sys.modules["homeassistant.helpers.storage"] = MagicMock()
 sys.modules["homeassistant.loader"] = MagicMock()
 
 import custom_components.ha_mcp_tools as comp  # noqa: E402
-from custom_components.ha_mcp_tools import volume_mounts  # noqa: E402
+from custom_components.ha_mcp_tools import file_access, file_io, volume_mounts  # noqa: E402
 
 
 @pytest.fixture
 def volume_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A volume root under tmp_path, standing in for /media; not created."""
     root = tmp_path / "media"
-    monkeypatch.setattr(comp, "ALLOWED_VOLUME_ROOTS", (str(root),))
+    monkeypatch.setattr(
+        file_io,
+        "_volume_root_for",
+        lambda value: str(root) if Path(value).is_relative_to(root) else None,
+    )
     return root
 
 
@@ -158,7 +162,7 @@ def _handler_hass(tmp_path: Path) -> MagicMock:
 
 
 def _raise(err: OSError):
-    def _sync(*_args):
+    def _sync(*_args, **_kwargs):
         raise err
 
     return _sync
@@ -170,16 +174,20 @@ async def test_read_only_mount_is_named_not_a_raw_errno(
 ) -> None:
     # On HAOS and Supervised, Supervisor mounts /ssl read-only into Core.
     erofs = OSError(errno.EROFS, "Read-only file system", "/ssl/t")
-    monkeypatch.setattr(comp, f"_{build}_file_sync", _raise(erofs))
+    monkeypatch.setattr(file_access, f"_{build}_file_sync", _raise(erofs))
+    target = tmp_path / "www" / "t" / "a.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("unchanged")
     handler = getattr(comp, f"_build_{build}_file_handler")(_handler_hass(tmp_path))
     call = MagicMock()
-    call.data = {"_ha_mcp_token": "t", "path": "/ssl/t/a.txt", "content": "x"}
+    call.data = {"_ha_mcp_token": "t", "path": "www/t/a.txt", "content": "x"}
 
     result = await handler(call)
 
+    assert target.read_text() == "unchanged"
     assert result == {
         "success": False,
-        "error": "/ssl/t/a.txt is on a read-only mount in Home Assistant Core"
+        "error": "www/t/a.txt is on a read-only mount in Home Assistant Core"
         " on this install",
     }
 

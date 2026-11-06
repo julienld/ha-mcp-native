@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from packaging.version import Version
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
@@ -56,7 +57,6 @@ from ha_mcp.tools.tools_filesystem import (  # noqa: E402
     MCP_TOOLS_DOMAIN,
     MIN_COMPONENT_VERSION,
     _reset_caller_token_cache,
-    _version_tuple,
     call_mcp_tools_service,
 )
 
@@ -206,9 +206,7 @@ class TestManifestVersionCoupling:
 
     def test_manifest_version_meets_minimum(self):
         manifest_version = self._manifest_version()
-        assert _version_tuple(manifest_version) >= _version_tuple(
-            MIN_COMPONENT_VERSION
-        ), (
+        assert Version(manifest_version) >= Version(MIN_COMPONENT_VERSION), (
             f"manifest.json version {manifest_version!r} is below the server's "
             f"MIN_COMPONENT_VERSION {MIN_COMPONENT_VERSION!r}; a fresh component "
             "would fail its own version gate. Bump manifest.json in lockstep."
@@ -284,7 +282,9 @@ def _reset_token_cache_between_tests():
     _reset_caller_token_cache()
 
 
-def _make_client_with_token(token: str) -> AsyncMock:
+def _make_client_with_token(
+    token: str, *, version: str = MIN_COMPONENT_VERSION
+) -> AsyncMock:
     """Client that returns ``token`` from the get_caller_token bootstrap and
     echoes payload back for downstream service calls so tests can assert
     that the token was injected."""
@@ -315,13 +315,11 @@ def _make_client_with_token(token: str) -> AsyncMock:
             # reported alongside the token so ha-mcp's MIN_COMPONENT_VERSION
             # gate (added with the packages-only-keys PR) sees a current
             # version and doesn't reject the test setup as "too old".
-            from ha_mcp.tools.tools_filesystem import MIN_COMPONENT_VERSION
-
             return {
                 "service_response": {
                     "success": True,
                     "token": token,
-                    "version": MIN_COMPONENT_VERSION,
+                    "version": version,
                 }
             }
         # Echo the payload so the test can verify token injection.
@@ -726,7 +724,7 @@ class TestCallMcpToolsServiceInjectsToken:
         # the previous literal "0.99.0" was picked so "a future MIN bump still
         # sorts BELOW it", but the 0.11.0 → 1.1.0 bump (#1788) overtook it and
         # broke the test. Deriving keeps that intent true for every bump.
-        above_minimum = f"{_version_tuple(MIN_COMPONENT_VERSION)[0] + 1}.0.0"
+        above_minimum = f"{Version(MIN_COMPONENT_VERSION).major + 1}.0.0"
         client.call_service = AsyncMock(
             return_value={
                 "service_response": {
@@ -744,23 +742,14 @@ class TestCallMcpToolsServiceInjectsToken:
         "bad_version",
         [
             "1.x.0",  # non-numeric segment
-            "1.2.3-beta",  # pre-release suffix (most likely real-world case)
-            "v1.2.3",  # git-tag prefix
             "latest",  # non-numeric placeholder
         ],
     )
     async def test_malformed_version_string_rejected(self, bad_version):
-        """A version _version_tuple can't parse (non-numeric segment like
-        ``'1.x.0'``, a pre-release suffix, a ``v`` prefix, a placeholder)
-        is rejected fail-closed rather than letting an integer prefix sneak
-        past the gate (``'1.x.0'`` → ``(1, 0, 0)`` would otherwise compare
-        ``>= (0, 5, 1)`` and falsely accept). It routes to a distinct
-        "malformed version" error (reinstall / file-issue), NOT the
-        "too old / update via HACS" remediation — updating can't fix a
-        manifest whose version is wrong.
+        """Malformed PEP 440 versions fail closed with reinstall guidance.
 
-        (The empty string is handled one guard earlier as a missing-version
-        "too old" case, so it never reaches this branch.)
+        A development suffix or a normalized v-prefix is valid; an unknown
+        segment or placeholder must not become a permissive numeric prefix.
         """
         client = AsyncMock()
         client.get_services.return_value = [
@@ -898,21 +887,7 @@ class TestExtraYamlKeysVersionGate:
 
     @staticmethod
     def _client(version: str):
-        client = _make_client_with_token("gate-token")
-
-        async def fake_call_service(domain, service, payload, **kwargs):
-            if domain == MCP_TOOLS_DOMAIN and service == CALLER_TOKEN_BOOTSTRAP_SERVICE:
-                return {
-                    "service_response": {
-                        "success": True,
-                        "token": "gate-token",
-                        "version": version,
-                    }
-                }
-            return {"service_response": {"success": True}}
-
-        client.call_service.side_effect = fake_call_service
-        return client
+        return _make_client_with_token("gate-token", version=version)
 
     @pytest.mark.asyncio
     async def test_bootstrap_populates_version_cache(self):
@@ -937,11 +912,12 @@ class TestExtraYamlKeysVersionGate:
         await assert_extra_yaml_keys_supported(client, ["alert2"])
 
     @pytest.mark.asyncio
-    async def test_gate_blocks_on_older_component_via_bootstrap(self):
+    @pytest.mark.parametrize("version", ["1.2.3", "1.2.4.dev1"])
+    async def test_gate_blocks_on_older_component_via_bootstrap(self, version):
         from ha_mcp._vendor.fastmcp.exceptions import ToolError
         from ha_mcp.tools.tools_filesystem import assert_extra_yaml_keys_supported
 
-        client = self._client("1.2.3")
+        client = self._client(version)
         with pytest.raises(ToolError) as excinfo:
             await assert_extra_yaml_keys_supported(client, ["alert2"])
         assert "1.2.4" in str(excinfo.value)
@@ -1040,10 +1016,11 @@ class TestEffectiveExtraYamlWriteKeys:
         assert result == ["alert2", "foo"]
 
     @pytest.mark.asyncio
-    async def test_unions_env_and_store(self, monkeypatch):
+    @pytest.mark.parametrize("version", ["1.2.4", "9.0.0.dev189467019982193"])
+    async def test_unions_env_and_store(self, monkeypatch, version):
         result = await self._run(
             monkeypatch,
-            version="1.2.4",
+            version=version,
             env="alert2",
             store_response={"service_response": {"success": True, "keys": ["beta"]}},
         )
@@ -1060,12 +1037,13 @@ class TestEffectiveExtraYamlWriteKeys:
         assert result == ["beta"]
 
     @pytest.mark.asyncio
-    async def test_old_component_never_reads_store(self, monkeypatch):
+    @pytest.mark.parametrize("version", ["1.2.3", "1.2.4.dev1"])
+    async def test_old_component_never_reads_store(self, monkeypatch, version):
         # The store would report "beta", but a pre-1.2.4 component is not asked;
         # assert_extra_yaml_keys_supported then handles the mismatch elsewhere.
         result = await self._run(
             monkeypatch,
-            version="1.2.3",
+            version=version,
             env="alert2",
             store_response={"service_response": {"success": True, "keys": ["beta"]}},
         )

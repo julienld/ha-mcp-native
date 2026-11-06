@@ -20,23 +20,34 @@ from typing import Any, NoReturn
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ..errors import ErrorCode, create_error_response
+from ..runtime.dashboard_read_contract import (
+    CONFIG_NOT_FOUND_CODE,
+    NO_STORED_CONFIG_MESSAGES,
+    UNKNOWN_CONFIG_PREFIX,
+)
+from ..runtime.dashboard_read_contract import (
+    NO_STORED_CONFIG_NOTE as NO_STORED_CONFIG_NOTE,
+)
 from .helpers import extract_tool_error_message, raise_tool_error
 
-UNKNOWN_CONFIG_PREFIX = "Unknown config specified"
 # Bare (nested error shape) and with the "Command failed: " prefix that
 # ``send_websocket_message``'s flat envelope adds. Matched exactly, unlike the
 # unknown-identifier substring, so any other read failure stays a failure.
-NO_STORED_CONFIG_MESSAGES = frozenset(
-    {"No config found.", "Command failed: No config found."}
-)
-CONFIG_NOT_FOUND_CODE = "config_not_found"
 DASHBOARD_FETCH_FAILED_PREFIX = "Dashboard fetch failed: "
 
-NO_STORED_CONFIG_NOTE = (
-    "Home Assistant has no config for this dashboard (a storage dashboard with "
-    "nothing saved yet, a YAML dashboard whose file is missing, or recovery "
-    "mode), so the frontend shows its generated default view."
-)
+__all__ = [
+    "CONFIG_NOT_FOUND_CODE",
+    "DASHBOARD_FETCH_FAILED_PREFIX",
+    "DASHBOARD_LIST_SUGGESTION",
+    "NO_STORED_CONFIG_MESSAGES",
+    "NO_STORED_CONFIG_NOTE",
+    "UNKNOWN_CONFIG_PREFIX",
+    "is_unknown_dashboard",
+    "is_no_stored_config_error",
+    "read_failure_code",
+    "raise_registry_read_error",
+    "raise_unresolved_delete",
+]
 
 
 def is_unknown_dashboard(error_msg: str) -> bool:

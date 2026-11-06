@@ -29,21 +29,16 @@ def _registered_tool():
     """
     from ha_mcp.tools.tools_addons import register_addon_tools
 
+    from ._tool_capture import capture_tool_registration
+
     captured: dict = {}
 
-    class _MockMCP:
-        def tool(self, *args, **kwargs):
-            def deco(fn):
-                captured.setdefault(fn.__name__, fn)
-                return fn
-
-            return deco
-
-    register_addon_tools(_MockMCP(), client=AsyncMock())
+    register_addon_tools(capture_tool_registration(captured), client=AsyncMock())
     fn = captured["ha_manage_app"]
+    owner = fn.__self__
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
-    return fn
+    return fn.__get__(owner, type(owner))
 
 
 # ---------------------------------------------------------------------------

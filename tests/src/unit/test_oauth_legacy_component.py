@@ -8,10 +8,8 @@ and the credential-minting helper in ``embedded_entry.py`` that provisions
 the legacy client_id/client_secret/signing_key on first use.
 
 Home Assistant / aiohttp are stubbed via ``_embedded_stubs`` (same convention
-as ``test_embedded_setup.py`` / ``test_embedded_entry.py``). ``yarl`` (an
-aiohttp dependency, also not installed in this unit-test environment) is
-stubbed here with the tiny ``URL.update_query`` surface
-``_redirect_with_params`` actually uses.
+as ``test_embedded_setup.py`` / ``test_embedded_entry.py``). URL handling uses
+the real yarl dependency supplied by the test environment's aiohttp.
 """
 
 from __future__ import annotations
@@ -19,8 +17,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-import sys
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -30,32 +26,6 @@ from ._embedded_stubs import install
 
 install()
 
-
-class _FakeURL:
-    """Stand-in for ``yarl.URL`` covering only ``update_query`` + ``str()`` --
-    the surface ``_redirect_with_params`` uses to append ``code``/
-    ``state``/``error`` query params onto the client's redirect_uri."""
-
-    def __init__(self, url: str) -> None:
-        self._url = url
-
-    def update_query(self, params: dict[str, str]) -> _FakeURL:
-        sep = "&" if "?" in self._url else "?"
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        return _FakeURL(f"{self._url}{sep}{query}" if query else self._url)
-
-    def with_query(self, params) -> _FakeURL:
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        return _FakeURL(f"{self._url}?{query}" if query else self._url)
-
-    def __str__(self) -> str:
-        return self._url
-
-
-if "yarl" not in sys.modules:
-    _yarl = ModuleType("yarl")
-    _yarl.URL = _FakeURL  # type: ignore[attr-defined]
-    sys.modules["yarl"] = _yarl
 
 import custom_components.ha_mcp_tools.embedded_entry as eentry  # noqa: E402
 from custom_components.ha_mcp_tools import oauth_legacy  # noqa: E402

@@ -7,7 +7,7 @@ import pytest
 
 from ha_mcp.tools.config_helpers.icon_route import collection_icon
 
-_FETCH_SCHEMAS = "ha_mcp.tools.config_helpers.icon_route.fetch_helper_schemas"
+_FETCH_SCHEMAS = "ha_mcp.tools.component_helper_collections.fetch_helper_schemas"
 
 
 async def test_each_action_follows_its_own_schema() -> None:

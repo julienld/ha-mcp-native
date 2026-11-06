@@ -1,0 +1,40 @@
+{
+  "format_version": 1,
+  "baseline_revision": "2dc504fd97d8416f87b6ea7f2fd8ce0332615956",
+  "scope": "server-generated stable metadata, asset-dependent description excluded",
+  "tools": [
+    {
+      "name": "ha_get_skill_guide",
+      "title": "Get Home Assistant Best Practices Skill Guide",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "default": "SKILL.md",
+            "description": "Path of the file to read, exactly as SKILL.md links it (e.g. 'references/triggers-and-conditions.md'). Omit to read SKILL.md.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "annotations": {
+        "title": "Get Home Assistant Best Practices Skill Guide",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "fastmcp": {
+          "tags": [
+            "System"
+          ]
+        }
+      }
+    }
+  ]
+}

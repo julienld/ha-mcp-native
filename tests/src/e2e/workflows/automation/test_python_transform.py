@@ -365,14 +365,10 @@ async def test_config_hash_stable_across_reads(mcp_client, ha_client):
 
 @pytest.mark.asyncio
 async def test_legacy_keys_read_back_as_core_stores_them(mcp_client, ha_client):
-    """A config written with legacy keys reads back as Core stored it.
+    """Opt into stored keys while keeping the default compatible read view.
 
-    The tools no longer rewrite the body on either side. Core itself renames
-    the singular root keys and ``service`` while it validates the write (its
-    ``cv.renamed`` validators rename in place and the config view stores that
-    dict), but leaves a trigger's ``platform`` key alone. So the read shows
-    plural root keys, ``action`` and ``platform``; the hash is stable across
-    reads; and python_transform edits the body the automation actually has.
+    Both view hashes support transforms. Core owns write validation and key
+    conversion; stored reads expose its body rather than the normalized view.
     """
     mcp = MCPAssertions(mcp_client)
 
@@ -390,11 +386,20 @@ async def test_legacy_keys_read_back_as_core_stores_them(mcp_client, ha_client):
     )
     entity_id = create_result["entity_id"]
 
+    compatible = await mcp.call_tool_success(
+        "ha_config_get_automation", {"identifier": entity_id}
+    )
+    assert compatible["config"]["triggers"] == [
+        {"trigger": "time", "at": "17:00:00"}
+    ], compatible
+
     read1 = await mcp.call_tool_success(
-        "ha_config_get_automation", {"entity_id": entity_id}
+        "ha_config_get_automation",
+        {"entity_id": entity_id, "config_format": "stored"},
     )
     read2 = await mcp.call_tool_success(
-        "ha_config_get_automation", {"entity_id": entity_id}
+        "ha_config_get_automation",
+        {"entity_id": entity_id, "config_format": "stored"},
     )
     assert read1["config_hash"] == read2["config_hash"]
     stored = read1["config"]
@@ -412,7 +417,8 @@ async def test_legacy_keys_read_back_as_core_stores_them(mcp_client, ha_client):
         },
     )
     verify = await mcp.call_tool_success(
-        "ha_config_get_automation", {"entity_id": entity_id}
+        "ha_config_get_automation",
+        {"entity_id": entity_id, "config_format": "stored"},
     )
     assert verify["config"]["actions"][0]["data"] == {"brightness": 10}, verify
     assert verify["config"]["triggers"][0]["platform"] == "time", verify

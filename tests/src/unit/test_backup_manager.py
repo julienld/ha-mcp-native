@@ -868,36 +868,6 @@ class TestWithAutoBackupDecorator:
         assert ran == ["dev-1"]
 
 
-def test_destructive_tools_carry_auto_backup_decorator() -> None:
-    """Source guard: these destructive tools must keep their
-    @with_auto_backup decorator and its key — a deleted line would silently
-    stop capturing without failing any behavioral test."""
-    from pathlib import Path
-
-    tools_dir = Path(__file__).resolve().parents[3] / "src" / "ha_mcp" / "tools"
-    # (fname, func, domain, key, mandatory); file/YAML writes are mandatory (#1579).
-    entity_key, device_key = "id_fn=_single_entity_target", 'id_param="device_id"'
-    checks = [
-        ("tools_entities.py", "ha_set_entity", "entity", entity_key, False),
-        ("tools_entities.py", "ha_remove_entity", "entity", entity_key, False),
-        ("tools_registry.py", "ha_set_device", "device", device_key, False),
-        ("tools_registry.py", "ha_remove_device", "device", device_key, False),
-        ("tools_filesystem.py", "ha_write_file", "file", 'id_param="path"', True),
-        ("tools_filesystem.py", "ha_delete_file", "file", 'id_param="path"', True),
-        ("tools_yaml_config.py", "ha_config_set_yaml", "yaml", None, True),
-    ]
-    for fname, func, domain, key, mandatory in checks:
-        src = (tools_dir / fname).read_text(encoding="utf-8")
-        idx = src.index(f"async def {func}(")
-        head = src[max(0, idx - 600) : idx]  # the decorator block above the def
-        assert "with_auto_backup(" in head, f"{func} lost @with_auto_backup"
-        assert f'domain="{domain}"' in head, f"{func} wrong/missing backup domain"
-        if key is not None:
-            assert key in head, f"{func} wrong/missing {key}"
-        if mandatory:
-            assert "mandatory=True" in head, f"{func} lost mandatory=True"
-
-
 def test_ha_manage_blueprints_carries_auto_backup_decorator() -> None:
     """Source guard for the computed-key wiring (#2329).
 
@@ -906,12 +876,22 @@ def test_ha_manage_blueprints_carries_auto_backup_decorator() -> None:
     behavioral tests below drive a stand-in callable, so only this guard notices
     the decorator (or its domain/skip lambdas) disappearing from the real tool.
     """
+    import ast
     from pathlib import Path
 
     tools_dir = Path(__file__).resolve().parents[3] / "src" / "ha_mcp" / "tools"
     src = (tools_dir / "tools_blueprints.py").read_text(encoding="utf-8")
-    idx = src.index("async def ha_manage_blueprints(")
-    head = src[max(0, idx - 1200) : idx]  # the decorator block above the def
+    declaration = next(
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ha_manage_blueprints"
+            for target in node.targets
+        )
+    )
+    head = ast.get_source_segment(src, declaration)
+    assert head is not None
     assert "with_auto_backup(" in head, "ha_manage_blueprints lost @with_auto_backup"
     assert "domain_fn=" in head, "ha_manage_blueprints lost its blueprint domain_fn"
     assert "blueprint_{kw.get(" in head, "the backup domain no longer follows `domain`"

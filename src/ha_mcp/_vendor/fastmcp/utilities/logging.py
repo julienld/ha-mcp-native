@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from rich.console import Console
-from rich.logging import RichHandler
+from ha_mcp._vendor.rich.console import Console
+from ha_mcp._vendor.rich.logging import RichHandler
 from typing_extensions import override
 
 from ha_mcp._vendor import fastmcp

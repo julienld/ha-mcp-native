@@ -911,9 +911,7 @@ class TestNestedCardSearch:
                 }
             ]
         }
-        with caplog.at_level(
-            logging.DEBUG, logger="ha_mcp.tools.tools_config_dashboards"
-        ):
+        with caplog.at_level(logging.DEBUG, logger="ha_mcp.runtime.dashboard_search"):
             matches = _find_cards_in_config(config, card_type="tile")
         assert matches == []
         assert any("non-string custom_fields key" in r.message for r in caplog.records)

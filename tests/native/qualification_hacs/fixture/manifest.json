@@ -1,0 +1,7 @@
+{
+  "domain": "qualification_hacs_fixture",
+  "name": "Isolated HACS qualification network and observations",
+  "version": "0.1.0",
+  "dependencies": ["native_fixture", "http"],
+  "requirements": []
+}

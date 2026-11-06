@@ -21,7 +21,7 @@ from ha_mcp.client.rest_client import (
     SceneResolution,
 )
 
-from ._created_helper_registry import with_registry
+from ._created_helper_registry import with_registry, with_resolved_registry
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -130,9 +130,9 @@ class TestUniformResponseShape:
                 }
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -209,7 +209,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             side_effect=HomeAssistantConnectionError("network down"),
         ):
@@ -245,9 +245,9 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             side_effect=HomeAssistantConnectionError("net glitch"),
         ):
@@ -292,7 +292,7 @@ class TestUniformResponseShape:
 
         mock_client.send_websocket_message = with_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -344,7 +344,7 @@ class TestUniformResponseShape:
 
         mock_client.send_websocket_message = with_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -403,9 +403,9 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
         with patch(
-            "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -461,7 +461,7 @@ class TestUniformResponseShape:
 
         with (
             patch(
-                "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -520,7 +520,7 @@ class TestUniformResponseShape:
                 return {"success": True, "result": {"id": "abc123"}}
             return {"success": True, "result": {}}
 
-        mock_client.send_websocket_message = AsyncMock(side_effect=ws_handler)
+        mock_client.send_websocket_message = with_resolved_registry(ws_handler)
 
         async def fake_apply(
             client, entity_id, category, scope, result_dict, entity_type
@@ -531,7 +531,7 @@ class TestUniformResponseShape:
 
         with (
             patch(
-                "ha_mcp.tools.config_helpers.update.wait_for_entity_registered",
+                "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
@@ -569,7 +569,7 @@ class TestUniformResponseShape:
             }
         )
         with patch(
-            "ha_mcp.tools.config_helpers.create.wait_for_entity_registered",
+            "ha_mcp.tools.ws_waiters.wait_for_entity_registered",
             new_callable=AsyncMock,
             return_value=False,  # not registered → triggers warning code path
         ):
@@ -1082,36 +1082,6 @@ class TestSweepWarningsShape:
     """
 
     @pytest.mark.asyncio
-    async def test_backup_restore_warnings_shape(self):
-        from ha_mcp.tools.backup_snapshot_restore import restore_backup
-
-        target = {"backup_id": "abc", "agents": {"backup.local": {}}}
-        create = {"agent_ids": [], "password": "pw"}
-        ws = AsyncMock()
-        ws.send_command.side_effect = [
-            {"success": True, "result": {"backup": target}},
-            {"success": True, "result": {"config": {"create_backup": create}}},
-        ]
-        client = MagicMock()
-        client.base_url = "http://test"
-        client.token = "t"
-        client.verify_ssl = False
-        client.get_config = AsyncMock(return_value={"components": []})
-        # The restore send is exercised by test_backup_snapshot_restore.
-        with (
-            patch(
-                "ha_mcp.tools.backup_snapshot.get_connected_ws_client",
-                new=AsyncMock(return_value=(ws, None)),
-            ),
-            patch(
-                "ha_mcp.tools.backup_snapshot_restore._send_restore",
-                new=AsyncMock(return_value=None),
-            ),
-        ):
-            result = await restore_backup(client, "abc")
-        _assert_warnings_list_shape(result)
-
-    @pytest.mark.asyncio
     async def test_system_restart_warnings_shape(self):
         from ha_mcp.tools.tools_system import SystemTools
 
@@ -1131,8 +1101,7 @@ class TestSweepWarningsShape:
         (no top-level ``success``) — uses the relaxed helper."""
         from ha_mcp.tools.tools_integrations import IntegrationTools
 
-        tools = IntegrationTools.__new__(IntegrationTools)
-        tools._client = MagicMock()
+        tools = IntegrationTools(MagicMock())
         tools._get_single_entry = AsyncMock(
             return_value={
                 "entry_id": "abc",
@@ -1160,15 +1129,7 @@ class TestSweepWarningsShape:
 
         registered: dict[str, Any] = {}
         mock_mcp = MagicMock()
-
-        def tool_decorator(*args, **kwargs):
-            def wrapper(func):
-                registered[func.__name__] = func
-                return func
-
-            return wrapper
-
-        mock_mcp.tool = tool_decorator
+        mock_mcp.add_tool = lambda fn: registered.setdefault(fn.__name__, fn)
         client = MagicMock()
         client.base_url = "http://localhost:8123"
         client.token = "test-token"
@@ -1226,4 +1187,34 @@ class TestSweepWarningsShape:
             }
         )
 
+        _assert_warnings_list_shape(result)
+
+    @pytest.mark.asyncio
+    async def test_backup_restore_warnings_shape(self):
+        from ha_mcp.tools.backup_snapshot_restore import restore_backup
+
+        target = {"backup_id": "abc", "agents": {"backup.local": {}}}
+        create = {"agent_ids": [], "password": "pw"}
+        ws = AsyncMock()
+        ws.send_command.side_effect = [
+            {"success": True, "result": {"backup": target}},
+            {"success": True, "result": {"config": {"create_backup": create}}},
+        ]
+        client = MagicMock()
+        client.base_url = "http://test"
+        client.token = "t"
+        client.verify_ssl = False
+        client.get_config = AsyncMock(return_value={"components": []})
+        # The restore send is exercised by test_backup_snapshot_restore.
+        with (
+            patch(
+                "ha_mcp.tools.backup_snapshot.get_connected_ws_client",
+                new=AsyncMock(return_value=(ws, None)),
+            ),
+            patch(
+                "ha_mcp.tools.backup_snapshot_restore._send_restore",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = await restore_backup(client, "abc")
         _assert_warnings_list_shape(result)

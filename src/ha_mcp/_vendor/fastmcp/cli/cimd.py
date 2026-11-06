@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
-from rich.console import Console
+from ha_mcp._vendor.rich.console import Console
 
 from ha_mcp._vendor.fastmcp.server.auth.cimd import (
     CIMDFetcher,

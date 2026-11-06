@@ -8,18 +8,24 @@ tools_voice_assistant.py.
 """
 
 import logging
-from typing import Annotated, Any, Literal
+from typing import Any
 
-from pydantic import Field
-
-from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..errors import ErrorCode, create_error_response
+from ..runtime.errors import raise_failure
+from ..runtime.pipeline_tools import PipelineAction, PipelineTools
+from ..runtime.pipeline_values import (
+    PipelineValues,
+    _drop_pipeline_id,
+    process_result,
+    validate_sentence,
+    validate_write,
+    write_result,
+)
 from .helpers import (
-    exception_to_structured_error,
     log_tool_usage,
-    raise_tool_error,
     register_tool_methods,
 )
 from .tool_hints import write_hints
@@ -27,62 +33,13 @@ from .util_helpers import websocket_error_message
 
 logger = logging.getLogger(__name__)
 
-PipelineAction = Literal["list", "get", "create", "update", "set_preferred", "process"]
 
-# HA's MATCH_ALL sentinel. A pipeline driven by an LLM accepts every language and
-# stores "*" as its conversation_language, which is not a language a conversation
-# agent can recognise intents in.
-_MATCH_ALL_LANGUAGE = "*"
-
-# IntentResponseErrorCode.FAILED_TO_HANDLE: HA matched the intent, ran the
-# action and the action raised. Unlike no_intent_match this is a failure the
-# caller should see, not Assist declining a sentence.
-_FAILED_TO_HANDLE_ERROR = "failed_to_handle"
-
-# Mirrors HA Core's assist_pipeline/pipeline.py pipeline create/update schema.
-_PIPELINE_FIELDS = (
-    "conversation_engine",
-    "conversation_language",
-    "language",
-    "name",
-    "stt_engine",
-    "stt_language",
-    "tts_engine",
-    "tts_language",
-    "tts_voice",
-    "wake_word_entity",
-    "wake_word_id",
-    "prefer_local_intents",
-)
-
-_NULLABLE_PIPELINE_FIELDS = {
-    "stt_engine",
-    "stt_language",
-    "tts_engine",
-    "tts_language",
-    "tts_voice",
-    "wake_word_entity",
-    "wake_word_id",
-}
-
-
-def _normalize_pipeline_value(field: str, value: Any) -> Any:
-    """Convert empty string to None for clearable pipeline fields."""
-    if field in _NULLABLE_PIPELINE_FIELDS and value == "":
-        return None
-    return value
-
-
-def _drop_pipeline_id(pipeline: dict[str, Any]) -> dict[str, Any]:
-    """Return only the fields HA accepts for create/update pipeline commands."""
-    return {field: pipeline[field] for field in _PIPELINE_FIELDS if field in pipeline}
-
-
-class AssistPipelineTools:
+class AssistPipelineTools(PipelineValues):
     """Assist pipeline management and sentence processing."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        self.pipelines = self
 
     async def _send_pipeline_message(
         self,
@@ -96,7 +53,7 @@ class AssistPipelineTools:
 
         if not result.get("success"):
             error_msg = websocket_error_message(result.get("error", "Operation failed"))
-            raise_tool_error(
+            raise_failure(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     f"Failed to {operation} Assist pipeline: {error_msg}",
@@ -119,7 +76,7 @@ class AssistPipelineTools:
         )
         if not isinstance(pipeline, dict):
             if pipeline_id is None:
-                raise_tool_error(
+                raise_failure(
                     create_error_response(
                         ErrorCode.SERVICE_CALL_FAILED,
                         "No preferred Assist pipeline is configured",
@@ -130,7 +87,7 @@ class AssistPipelineTools:
                         ],
                     )
                 )
-            raise_tool_error(
+            raise_failure(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     "Unexpected Assist pipeline response",
@@ -138,56 +95,6 @@ class AssistPipelineTools:
                 )
             )
         return pipeline
-
-    @staticmethod
-    def _pipeline_updates(
-        *,
-        conversation_engine: str | None,
-        conversation_language: str | None,
-        language: str | None,
-        name: str | None,
-        stt_engine: str | None,
-        stt_language: str | None,
-        tts_engine: str | None,
-        tts_language: str | None,
-        tts_voice: str | None,
-        wake_word_entity: str | None,
-        wake_word_id: str | None,
-        prefer_local_intents: bool | None,
-    ) -> dict[str, Any]:
-        """Collect supplied pipeline fields into HA's pipeline storage shape."""
-        values = {
-            "conversation_engine": conversation_engine,
-            "conversation_language": conversation_language,
-            "language": language,
-            "name": name,
-            "stt_engine": stt_engine,
-            "stt_language": stt_language,
-            "tts_engine": tts_engine,
-            "tts_language": tts_language,
-            "tts_voice": tts_voice,
-            "wake_word_entity": wake_word_entity,
-            "wake_word_id": wake_word_id,
-            "prefer_local_intents": prefer_local_intents,
-        }
-        for field, value in values.items():
-            if value == "" and field not in _NULLABLE_PIPELINE_FIELDS:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"{field} cannot be an empty string",
-                        context={"field": field},
-                        suggestions=[
-                            f"Omit {field} to keep the existing or cloned value.",
-                            f"Pass a non-empty value for {field}.",
-                        ],
-                    )
-                )
-        return {
-            field: _normalize_pipeline_value(field, value)
-            for field, value in values.items()
-            if value is not None
-        }
 
     async def _manage_pipeline_read(
         self,
@@ -214,7 +121,7 @@ class AssistPipelineTools:
             }
 
         if pipeline_id is None:
-            raise_tool_error(
+            raise_failure(
                 create_error_response(
                     ErrorCode.VALIDATION_MISSING_PARAMETER,
                     "action='get' requires pipeline_id",
@@ -245,7 +152,7 @@ class AssistPipelineTools:
     async def _set_preferred_pipeline(self, pipeline_id: str | None) -> dict[str, Any]:
         """Set the preferred Assist pipeline."""
         if pipeline_id is None:
-            raise_tool_error(
+            raise_failure(
                 create_error_response(
                     ErrorCode.VALIDATION_MISSING_PARAMETER,
                     "action='set_preferred' requires pipeline_id",
@@ -281,45 +188,7 @@ class AssistPipelineTools:
         make_preferred: bool,
     ) -> dict[str, Any]:
         """Handle Assist pipeline create/update actions."""
-        if action == "create" and (
-            updates.get("name") is None or updates.get("conversation_engine") is None
-        ):
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_MISSING_PARAMETER,
-                    "action='create' requires name and conversation_engine",
-                    context={"action": action},
-                    suggestions=[
-                        "Provide name and conversation_engine.",
-                        "Use ha_manage_pipeline(action='list') to inspect current pipeline values.",
-                    ],
-                )
-            )
-
-        if action == "update" and pipeline_id is None:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_MISSING_PARAMETER,
-                    "action='update' requires pipeline_id",
-                    context={"action": action},
-                    suggestions=[
-                        "Call ha_manage_pipeline(action='list') first to find pipeline IDs."
-                    ],
-                )
-            )
-
-        if not updates and not make_preferred:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    "No Assist pipeline changes requested",
-                    context={"action": action, "pipeline_id": pipeline_id},
-                    suggestions=[
-                        "Pass at least one pipeline field to update.",
-                        "Use action='set_preferred' to only change the preferred pipeline.",
-                    ],
-                )
-            )
+        validate_write(action, pipeline_id, updates, make_preferred)
 
         source_pipeline_id = pipeline_id if action == "update" else base_pipeline_id
         pipeline = await self._get_pipeline(source_pipeline_id)
@@ -339,7 +208,7 @@ class AssistPipelineTools:
             pipeline_id=pipeline_id,
         )
         if not isinstance(result_pipeline, dict):
-            raise_tool_error(
+            raise_failure(
                 create_error_response(
                     ErrorCode.SERVICE_CALL_FAILED,
                     "Unexpected Assist pipeline write response",
@@ -357,47 +226,9 @@ class AssistPipelineTools:
             await self._set_preferred_pipeline(result_pipeline_id)
             preferred_changed = True
 
-        operation = "created" if action == "create" else "updated"
-        return {
-            "success": True,
-            "operation": operation,
-            "pipeline_id": result_pipeline_id,
-            "pipeline": result_pipeline,
-            "preferred_changed": preferred_changed,
-            "message": (
-                f"Assist pipeline {operation}: "
-                f"{result_pipeline.get('name', result_pipeline_id)}"
-            ),
-        }
-
-    @staticmethod
-    def _pipeline_intent_language(pipeline: dict[str, Any]) -> str | None:
-        """Resolve the language a pipeline recognises intents in.
-
-        Mirrors HA Core's own fallback for ``conversation_language == "*"``
-        (``assist_pipeline/pipeline.py``): the STT and TTS languages come first
-        because they may be more specific (``zh-CN`` rather than ``zh``).
-        """
-        language = pipeline.get("conversation_language")
-        if isinstance(language, str) and language and language != _MATCH_ALL_LANGUAGE:
-            return language
-        for field in ("stt_language", "tts_language", "language"):
-            value = pipeline.get(field)
-            if isinstance(value, str) and value:
-                return value
-        return None
-
-    @staticmethod
-    def _speech_text(response: dict[str, Any]) -> str | None:
-        """Extract the plain-text reply from an HA conversation response."""
-        speech = response.get("speech")
-        if not isinstance(speech, dict):
-            return None
-        plain = speech.get("plain")
-        if not isinstance(plain, dict):
-            return None
-        text = plain.get("speech")
-        return text if isinstance(text, str) else None
+        return write_result(
+            action, result_pipeline, result_pipeline_id, preferred_changed
+        )
 
     async def _process_sentence(
         self,
@@ -409,18 +240,7 @@ class AssistPipelineTools:
         pipeline_id: str | None,
     ) -> dict[str, Any]:
         """Run a sentence through HA's conversation agent."""
-        if sentence is None or not sentence.strip():
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_MISSING_PARAMETER,
-                    "action='process' requires a non-empty sentence",
-                    context={"action": "process"},
-                    suggestions=[
-                        "Pass the command to run, e.g. "
-                        "sentence='turn on the kitchen light'."
-                    ],
-                )
-            )
+        validate_sentence(sentence)
 
         if pipeline_id is not None:
             pipeline = await self._get_pipeline(pipeline_id)
@@ -443,349 +263,20 @@ class AssistPipelineTools:
         result = await self._client._request(
             "POST", "/conversation/process", json=payload
         )
-        response = result.get("response") if isinstance(result, dict) else None
-        response_type = (
-            response.get("response_type") if isinstance(response, dict) else None
+        return process_result(
+            result, pipeline_id=pipeline_id, agent_id=agent_id, language=language
         )
-        data = response.get("data") if isinstance(response, dict) else None
-        if (
-            not isinstance(response, dict)
-            or not isinstance(response_type, str)
-            or not isinstance(data, dict)
-        ):
-            # IntentResponse.as_dict always writes both response_type and data,
-            # so a body missing either is malformed rather than a variant. An
-            # empty or undecodable 2xx body arrives here as {} — the client
-            # normalizes a JSON decode failure that way — and carrying on would
-            # report success with a null response_type and no speech.
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.SERVICE_CALL_FAILED,
-                    "Unexpected Assist conversation response",
-                    context={
-                        "action": "process",
-                        "pipeline_id": pipeline_id,
-                        "agent_id": agent_id,
-                    },
-                    suggestions=[
-                        "Check that the conversation agent is loaded and responding",
-                        "Use ha_get_logs to see what /conversation/process returned",
-                    ],
-                )
-            )
 
-        speech = self._speech_text(response)
-        failed = data.get("failed", [])
-        error_code = data.get("code") if response_type == "error" else None
-        process_result: dict[str, Any] = {
-            "success": True,
-            "operation": "process",
-            "pipeline_id": pipeline_id,
-            "agent_id": agent_id,
-            "response_type": response_type,
-            "speech": speech,
-            "language": response.get("language") or language,
-            "conversation_id": result.get("conversation_id"),
-            "continue_conversation": result.get("continue_conversation", False),
-            # Every target the intent resolved. HA dropped this key in 2026.4;
-            # on newer cores the split success/failed lists below carry the same
-            # target dicts.
-            "targets": data.get("targets", []),
-            "service_calls": {
-                "success": data.get("success", []),
-                "failed": failed,
-            },
-            "error_code": error_code,
-            "message": speech or f"Assist responded with {response_type}",
-        }
-
-        # HA raises only when no target succeeded, so a partial failure keeps
-        # response_type 'action_done' and the intent's ordinary speech. Without
-        # a warning the caller reads "Turned on the lights" and never looks in
-        # service_calls.failed.
-        warnings: list[str] = []
-        if failed:
-            failed_targets = ", ".join(
-                str(target.get("id") or target.get("name") or "unknown target")
-                for target in failed
-                if isinstance(target, dict)
-            )
-            warnings.append(
-                f"{len(failed)} target(s) the intent resolved failed"
-                + (f": {failed_targets}" if failed_targets else "")
-                + ". See service_calls.failed."
-            )
-        if error_code == _FAILED_TO_HANDLE_ERROR:
-            warnings.append(
-                "Assist matched the intent but handling it failed. The command "
-                "was understood and not carried out."
-            )
-        if warnings:
-            process_result["warnings"] = warnings
-        return process_result
-
-    @tool(
+    ha_manage_pipeline = tool(
         name="ha_manage_pipeline",
         tags={"Assist"},
-        # action='process' answers with whatever the conversation agent
-        # says, and that agent can be a cloud LLM, so the tool carries
-        # externally-authored content back to the client.
         annotations=write_hints(
             "Manage Assist Pipeline",
             destructive=True,
             idempotent=False,
             open_world=True,
         ),
-    )
-    @log_tool_usage
-    async def ha_manage_pipeline(
-        self,
-        action: Annotated[
-            PipelineAction,
-            Field(
-                description=(
-                    "Pipeline operation: list, get, create, update, set_preferred, "
-                    "or process."
-                ),
-            ),
-        ],
-        pipeline_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Assist pipeline ID. Required for get, update, and set_preferred. "
-                    "Optional for process, where it selects the conversation agent and "
-                    "language that pipeline is configured with."
-                ),
-                default=None,
-            ),
-        ] = None,
-        sentence: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Natural-language command to run through Assist. Required when "
-                    "action='process'."
-                ),
-                default=None,
-            ),
-        ] = None,
-        conversation_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "For process only, the conversation to continue. Returned in the "
-                    "response so follow-up sentences keep their context."
-                ),
-                default=None,
-            ),
-        ] = None,
-        agent_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "For process only, the conversation agent entity ID to answer, "
-                    "e.g. 'conversation.home_assistant'. Overrides the agent taken "
-                    "from pipeline_id; omit both for the default agent."
-                ),
-                default=None,
-            ),
-        ] = None,
-        name: Annotated[
-            str | None,
-            Field(
-                description="Pipeline display name. Required when action='create'.",
-                default=None,
-            ),
-        ] = None,
-        conversation_engine: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Conversation agent entity ID or engine ID. Required when action='create'."
-                ),
-                default=None,
-            ),
-        ] = None,
-        base_pipeline_id: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Pipeline ID to clone when creating. Omit to clone the preferred "
-                    "pipeline. Ignored for non-create actions."
-                ),
-                default=None,
-            ),
-        ] = None,
-        conversation_language: Annotated[
-            str | None,
-            Field(description="Conversation language, usually '*'.", default=None),
-        ] = None,
-        language: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Pipeline language, e.g. 'en'. For process, the language to "
-                    "recognise the sentence in."
-                ),
-                default=None,
-            ),
-        ] = None,
-        stt_engine: Annotated[
-            str | None,
-            Field(
-                description="Speech-to-text engine. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        stt_language: Annotated[
-            str | None,
-            Field(
-                description="Speech-to-text language. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        tts_engine: Annotated[
-            str | None,
-            Field(
-                description="Text-to-speech engine. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        tts_language: Annotated[
-            str | None,
-            Field(
-                description="Text-to-speech language. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        tts_voice: Annotated[
-            str | None,
-            Field(
-                description="Text-to-speech voice. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        wake_word_entity: Annotated[
-            str | None,
-            Field(
-                description="Wake-word entity ID. Pass empty string to clear.",
-                default=None,
-            ),
-        ] = None,
-        wake_word_id: Annotated[
-            str | None,
-            Field(
-                description="Wake-word ID. Pass empty string to clear.", default=None
-            ),
-        ] = None,
-        prefer_local_intents: Annotated[
-            bool | None,
-            Field(
-                description=(
-                    "Whether Home Assistant local intents should be preferred before "
-                    "the conversation engine."
-                ),
-                default=None,
-            ),
-        ] = None,
-        make_preferred: Annotated[
-            bool,
-            Field(
-                description=(
-                    "For create/update only, also set the resulting pipeline as preferred. "
-                    "Ignored for other actions."
-                ),
-                default=False,
-            ),
-        ] = False,
-    ) -> dict[str, Any]:
-        """Manage Home Assistant Assist pipelines.
-
-        Use action='list' to discover pipeline IDs, action='get' to inspect one
-        pipeline, action='create' or action='update' to write pipeline settings,
-        action='set_preferred' to choose the preferred pipeline, and
-        action='process' to run a sentence through Assist.
-
-        action='process' sends the sentence straight to Assist's conversation
-        agent, so a matched intent executes: it turns on the light rather than
-        reporting that it would. Its result carries response_type
-        ('action_done', 'query_answer' or 'error') and, on an error, error_code
-        such as 'no_intent_match' — Assist declining a sentence is an answer,
-        not a tool failure, so inspect those fields rather than expecting a
-        raised error. Use ha_call_service to act on an entity directly; use
-        this to test what Assist itself understands. When the built-in agent
-        answers, a matching conversation trigger runs its automation: that
-        agent checks its sentence triggers before it matches intents, so this
-        is not limited to intents. Even with pipeline_id, the sentence goes
-        to the agent directly. So with an agent other than the built-in one, neither
-        sentence triggers nor prefer_local_intents apply — a full pipeline run
-        is what adds those for other agents.
-
-        EXAMPLES:
-        - Get the preferred pipeline: ha_manage_pipeline(action="get", pipeline_id="preferred")
-        - Create by cloning a pipeline: ha_manage_pipeline(action="create", base_pipeline_id="preferred", name="Local Assist", conversation_engine="conversation.local_llm")
-        - Update the agent and clear the TTS voice: ha_manage_pipeline(action="update", pipeline_id="preferred", conversation_engine="conversation.local_llm", tts_voice="")
-        - Run a sentence through one pipeline's agent: ha_manage_pipeline(action="process", sentence="turn on the kitchen light", pipeline_id="preferred")
-        - Continue a conversation: ha_manage_pipeline(action="process", sentence="and the hallway?", conversation_id="<id from the previous response>")
-
-        Non-nullable fields such as name, language, conversation_language, and
-        conversation_engine must be omitted or non-empty.
-        """
-        try:
-            if action in {"list", "get"}:
-                return await self._manage_pipeline_read(
-                    action=action,
-                    pipeline_id=pipeline_id,
-                )
-
-            if action == "set_preferred":
-                return await self._set_preferred_pipeline(pipeline_id)
-
-            if action == "process":
-                return await self._process_sentence(
-                    sentence=sentence,
-                    language=language,
-                    conversation_id=conversation_id,
-                    agent_id=agent_id,
-                    pipeline_id=pipeline_id,
-                )
-
-            updates = self._pipeline_updates(
-                conversation_engine=conversation_engine,
-                conversation_language=conversation_language,
-                language=language,
-                name=name,
-                stt_engine=stt_engine,
-                stt_language=stt_language,
-                tts_engine=tts_engine,
-                tts_language=tts_language,
-                tts_voice=tts_voice,
-                wake_word_entity=wake_word_entity,
-                wake_word_id=wake_word_id,
-                prefer_local_intents=prefer_local_intents,
-            )
-            return await self._write_pipeline(
-                action=action,
-                pipeline_id=pipeline_id,
-                base_pipeline_id=base_pipeline_id,
-                updates=updates,
-                make_preferred=make_preferred,
-            )
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            exception_to_structured_error(
-                e,
-                context={"action": action, "pipeline_id": pipeline_id},
-                suggestions=[
-                    "Check Home Assistant connection",
-                    "Use ha_manage_pipeline(action='list') to inspect existing pipeline values",
-                    "Use ha_search(domain_filter='conversation') to find conversation agent IDs",
-                ],
-            )
-            return None  # unreachable: exception_to_structured_error always raises
+    )(log_tool_usage(legacy_errors(PipelineTools.ha_manage_pipeline)))
 
 
 def register_assist_pipeline_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

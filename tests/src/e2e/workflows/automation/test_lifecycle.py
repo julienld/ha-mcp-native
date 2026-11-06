@@ -1254,11 +1254,7 @@ class TestSetAutomationNegativeInputs:
         assert "both config and python_transform" in result["error"]["message"].lower()
 
     async def test_python_transform_requires_entity_id(self, mcp_client) -> None:
-        """Rejects python_transform when entity_id is absent.
-
-        Guard: tools_config_automations.py — raises VALIDATION_INVALID_PARAMETER
-        before any WebSocket I/O when python_transform is set but entity_id is None.
-        """
+        """Reject transforms without either supported automation identifier."""
         result = await safe_call_tool(
             mcp_client,
             "ha_config_set_automation",
@@ -1269,7 +1265,9 @@ class TestSetAutomationNegativeInputs:
         )
         assert result["success"] is False
         assert result["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
-        assert "entity_id is required" in result["error"]["message"].lower()
+        message = result["error"]["message"].lower()
+        assert "required" in message and "python_transform" in message
+        assert "entity_id" in message or "identifier" in message
 
     async def test_python_transform_requires_config_hash(self, mcp_client) -> None:
         """Rejects python_transform when config_hash is absent.

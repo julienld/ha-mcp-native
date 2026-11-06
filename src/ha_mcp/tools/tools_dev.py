@@ -14,15 +14,15 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import httpx
-from pydantic import Field
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
 from .._version import is_embedded, is_running_in_addon
+from ..backends.legacy import legacy_errors, legacy_errors_sync
 from ..client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantCommandError,
@@ -32,7 +32,10 @@ from ..client.websocket_client import get_websocket_client
 from ..errors import ErrorCode, create_error_response
 from ..policy.editing import PolicyCaller
 from ..renamed_tools import current_tool_name
-from .coercion import JSON_STRING_COERCION
+from ..runtime import dev_values
+from ..runtime.dev_tools import DevFacade
+from ..runtime.dev_values import _COERCE_MISS as _COERCE_MISS
+from ..runtime.dev_values import _HUMAN_ONLY_SETTINGS as _HUMAN_ONLY_SETTINGS
 from .component_api import (
     component_supports,
     get_component_caps,
@@ -89,7 +92,6 @@ _REMOVE = object()
 # Sentinel returned by the per-type ``_coerce_*_setting`` helpers when ``raw``
 # is not coercible to that type — the caller then raises the generic
 # type-mismatch error.
-_COERCE_MISS = object()
 
 # How the shared policy-editing helpers spell this tool's own actions when
 # they build user-facing messages.
@@ -213,24 +215,6 @@ def _require_security_policy_access(operation: str) -> None:
 
 # Settings dev tools may never write, in either direction, with the refusal
 # message and where a human changes them instead.
-_HUMAN_ONLY_SETTINGS: dict[str, tuple[str, str]] = {
-    "enable_security_policy_tool": (
-        "it registers ha_manage_security_policy, which can rewrite the tool "
-        "security policies gating the agent.",
-        "Change it in the web settings UI (Tool Security Policies tab) or via "
-        "the ENABLE_SECURITY_POLICY_TOOL env var.",
-    ),
-    "dev_tools_security_policy_access": (
-        "it is the toggle governing their own access to tool security policies.",
-        "Change it in the web settings UI (Server Settings tab, Developer "
-        "section) or via the HAMCP_DEV_SECURITY_POLICY_ACCESS env var.",
-    ),
-    "custom_instructions": (
-        "its text is sent to every connected agent as server instructions.",
-        "Change it in the web settings UI (Server Settings tab, Advanced) or "
-        "via the HAMCP_CUSTOM_INSTRUCTIONS env var.",
-    ),
-}
 
 
 def _guard_security_policy_setting(setting: str) -> None:
@@ -525,7 +509,7 @@ def schedule_deferred_entry_reload(client: Any, entry_id: str) -> None:
     _spawn_background(_reload())
 
 
-class DevTools:
+class LegacyDevTools:
     """Developer-mode tools for server introspection, update, and settings."""
 
     def __init__(self, client: Any, server: Any | None = None) -> None:
@@ -632,88 +616,25 @@ class DevTools:
             rows.append(row)
         return rows
 
-    @staticmethod
-    def _coerce_setting_value(fname: str, raw: Any, ftype: type) -> Any:
-        """Coerce/validate ``raw`` against the registry field type.
+    _coerce_setting_value = staticmethod(
+        legacy_errors_sync(dev_values._coerce_setting_value)
+    )
 
-        Accepts the natural JSON type plus common MCP-client
-        stringifications ("true"/"false" for bools, numeric strings
-        for int/float). Raises ``ToolError`` on mismatch.
-        """
-        if ftype is bool:
-            coerced = DevTools._coerce_bool_setting(raw)
-        elif ftype is int:
-            coerced = DevTools._coerce_int_setting(raw)
-        elif ftype is float:
-            coerced = DevTools._coerce_float_setting(raw)
-        elif ftype is str:
-            coerced = DevTools._coerce_str_setting(fname, raw)
-        else:
-            coerced = _COERCE_MISS
-        if coerced is not _COERCE_MISS:
-            return coerced
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"{fname!r} must be of type {ftype.__name__}, got {type(raw).__name__}",
-                context={"setting": fname, "value": raw},
-            )
-        )
-        return None  # unreachable; explicit for CodeQL
+    _coerce_bool_setting = staticmethod(
+        legacy_errors_sync(dev_values._coerce_bool_setting)
+    )
 
-    @staticmethod
-    def _coerce_bool_setting(raw: Any) -> Any:
-        """Coerce ``raw`` to bool, or ``_COERCE_MISS`` if not coercible."""
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, str) and raw.strip().lower() in ("true", "false"):
-            return raw.strip().lower() == "true"
-        return _COERCE_MISS
+    _coerce_int_setting = staticmethod(
+        legacy_errors_sync(dev_values._coerce_int_setting)
+    )
 
-    @staticmethod
-    def _coerce_int_setting(raw: Any) -> Any:
-        """Coerce ``raw`` to int, or ``_COERCE_MISS`` if not coercible."""
-        if isinstance(raw, bool):
-            pass  # bool is an int subclass; reject below
-        elif isinstance(raw, int):
-            return raw
-        elif isinstance(raw, str):
-            try:
-                return int(raw.strip())
-            except ValueError:
-                pass
-        return _COERCE_MISS
+    _coerce_float_setting = staticmethod(
+        legacy_errors_sync(dev_values._coerce_float_setting)
+    )
 
-    @staticmethod
-    def _coerce_float_setting(raw: Any) -> Any:
-        """Coerce ``raw`` to float, or ``_COERCE_MISS`` if not coercible."""
-        if isinstance(raw, bool):
-            pass
-        elif isinstance(raw, int | float):
-            return float(raw)
-        elif isinstance(raw, str):
-            try:
-                return float(raw.strip())
-            except ValueError:
-                pass
-        return _COERCE_MISS
-
-    @staticmethod
-    def _coerce_str_setting(fname: str, raw: Any) -> Any:
-        """Coerce ``raw`` to str, or ``_COERCE_MISS`` if not a string.
-
-        Raises ``ToolError`` when a string contains a null byte.
-        """
-        if isinstance(raw, str):
-            if "\x00" in raw:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"{fname!r} value contains a null byte",
-                    )
-                )
-            return raw
-        return _COERCE_MISS
+    _coerce_str_setting = staticmethod(
+        legacy_errors_sync(dev_values._coerce_str_setting)
+    )
 
     @staticmethod
     async def _merge_file_override(changes: dict[str, Any]) -> None:
@@ -805,155 +726,29 @@ class DevTools:
 
     # ----- tools -----
 
-    @tool(
-        name="ha_dev_manage_settings",
-        tags={"Developer"},
-        annotations=write_hints(
-            "Manage Server Settings (dev)",
-            destructive=True,
-            idempotent=False,
-            open_world=False,
-        ),
-    )
-    @log_tool_usage
-    async def ha_dev_manage_settings(
+    async def manage_settings(
         self,
-        action: Annotated[
-            Literal[
-                "list",
-                "set",
-                "reset",
-                "list_tools",
-                "set_tool",
-                "get_policy",
-                "set_policy",
-                "get_backup_config",
-                "set_backup_config",
-            ],
-            Field(
-                description=(
-                    "Server-settings matrix: list / set / reset. Tools tab: "
-                    "list_tools / set_tool (enable-disable-pin, LLM-API, security "
-                    "gate). Security policies: get_policy / set_policy. Auto-backup "
-                    "config: get_backup_config / set_backup_config."
-                )
-            ),
+        action: Literal[
+            "list",
+            "set",
+            "reset",
+            "list_tools",
+            "set_tool",
+            "get_policy",
+            "set_policy",
+            "get_backup_config",
+            "set_backup_config",
         ],
-        setting: Annotated[
-            str | None,
-            Field(default=None, description="Setting name (required for set/reset)"),
-        ] = None,
-        value: Annotated[
-            bool | int | float | str | None,
-            Field(default=None, description="New value (required for set)"),
-        ] = None,
-        tool: Annotated[
-            str | None,
-            Field(default=None, description="Tool name (required for set_tool)"),
-        ] = None,
-        state: Annotated[
-            Literal["enabled", "disabled", "pinned"] | None,
-            Field(
-                default=None,
-                description="set_tool: enable, disable, or pin the tool",
-            ),
-        ] = None,
-        llm_api: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description=(
-                    "set_tool: expose the tool to HA conversation agents "
-                    "(effective only on the embedded custom-component server)"
-                ),
-            ),
-        ] = None,
-        gated: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description=(
-                    "set_tool: toggle the tool's unconditional security-policy "
-                    "rule. In a require-approval list gated=true adds it (every "
-                    "call needs approval); in an allow list that rule approves "
-                    "the tool, so gated=true removes it. Conditional rules are "
-                    "left in place and still apply. gated=true is refused while "
-                    "an allow list's unconditional '*' rule approves every tool"
-                ),
-            ),
-        ] = None,
-        policy: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "set_policy: the full policy object "
-                    "{rule_effect, wait_seconds, approval_ttl_minutes, "
-                    "event_decisions_enabled, rules, version, "
-                    "schema_version}. Replaces the WHOLE document: a field "
-                    "you omit reverts to its default, so send back an "
-                    "edited copy of get_policy rather than a fragment "
-                    "(omitting event_decisions_enabled switches the "
-                    "event-bus approval channel off; omitting rule_effect "
-                    "while the stored policy is an allow list is refused)"
-                ),
-            ),
-        ] = None,
-        expected_version: Annotated[
-            int | None,
-            Field(
-                default=None,
-                description=(
-                    "set_policy: the version from your last get_policy, for "
-                    "optimistic-concurrency safety (else the policy's own "
-                    "version field is used)"
-                ),
-            ),
-        ] = None,
-        backup: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description=(
-                    "set_backup_config: {field: value} of auto-backup settings "
-                    "to change (see get_backup_config for field names)"
-                ),
-            ),
-        ] = None,
+        setting: str | None = None,
+        value: bool | int | float | str | None = None,
+        tool: str | None = None,
+        state: Literal["enabled", "disabled", "pinned"] | None = None,
+        llm_api: bool | None = None,
+        gated: bool | None = None,
+        policy: dict[str, Any] | None = None,
+        expected_version: int | None = None,
+        backup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Manage ha-mcp server settings and the Tools/Policies/Backups surfaces (developer mode).
-
-        Drives everything the web settings UI can change: the Server
-        Settings matrix, the Tools tab, the Tool Security Policies editor,
-        and agent-editable backup config. Snapshot Actions and Backup Read
-        Only are human-only controls. Use ha_dev_manage_server for
-        the live approval queue and to restart.
-
-        When NOT to use: for HA entity/automation configuration use the
-        ha_config_* tools.
-
-        Caveats: enable/disable/pin and most server settings take effect
-        only after a restart (ha_dev_manage_server action="restart");
-        LLM-API exposure, security gates, and policy edits apply live.
-        Env-pinned settings/tools are read-only until the env var is unset.
-        These actions can flip security-sensitive state — treat with the
-        same care as editing the web UI. The policy-override surfaces
-        (set_policy, set_tool with gated=, and set/reset of
-        enable_tool_security_policies) additionally require the
-        'dev_tools_security_policy_access' setting, which is off by
-        default; reads are always available. That setting itself is never
-        writable by these tools — change it in the web settings UI or via
-        HAMCP_DEV_SECURITY_POLICY_ACCESS.
-
-        EXAMPLES:
-        ha_dev_manage_settings("list_tools")
-        ha_dev_manage_settings("set_tool", tool="ha_write_file", state="disabled")
-        ha_dev_manage_settings("set_tool", tool="ha_call_service", gated=True)
-        ha_dev_manage_settings("get_policy")
-        ha_dev_manage_settings("set_backup_config", backup={"enable_auto_backup": False})
-        """
         try:
             if action in ("list", "set", "reset"):
                 return await self._manage_server_setting(action, setting, value)
@@ -970,13 +765,13 @@ class DevTools:
             return await self._apply_set_backup_config(backup)
         except ToolError:
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - legacy public exception classification
             exception_to_structured_error(
                 e,
                 context={"action": action, "setting": setting, "tool": tool},
                 suggestions=["Check server logs for details"],
             )
-            return None  # unreachable; explicit for CodeQL
+            return None
 
     async def _manage_server_setting(
         self,
@@ -1465,63 +1260,9 @@ class DevTools:
             )
         return warnings
 
-    @staticmethod
-    def _validate_state_change(
-        tool: str, state: str, settings: Any, env_pinned: dict[str, str]
-    ) -> bool:
-        """Validate a state change; return whether it should be persisted.
-
-        Rejects invalid states, env-pinned flips, and disabling a mandatory
-        tool (base MANDATORY_TOOLS always, plus the BPS-locked set while
-        strict best-practices mode is on) — the web Tools tab locks those
-        rows, so the headless path must refuse rather than persist a disable
-        that apply_tool_visibility silently reverts at startup. Env-pinned
-        no-op re-sends return False (nothing to persist); anything else that
-        passes returns True.
-        """
-        from ..settings_ui._tools_meta import (
-            _VALID_STATES,
-            BPS_MANDATORY_TOOLS,
-            effective_mandatory_tools,
-        )
-
-        if state not in _VALID_STATES:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"state must be one of {sorted(_VALID_STATES)}",
-                )
-            )
-        if tool in env_pinned:
-            if env_pinned[tool] != state:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"{tool!r} is pinned by DISABLED_TOOLS / PINNED_TOOLS "
-                        f"to {env_pinned[tool]!r}; unset the env var to change it.",
-                    )
-                )
-            return False
-        if state == "disabled" and tool in effective_mandatory_tools(settings):
-            if tool in BPS_MANDATORY_TOOLS:
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"Refusing to disable {tool!r} while strict "
-                        "best-practices mode (enable_strict_mandatory_bps) is on.",
-                        suggestions=[
-                            "Turn off strict best-practices mode first, then retry."
-                        ],
-                    )
-                )
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"{tool!r} is a mandatory tool and is always kept enabled; "
-                    "it cannot be disabled.",
-                )
-            )
-        return True
+    _validate_state_change = staticmethod(
+        legacy_errors_sync(dev_values._validate_state_change)
+    )
 
     @staticmethod
     def _coerce_bool_or_raise(value: Any, field: str) -> bool:
@@ -1536,39 +1277,9 @@ class DevTools:
             )
         return bool(coerced)
 
-    @staticmethod
-    def _apply_gate_to_policy(policy: Any, tool: str, gated: bool) -> tuple[Any, bool]:
-        """Return (policy, changed) after adding/removing the bare gate rule.
-
-        Pure (no I/O): manages only the bare unconditional rule (when == [])
-        for ``tool``; predicate-bearing rules are preserved. Under an allow
-        list the bare rule approves the tool, so gating removes it.
-        """
-        from ..policy.model import Rule
-
-        want_bare = gated != (policy.rule_effect == "allow")
-        has_bare = any(r.tool_name == tool and not r.when for r in policy.rules)
-        if want_bare and not has_bare:
-            # Insert before the first wildcard rule (mirrors the web UI's
-            # wildcardInsertIndex): in a require-approval list
-            # find_matching_rule() is first-match, so a gate appended after a
-            # `*` rule would never supply this tool's remember_minutes /
-            # matched_rule. An allow list does not depend on the order.
-            rules = list(policy.rules)
-            insert_at = next(
-                (i for i, r in enumerate(rules) if r.tool_name == "*"), len(rules)
-            )
-            rules.insert(insert_at, Rule(tool_name=tool))
-            updated = policy.model_copy(update={"rules": rules})
-            return updated, True
-        if not want_bare and has_bare:
-            updated = policy.model_copy(
-                update={
-                    "rules": [r for r in policy.rules if r.tool_name != tool or r.when]
-                }
-            )
-            return updated, True
-        return policy, False
+    _apply_gate_to_policy = staticmethod(
+        legacy_errors_sync(dev_values._apply_gate_to_policy)
+    )
 
     def _clear_remember_cache(self) -> None:
         """Clear the approval remember-cache if a live queue exists."""
@@ -1770,101 +1481,18 @@ class DevTools:
             },
         }
 
-    @tool(
-        name="ha_dev_manage_server",
-        tags={"Developer"},
-        annotations=write_hints(
-            "Manage MCP Server (dev)",
-            destructive=True,
-            idempotent=False,
-            open_world=True,
-        ),
-    )
-    @log_tool_usage
-    async def ha_dev_manage_server(
+    async def manage_server(
         self,
-        action: Annotated[
-            Literal[
-                "info",
-                "update_source",
-                "restart",
-                "list_pending",
-                "approve",
-                "deny",
-            ],
-            Field(
-                description=(
-                    "info: deployment/version report; update_source: point the "
-                    "ha_mcp_tools component's separate in-process server at a "
-                    "pip spec (or clear it) and reinstall it; "
-                    "restart: restart this server; list_pending: list tool calls "
-                    "blocked on a security-policy approval; approve / deny: decide "
-                    "one blocked call by token"
-                )
-            ),
+        action: Literal[
+            "info", "update_source", "restart", "list_pending", "approve", "deny"
         ],
-        pip_spec: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "Explicit pip requirement for update_source — a version pin "
-                    "(ha-mcp==7.9.0) or a GitHub tarball URL such as "
-                    "https://github.com/homeassistant-ai/ha-mcp/archive/refs/pull/<PR>/head.tar.gz."
-                    " The bare name 'clear' (case-insensitive) is reserved: it clears the "
-                    "override and returns to the server the component release pins "
-                    "instead of being treated as a requirement. An empty string also clears but some MCP "
-                    "clients mangle it in transit — prefer 'clear'."
-                ),
-            ),
-        ] = None,
-        token: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="Approval token (required for approve/deny)",
-            ),
-        ] = None,
+        pip_spec: str | None = None,
+        token: str | None = None,
     ) -> dict[str, Any]:
-        """Manage the running ha-mcp server itself (developer mode).
-
-        When NOT to use: to restart Home Assistant use ha_restart; to
-        update Home Assistant Apps (add-ons) or HACS packages use
-        ha_manage_app / ha_manage_hacs.
-
-        Caveats: update_source changes ONLY the ha_mcp_tools custom
-        component's separate in-process server entry — it never updates
-        the app (add-on), Docker, standalone, or PyPI server that may be
-        serving this connection (update those via ha_manage_app /
-        docker pull / pip). In embedded mode that entry IS this server,
-        so the update self-interrupts; elsewhere this connection is
-        untouched and keeps its current version. Success means the
-        entry's options were applied — the component then reinstalls in
-        the background, which can take minutes and can still fail
-        (check HA logs). update_source requires the component's
-        in-process server entry to exist. restart interrupts this MCP
-        connection in embedded and app deployments (the reply
-        arrives just before the server goes down) and supports those
-        two deployments only (standalone processes must be restarted
-        externally). approve/deny require the separate
-        'dev_tools_security_policy_access' setting, off by default.
-
-        EXAMPLES:
-        ha_dev_manage_server("update_source", pip_spec="https://github.com/homeassistant-ai/ha-mcp/archive/refs/pull/1234/head.tar.gz")
-        ha_dev_manage_server("update_source", pip_spec="clear")
-        ha_dev_manage_server("approve", token="abc123")
-        """
         try:
             if action == "info":
                 return await self._server_info()
             if action == "update_source":
-                # 'clear' (case-insensitive) aliases the empty string: some
-                # MCP clients mangle empty-string arguments in transit, which
-                # left this tool unable to clear its own pin over such a
-                # client (the entry's HA options UI always could). A
-                # whitespace-only value normalizes the same way, matching the
-                # server-side ``_normalize`` in the component's options flow
-                # so the caller sees the collapse at the call site.
                 if pip_spec is not None and pip_spec.strip().lower() in ("", "clear"):
                     pip_spec = ""
                 return await self._update_source(pip_spec)
@@ -1875,13 +1503,13 @@ class DevTools:
             return await self._decide_approval(token, approve=action == "approve")
         except ToolError:
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - legacy public exception classification
             exception_to_structured_error(
                 e,
                 context={"action": action, "pip_spec": pip_spec},
                 suggestions=["Check server and Home Assistant logs for details"],
             )
-            return None  # unreachable; explicit for CodeQL
+            return None
 
     async def _server_info(self) -> dict[str, Any]:
         from ..utils.data_paths import get_data_dir
@@ -2339,6 +1967,34 @@ class DevTools:
                 "decision": "approved" if approve else "denied",
             },
         }
+
+
+class DevTools(DevFacade, LegacyDevTools):
+    def __init__(self, client: Any, server: Any | None = None) -> None:
+        LegacyDevTools.__init__(self, client, server)
+        DevFacade.__init__(self, self)
+
+    ha_dev_manage_settings = tool(
+        name="ha_dev_manage_settings",
+        tags={"Developer"},
+        annotations=write_hints(
+            "Manage Server Settings (dev)",
+            destructive=True,
+            idempotent=False,
+            open_world=False,
+        ),
+    )(log_tool_usage(legacy_errors(DevFacade.ha_dev_manage_settings)))
+
+    ha_dev_manage_server = tool(
+        name="ha_dev_manage_server",
+        tags={"Developer"},
+        annotations=write_hints(
+            "Manage MCP Server (dev)",
+            destructive=True,
+            idempotent=False,
+            open_world=True,
+        ),
+    )(log_tool_usage(legacy_errors(DevFacade.ha_dev_manage_server)))
 
 
 def register_dev_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

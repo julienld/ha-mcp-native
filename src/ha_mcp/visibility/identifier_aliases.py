@@ -142,10 +142,14 @@ def hidden_identifier_argument(
     if spec is None:
         return None
     arg_name, domain = spec
-    value = args.get(arg_name)
-    if not isinstance(value, str):
-        return None
-    return value if aliases.addresses_hidden(domain, value) else None
+    # Automation accepts both the current and historical parameter spelling.
+    # Scan both, including contradictory pairs, before approval or execution.
+    names = (arg_name, "identifier") if domain == "automation" else (arg_name,)
+    for name in names:
+        value = args.get(name)
+        if isinstance(value, str) and aliases.addresses_hidden(domain, value):
+            return value
+    return None
 
 
 def _hidden_script_service(

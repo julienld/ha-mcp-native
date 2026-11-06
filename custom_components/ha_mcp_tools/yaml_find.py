@@ -41,7 +41,7 @@ def _relative_key_files(files: list[str], config_dir: Path) -> list[str]:
     """Map Core's absolute source paths to config-relative readable paths."""
     return sorted(
         {
-            os.path.relpath(path, config_dir)
+            Path(os.path.relpath(path, config_dir)).as_posix()
             for path in files
             if os.path.commonpath((config_dir, path)) == str(config_dir)
         }
@@ -62,21 +62,13 @@ def build_find_yaml_key_handler(
     unauthorized_response: Callable[[str], dict[str, Any]],
 ) -> Callable[[ServiceCall], Awaitable[ServiceResponse]]:
     """Build the handler that locates a key in Core's loaded YAML config."""
-    config_dir = Path(hass.config.config_dir)
 
     async def handle_find_yaml_key(call: ServiceCall) -> ServiceResponse:
         if not caller_token_ok(hass, call):
             return unauthorized_response(SERVICE_FIND_YAML_KEY)
         yaml_path = call.data["yaml_path"]
         try:
-            config = await hass.async_add_executor_job(
-                load_yaml_config_file,
-                str(config_dir / YAML_CONFIG_FILE),
-                Secrets(config_dir),
-            )
-            files = await hass.async_add_executor_job(
-                _find_relative_key_files, config, yaml_path, config_dir
-            )
+            files = await async_locate_yaml_key_files(hass, yaml_path)
         except Exception as err:  # noqa: BLE001
             return {"success": False, "error": str(err), "files": []}
         return {"success": True, "files": files}
@@ -101,3 +93,14 @@ def register_find_yaml_key(
         schema=SERVICE_FIND_YAML_KEY_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+
+
+async def async_locate_yaml_key_files(hass: HomeAssistant, yaml_path: str) -> list[str]:
+    config_dir = Path(hass.config.config_dir)
+    config = await hass.async_add_executor_job(
+        load_yaml_config_file, str(config_dir / YAML_CONFIG_FILE), Secrets(config_dir)
+    )
+    files: list[str] = await hass.async_add_executor_job(
+        _find_relative_key_files, config, yaml_path, config_dir
+    )
+    return files

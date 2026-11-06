@@ -102,6 +102,15 @@ same test the frontend's restart dialog applies). When the recorder or the
 backup manager does not answer, it says so in `warnings` instead of claiming
 the check passed.
 
+A restart acknowledgement means `requested`, and embedded deferred dispatch
+means `scheduled`; neither proves completion. After a possible dispatch,
+`ha_restart` reports `outcome_unknown` without retry unless the client proves a
+preflight refusal. Keep the original diagnostic even when the outcome remains
+unknown: an HTTP status or proxy-looking message alone cannot prove refusal.
+Native error provenance is not execution-stage evidence either: Core catches
+validation, not-found and authorization errors around the service call, after
+a handler may have begun work. Keep those outcomes unknown after dispatch.
+
 `ha_call_event` prefers the component's `ha_mcp_tools/call_event` bridge
 (capability `call_event`). The bridge reads `hass.bus.async_listeners()` and
 calls `hass.bus.async_fire()` in one pass, returning the event's context and

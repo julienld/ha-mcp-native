@@ -25,12 +25,29 @@ __all__ = ["COMPONENT_VERSION", "wsapi"]
 
 
 def _command_modules() -> list[Any]:
-    """The ``websocket_api`` package and every loaded submodule of it."""
+    """The wire facade and its canonical Core producers share test seams."""
+    component = websocket_api.__package__.removesuffix(".websocket_api")
+    owners = {
+        f"{component}.{name}"
+        for name in (
+            "core_registry",
+            "core_registries",
+            "core_entity_reads",
+            "core_device_reads",
+            "core_assist",
+            "core_secrets",
+            "core_services",
+            "core_state",
+            "core_config_entries",
+            "core_call_service",
+        )
+    }
     return [
         module
         for name, module in sorted(sys.modules.items())
         if name == websocket_api.__name__
         or name.startswith(f"{websocket_api.__name__}.")
+        or name in owners
     ]
 
 

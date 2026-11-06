@@ -171,12 +171,7 @@ def test_missing_rich_is_not_fatal(monkeypatch):
 
 
 def test_importing_ha_mcp_survives_old_rich():
-    """End-to-end: ``import ha_mcp`` works when rich predates the kwargs.
-
-    This is the regression the issue actually reports, and it also pins the
-    ordering requirement — the shim has to run before anything imports
-    ``fastmcp``, which happens via ``ha_mcp/__init__.py`` -> ``.auth``.
-    """
+    """Legacy startup uses private logging without altering the shared old handler."""
     program = textwrap.dedent(
         """
         import logging
@@ -189,8 +184,15 @@ def test_importing_ha_mcp_survives_old_rich():
 
         # Simulate rich<13.9.4 before anything imports fastmcp.
         rich.logging.RichHandler = OldRichHandler
+        original_init = OldRichHandler.__init__
 
         import ha_mcp
+        from ha_mcp.server import HomeAssistantSmartMCPServer
+        from ha_mcp._vendor.fastmcp.utilities.logging import RichHandler
+        from ha_mcp._vendor.rich.logging import RichHandler as PrivateHandler
+        assert RichHandler is PrivateHandler
+        assert rich.logging.RichHandler is OldRichHandler
+        assert OldRichHandler.__init__ is original_init
         print("IMPORT_OK", ha_mcp.__version__)
         """
     )

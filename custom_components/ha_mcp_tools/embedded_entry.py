@@ -220,10 +220,9 @@ def bring_up_in_progress(hass: HomeAssistant) -> bool:
 
 
 def server_running(hass: HomeAssistant) -> bool:
-    from .embedded_server import EmbeddedServerManager  # lazy (see import note)
-
+    """Read the lifecycle state shared by the native and legacy managers."""
     manager = hass.data.get(DOMAIN, {}).get(DATA_MANAGER)
-    return isinstance(manager, EmbeddedServerManager) and manager.is_running
+    return bool(getattr(manager, "is_running", False))
 
 
 def _server_live(hass: HomeAssistant) -> bool:

@@ -7,14 +7,15 @@ short text block stating the served snapshot's size and retrieval time.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
-
-from pydantic import Field
+from functools import wraps
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 from ha_mcp._vendor.fastmcp.utilities.types import Image
+from ha_mcp.backends.legacy import legacy_errors
 from ha_mcp.errors import (
     ErrorCode,
     create_auth_error,
@@ -22,6 +23,10 @@ from ha_mcp.errors import (
     create_error_response,
 )
 from ha_mcp.image_info import resolve_image_info
+from ha_mcp.runtime.camera_tools import CameraSnapshot
+from ha_mcp.runtime.camera_tools import CameraTools as _CameraContractTools
+from ha_mcp.runtime.camera_values import _detect_image_format as _detect_image_format
+from ha_mcp.runtime.camera_values import _snapshot_info_text as _snapshot_info_text
 
 from .helpers import (
     exception_to_structured_error,
@@ -35,64 +40,7 @@ from .tool_hints import read_only_hints
 logger = logging.getLogger(__name__)
 
 
-# Subtypes that denote JPEG under an alternate spelling. Every other
-# image/* subtype is reported verbatim (image/webp -> "webp"); the JPEG
-# default applies only when the header names no image subtype at all.
-_JPEG_ALIASES = {"jpg": "jpeg", "jpe": "jpeg", "jif": "jpeg"}
-
-
-def _detect_image_format(content_type: str) -> str:
-    """Report the declared image format from a Content-Type header.
-
-    Only the media type's subtype is relevant (``image/jpeg`` -> ``jpeg``);
-    parameters such as ``; q=0.9`` are stripped and JPEG's alternate
-    spellings are folded in. Unknown image subtypes pass through verbatim —
-    relabelling ``image/webp`` as JPEG would misidentify the Image block.
-    The JPEG default applies only when the header is missing, empty, or
-    not an ``image/*`` type with a subtype (e.g. ``application/octet-stream``).
-    """
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    primary, _, subtype = media_type.partition("/")
-    if primary != "image" or not subtype:
-        return "jpeg"
-    return _JPEG_ALIASES.get(subtype, subtype)
-
-
-def _snapshot_info_text(
-    image_format: str,
-    image_size: tuple[int, int] | None,
-    retrieved: datetime,
-    timezone_fallback: bool = False,
-) -> str:
-    """Build the text half of the camera image response.
-
-    Reports the size of the image actually served (which may differ from
-    the camera's native resolution when Home Assistant rescaled it) and
-    when the snapshot was retrieved, in Home Assistant local time with
-    UTC offset. When the timezone lookup fell back to UTC, the text says
-    so, so the label cannot be mistaken for a genuine UTC install.
-
-    The block deliberately describes only the bytes that were served —
-    never the entity's name or state. Home Assistant can mark an entity
-    ``llm_exposure: hidden``, asking the LLM to know nothing about that
-    entity; that setting does not un-expose this tool, so entity data in
-    the text would keep reporting on the camera despite the setting.
-    """
-    prefix = f"Camera snapshot ({image_format.upper()}"
-    if image_size is None:
-        detail = f"{prefix})"
-    else:
-        width, height = image_size
-        detail = f"{prefix}, {width}x{height})"
-    note = (
-        " (UTC — could not determine the Home Assistant timezone)"
-        if timezone_fallback
-        else ""
-    )
-    return f"{detail}. Retrieved: {retrieved:%Y-%m-%d %H:%M:%S %:z}{note}"
-
-
-class CameraTools:
+class RemoteCameras:
     """Camera snapshot retrieval tools."""
 
     def __init__(self, client: Any) -> None:
@@ -138,71 +86,9 @@ class CameraTools:
                 )
             )
 
-    @tool(
-        name="ha_get_camera_image",
-        tags={"Camera"},
-        annotations=read_only_hints("Get Camera Image", open_world=False),
-    )
-    @log_tool_usage
-    async def ha_get_camera_image(
-        self,
-        entity_id: Annotated[
-            str, Field(description="Camera entity ID (e.g., 'camera.front_door')")
-        ],
-        width: Annotated[
-            int | None,
-            Field(
-                description="Width for the resized image. Home Assistant "
-                "rescales only when both width and height are given and "
-                "the camera serves JPEG."
-            ),
-        ] = None,
-        height: Annotated[
-            int | None,
-            Field(
-                description="Height for the resized image. Home Assistant "
-                "rescales only when both width and height are given and "
-                "the camera serves JPEG."
-            ),
-        ] = None,
-    ) -> tuple[str, Image]:
-        """Get a snapshot image from a Home Assistant camera entity.
-
-        Fetches the current camera image and returns it directly for
-        visual analysis (security checks, delivery verification,
-        confirming a garage door actually closed), in the format Home
-        Assistant serves (JPEG, PNG, or GIF), alongside a short text
-        block stating the served snapshot's size and retrieval time in
-        Home Assistant local time.
-
-        Do not use it to inspect the camera's state or attributes — use
-        ha_search or ha_get_state for those; it returns an image, not
-        state. Use it when you need to see the current scene, and on
-        high-resolution cameras pass width and height to reduce token
-        usage.
-
-        EXAMPLE: ha_get_camera_image(entity_id="camera.backyard", width=640, height=480)
-        """
-        if not entity_id or "." not in entity_id:
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"Invalid entity_id format: {entity_id}. "
-                    "Expected format: camera.entity_name",
-                )
-            )
-
-        domain = entity_id.split(".", maxsplit=1)[0]
-        if domain != "camera":
-            raise_tool_error(
-                create_error_response(
-                    ErrorCode.VALIDATION_INVALID_PARAMETER,
-                    f"Entity {entity_id} is not a camera entity. "
-                    f"Domain is '{domain}', expected 'camera'.",
-                    context={"entity_id": entity_id},
-                )
-            )
-
+    async def snapshot(
+        self, entity_id: str, width: int | None = None, height: int | None = None
+    ) -> CameraSnapshot:
         # Build the camera proxy URL with optional size parameters
         # Home Assistant camera proxy API: /api/camera_proxy/<entity_id>
         endpoint = f"/camera_proxy/{entity_id}"
@@ -244,14 +130,15 @@ class CameraTools:
 
             # Return the info text plus a FastMCP Image object (auto-converted
             # to MCP TextContent and ImageContent, in this order)
-            return (
+            return CameraSnapshot(
                 _snapshot_info_text(
                     image_format,
                     image_size,
                     retrieved_at.astimezone(local_tz),
                     timezone_fallback,
                 ),
-                Image(data=response.content, format=image_format),
+                response.content,
+                image_format,
             )
 
         except ToolError:
@@ -266,6 +153,34 @@ class CameraTools:
                 context={"entity_id": entity_id},
                 suggestions=["Ensure the camera is online and accessible"],
             ) from e
+
+
+def _as_fastmcp_image(
+    function: Callable[..., Awaitable[CameraSnapshot]],
+) -> Callable[..., Awaitable[tuple[str, Image]]]:
+    @wraps(function)
+    async def invoke(*args: Any, **kwargs: Any) -> tuple[str, Image]:
+        snapshot = await function(*args, **kwargs)
+        return snapshot.info, Image(data=snapshot.data, format=snapshot.image_format)
+
+    return invoke
+
+
+class CameraTools(RemoteCameras):
+    @property
+    def cameras(self) -> RemoteCameras:
+        return self
+
+    ha_get_camera_image = tool(
+        name="ha_get_camera_image",
+        tags={"Camera"},
+        annotations=read_only_hints("Get Camera Image", open_world=False),
+        output_schema=None,
+    )(
+        log_tool_usage(
+            legacy_errors(_as_fastmcp_image(_CameraContractTools.ha_get_camera_image))
+        )
+    )
 
 
 def register_camera_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

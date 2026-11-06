@@ -1,4 +1,4 @@
-"""The embedded E2E lanes must test the checkout's server, not PyPI's (#2427).
+"""E2E component libraries and embedded servers must come from the checkout.
 
 The component manifest pins the released ``ha-mcp``; installing that pin before
 the wheel built from the checkout would leave the released code under test,
@@ -39,7 +39,7 @@ def _config(tmp_path, requirements: list[str]):
     return tmp_path
 
 
-def test_the_embedded_lanes_skip_only_the_server_pin(tmp_path) -> None:
+def test_a_checkout_wheel_replaces_only_the_manifest_server_pin(tmp_path) -> None:
     config = _config(tmp_path, ["mcp>=1.24.0", "ha-mcp==8.6.0", "ruamel.yaml"])
     assert _collect_manifest_requirements(config, skip_server=True) == [
         "mcp>=1.24.0",
@@ -47,6 +47,6 @@ def test_the_embedded_lanes_skip_only_the_server_pin(tmp_path) -> None:
     ]
 
 
-def test_other_lanes_install_the_server_pin(tmp_path) -> None:
+def test_manifest_pin_is_retained_without_a_checkout_wheel(tmp_path) -> None:
     config = _config(tmp_path, ["mcp>=1.24.0", "ha-mcp==8.6.0"])
     assert _collect_manifest_requirements(config) == ["mcp>=1.24.0", "ha-mcp==8.6.0"]

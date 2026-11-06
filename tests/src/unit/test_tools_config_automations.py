@@ -107,6 +107,7 @@ class TestGetAutomation:
         result = await tools.ha_config_get_automation(
             entity_id="automation.morning_routine"
         )
+        assert result["success"] is True
 
         assert result["automation_id"] == "automation.morning_routine"
 
@@ -130,7 +131,9 @@ class TestGetAutomation:
         """Rewriting root keys and 'platform' showed a config Core never
         stored, and a transform written against it edited keys that were not
         there."""
-        result = await tools.ha_config_get_automation(entity_id="abc123unique")
+        result = await tools.ha_config_get_automation(
+            entity_id="abc123unique", config_format="stored"
+        )
 
         assert result["config"] == STORED
         assert result["config_hash"] == STORED_HASH
@@ -173,6 +176,34 @@ class TestGetAutomation:
         assert result["references"] is None
         assert len(result["warnings"]) == 1
         assert "references" in result["warnings"][0]
+
+
+@pytest.fixture
+def transform_tools(tools):
+    """Tools instance with hash/refetch internals stubbed for python_transform tests.
+
+    `_fetch_and_verify_hash` and `_get_automation_config_internal` are
+    bypassed so tests don't have to compute matching `compute_config_hash`
+    values — the parity key under test depends only on the post-upsert
+    `entity_id` resolution, not on the hash arithmetic.
+
+    `_fetch_and_verify_hash` returns ``(config, resolved_id, raw_config)`` —
+    the storage key and raw before-image travel with this write.
+    """
+    canonical_config = {
+        "alias": "Morning Routine",
+        "trigger": [{"platform": "time", "at": "07:00:00"}],
+        "action": [
+            {"service": "light.turn_on", "target": {"entity_id": "light.bedroom"}}
+        ],
+    }
+    tools._fetch_and_verify_hash = AsyncMock(
+        return_value=(dict(canonical_config), "abc123unique", dict(canonical_config))
+    )
+    tools._get_automation_config_internal = AsyncMock(
+        return_value=(dict(canonical_config), "post_transform_hash")
+    )
+    return tools
 
 
 class TestPythonTransform:
@@ -492,10 +523,15 @@ class TestAutomationReplacementGuard:
         config = _config()
         del config["alias"]
 
-        with pytest.raises(ToolError):
+        with pytest.raises(ToolError) as exc:
             await tools.ha_config_set_automation(
                 entity_id="abc123unique", config=config, wait=False
             )
+        error = json.loads(str(exc.value))
+        assert error["error"]["code"] == "VALIDATION_INVALID_PARAMETER"
+        assert "config_hash" in str(exc.value) and "Nothing was written" in str(
+            exc.value
+        )
         mock_client.upsert_automation_config.assert_not_awaited()
 
     async def test_intentional_rename_with_fresh_hash_succeeds(

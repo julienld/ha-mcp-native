@@ -10,6 +10,7 @@ from ha_mcp._vendor.fastmcp.exceptions import ToolError
 
 from ...client.rest_client import NON_ADMIN_TOKEN_WARNING, HomeAssistantAPIError
 from ...errors import get_error_code, get_error_message
+from ...runtime.search_response import _dashboard_failure_reason
 from ..component_api import component_supports, get_component_caps
 from ..dashboard_read_errors import CONFIG_NOT_FOUND_CODE, NO_STORED_CONFIG_MESSAGES
 from ..helper_flows import helper_flow_types
@@ -1532,11 +1533,7 @@ class DeepSearchMixin(SceneSearchMixin):
                 "their match status is unknown; this result is not exhaustive."
             )
         if dashboard_failed:
-            reasons.append(
-                f"{dashboard_failed} dashboard(s) not scanned (config or list "
-                "fetch failed) — their match status is unknown; this result is "
-                "not exhaustive."
-            )
+            reasons.append(_dashboard_failure_reason(dashboard_failed))
         if not reasons:
             return
         response["partial"] = True

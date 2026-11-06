@@ -19,6 +19,7 @@ import logging
 from typing import Any
 
 import pytest
+from packaging.version import Version
 
 from ...utilities.assertions import MCPAssertions, parse_mcp_result, safe_call_tool
 
@@ -424,6 +425,12 @@ async def test_core_2026_9_child_devices_inherit_parent_area(mcp_client, ha_clie
     The mutation is always restored, and the component must not touch Core's
     deprecated mapping methods while serving the reads.
     """
+    # This capability belongs to Core 2026.9, rather than to a transport or
+    # installation topology. Read the live version; a missing fixture on a
+    # capable Core must still fail below instead of silently skipping.
+    config = await ha_client.get_config()
+    if Version(config["version"]).release[:2] < (2026, 9):
+        pytest.skip("Child devices require Home Assistant 2026.9 or newer")
     (
         parent_id,
         child_id,
