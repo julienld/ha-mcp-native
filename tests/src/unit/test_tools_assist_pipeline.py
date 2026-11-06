@@ -934,7 +934,7 @@ async def test_process_warns_when_some_targets_failed(tools):
 
 
 async def test_process_warns_when_handling_the_intent_failed(tools):
-    """failed_to_handle is HA reporting a matched intent that did not run."""
+    """A handling error cannot promise that an intent had no side effects."""
     tools._client._request.return_value = _conversation_result(
         response={
             "speech": {"plain": {"speech": "Sorry, something went wrong"}},
@@ -952,8 +952,8 @@ async def test_process_warns_when_handling_the_intent_failed(tools):
     assert result["success"] is True
     assert result["error_code"] == "failed_to_handle"
     assert result["warnings"] == [
-        "Assist matched the intent but handling it failed. The command was "
-        "understood and not carried out."
+        "Assist matched the intent but handling it failed. Some actions may "
+        "already have occurred; inspect Home Assistant before repeating the command."
     ]
 
 

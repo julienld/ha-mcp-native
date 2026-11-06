@@ -9,21 +9,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..errors import ErrorCode, create_error_response
-from ..tools.helpers import raise_tool_error
-from ..tools.util_helpers import websocket_error_message
+from ..runtime.screenshot_theme_validation import (
+    _BUILT_IN_THEME,
+    _unchecked,
+    validate_requested_theme,
+)
+from ..tool_api import ToolFailure
 
 logger = logging.getLogger(__name__)
 
 # The frontend's built-in theme; Core's theme list holds only installed ones.
-_BUILT_IN_THEME = "default"
-
-
-def _unchecked(theme: str, reason: str) -> list[str]:
-    return [
-        f"Home Assistant's theme list could not be read ({reason}), so theme "
-        f"{theme!r} was not checked; an unknown name renders the default theme."
-    ]
 
 
 async def check_requested_theme(
@@ -36,9 +31,13 @@ async def check_requested_theme(
     """
     if theme is None or client is None or theme == _BUILT_IN_THEME:
         return []
+
+    from ..tools.helpers import raise_tool_error
+    from ..tools.util_helpers import websocket_error_message
+
     try:
         result = await client.send_websocket_message({"type": "frontend/get_themes"})
-    except Exception as exc:  # an optional pre-check must not fail the render
+    except Exception as exc:
         logger.warning(
             "frontend/get_themes failed; theme %r not checked: %s",
             theme,
@@ -50,29 +49,7 @@ async def check_requested_theme(
         return _unchecked(theme, websocket_error_message(result.get("error")))
     listing = result.get("result") if isinstance(result, dict) else None
     themes = listing.get("themes") if isinstance(listing, dict) else None
-    if not isinstance(themes, dict):
-        return _unchecked(theme, "unexpected response")
-    if theme not in themes:
-        raise_tool_error(
-            create_error_response(
-                ErrorCode.VALIDATION_INVALID_PARAMETER,
-                f"Home Assistant has no theme named {theme!r}",
-                context={"installed_themes": [_BUILT_IN_THEME, *themes]},
-                suggestions=["Use one of installed_themes, or omit theme"],
-            )
-        )
-    entry = themes[theme]
-    modes = entry.get("modes") if isinstance(entry, dict) else None
-    if not isinstance(modes, dict):
-        modes = {}
-    if dark_mode and "dark" not in modes:
-        return [
-            f"Theme {theme!r} defines no dark mode in Home Assistant's theme "
-            "list, so dark_mode=true has no dark variant to use."
-        ]
-    if not dark_mode and modes and "light" not in modes:
-        return [
-            f"Theme {theme!r} defines only a dark mode in Home Assistant's theme "
-            "list, so dark_mode=false has no light variant to use."
-        ]
-    return []
+    try:
+        return validate_requested_theme(themes, theme, dark_mode)
+    except ToolFailure as error:
+        return raise_tool_error(error.data)
