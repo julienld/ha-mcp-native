@@ -30,9 +30,23 @@ from .backup_entities import fetch_entity
 from .backup_entity_ids import _manager
 from .client.rest_client import HomeAssistantCommandError, HomeAssistantError
 from .config import get_global_settings
+from .runtime.todo_values import find_item, service_message
+from .runtime.todo_values import unbacked_removals as unbacked_removals
 from .tools.component_todo import todo_item
 
 _LIST = "todo/item/list"
+
+__all__ = [
+    "TodoListNotLoaded",
+    "list_items",
+    "fetch_todo_item",
+    "back_up_items",
+    "current_key",
+    "safety_target",
+    "snapshot_item",
+    "restore_todo_item",
+    "unbacked_removals",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +57,6 @@ class TodoListNotLoaded(HomeAssistantError):
 
     def __init__(self, todo_entity: str) -> None:
         super().__init__(f"Home Assistant has not loaded the todo list {todo_entity}")
-
-
-def find_item(items: list[dict[str, Any]], ref: str) -> dict[str, Any] | None:
-    """The first item whose uid or summary is ``ref``, the one Core's todo
-    services act on for the same value."""
-    return next((i for i in items if ref in (i.get("uid"), i.get("summary"))), None)
 
 
 async def list_items(client: Any, todo_entity: str) -> list[dict[str, Any]] | None:
@@ -129,25 +137,6 @@ async def back_up_items(
     return skipped
 
 
-def unbacked_removals(
-    before: list[dict[str, Any]], after: list[dict[str, Any]] | None
-) -> list[str]:
-    """Why an item gone after ``remove_completed_items`` has no backup: Core
-    picks the completed items when it runs the service, so one completed
-    after the list was read and backed up is removed without a backup. An
-    item another client deleted meanwhile is named the same way."""
-    settings = get_global_settings()
-    if after is None or not getattr(settings, "enable_auto_backup", False):
-        return []
-    kept = {i.get("uid") for i in after}
-    return [
-        f"'{i.get('summary')}' is gone from the list, but it was not completed "
-        "when the list was read, so no backup of it was taken"
-        for i in before
-        if i.get("status") != "completed" and i.get("uid") not in kept
-    ]
-
-
 def current_key(entity_id: str, config: Any) -> str:
     """The key that finds the snapshot's item now: its uid where it has one."""
     uid = config.get("uid") if isinstance(config, dict) else None
@@ -205,19 +194,6 @@ def _field_values(snapshot: dict[str, Any], current: dict[str, Any]) -> dict[str
     elif (current_due := current.get("due")) is not None:
         fields[_due_field(current_due)] = None
     return fields
-
-
-def service_message(
-    service: str, todo_entity: str, data: dict[str, Any]
-) -> dict[str, Any]:
-    """A WebSocket ``call_service`` of todo.<service> on one list."""
-    return {
-        "type": "call_service",
-        "domain": "todo",
-        "service": service,
-        "target": {"entity_id": todo_entity},
-        "service_data": data,
-    }
 
 
 async def _call(

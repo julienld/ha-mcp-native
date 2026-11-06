@@ -49,7 +49,7 @@ def _stub_config_check(monkeypatch):
     a failing check override this locally.
     """
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.async_check_ha_config_file",
+        "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
         AsyncMock(return_value=None),
         raising=False,
     )
@@ -283,7 +283,7 @@ class TestReplaceFileAction:
     ):
         """A failing config check is reported but the (already atomic) write stands."""
         monkeypatch.setattr(
-            "custom_components.ha_mcp_tools.async_check_ha_config_file",
+            "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
             AsyncMock(return_value="boom: bad config"),
         )
         cfg = Path(tmp_path) / "configuration.yaml"
@@ -315,7 +315,7 @@ class TestReplaceFileAction:
         locus — the swallowed-exception branch that the source-string guard
         below cannot catch."""
         monkeypatch.setattr(
-            "custom_components.ha_mcp_tools.async_check_ha_config_file",
+            "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
             AsyncMock(side_effect=RuntimeError("check boom")),
         )
         cfg = Path(tmp_path) / "configuration.yaml"

@@ -36,7 +36,7 @@ def _stub_config_check(monkeypatch):
     would await a bare mock.
     """
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.async_check_ha_config_file",
+        "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
         AsyncMock(return_value=None),
         raising=False,
     )

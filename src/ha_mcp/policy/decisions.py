@@ -200,7 +200,8 @@ class ApprovalResponseListener:
         policy_provider: Callable[[], Policy],
         queue: ApprovalQueue,
         data_dir: Path,
-        get_ws_client: Callable[[], Awaitable[HomeAssistantWebSocketClient]],
+        get_ws_client: Callable[[], Awaitable[HomeAssistantWebSocketClient]]
+        | None = None,
         limiter: FailedAttemptLimiter | None = None,
         emit_result: ResultEmitter | None = None,
     ) -> None:
@@ -242,6 +243,8 @@ class ApprovalResponseListener:
         here. That is time on top of the budget above, and the lock is held
         for it.
         """
+        if self._get_ws_client is None:
+            return
         try:
             policy = await run_in_thread(self._policy_provider)
         except ValueError:
@@ -319,6 +322,8 @@ class ApprovalResponseListener:
             )
 
     async def _subscribe_locked(self) -> None:
+        if self._get_ws_client is None:
+            raise RuntimeError("No WebSocket subscription provider configured")
         client = await self._get_ws_client()
         if client is self._client and self._subscription_id is not None:
             if client.is_connected:
@@ -370,6 +375,10 @@ class ApprovalResponseListener:
             APPROVAL_RESPONSE_EVENT,
             self._subscription_id,
         )
+
+    async def process_event(self, event: dict[str, Any]) -> None:
+        """Apply a trusted transport's event through the same PIN and policy gates."""
+        await self._handle_event(event)
 
     async def _handle_event(self, event: dict[str, Any]) -> None:
         """Apply one ``ha_mcp_approval_response`` event.

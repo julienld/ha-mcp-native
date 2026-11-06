@@ -11,7 +11,7 @@ from ha_mcp.client.rest_client import (
     HomeAssistantAPIError,
     HomeAssistantConnectionError,
 )
-from ha_mcp.tools import auto_backup, config_write_helpers, tools_config_automations
+from ha_mcp.tools import auto_backup, tools_config_automations
 
 
 class _FakeClient:
@@ -53,6 +53,9 @@ class _FakeClient:
         self.calls.append((domain, service, data))
         return {"success": True}
 
+    async def _resolve_automation_id(self, identifier: str) -> str:
+        return "stored-id" if identifier.startswith("automation.") else identifier
+
     async def get_automation_config(self, config_id: str) -> dict[str, Any]:
         return {"id": config_id, **_MORNING}
 
@@ -70,24 +73,21 @@ async def _update(
     **runtime: Any,
 ) -> dict[str, Any]:
     """``_run_config_update`` with the target ``ha_config_set_automation`` resolves."""
-    named = entity_id if entity_id and entity_id.startswith("automation.") else None
-    target = (
-        None
-        if entity_id is None
-        else tools_config_automations._Target(
-            "stored-id" if named else entity_id, named, None
-        )
+    resolved_id = (
+        "stored-id" if entity_id and entity_id.startswith("automation.") else entity_id
     )
     return await tools._run_config_update(
         dict(config or _MORNING),
         entity_id,
-        target,
-        operation,
         None,
         wait,
         tools_config_automations.BestPracticeCheckResult(),
         {},
         False,
+        resolved_id=resolved_id,
+        verified=(dict(config or _MORNING), resolved_id)
+        if operation == "updated"
+        else None,
         **runtime,
     )
 
@@ -185,9 +185,8 @@ async def test_python_transform_reports_entity_resolved_for_enabled(
         "actions": [{"action": "logbook.log", "data": {"message": "x"}}],
     }
 
-    async def get_config(entity_id):
-        target = tools_config_automations._Target("stored-id", None, None)
-        return dict(config), "old-hash", target
+    async def fetch_and_verify_hash(identifier, config_hash, action):
+        return dict(config), "stored-id", dict(config)
 
     async def validate_registry_ids(*_args, **_kwargs):
         return None
@@ -195,7 +194,7 @@ async def test_python_transform_reports_entity_resolved_for_enabled(
     async def wait_for_unique_id(client, identifier):
         return "automation.actual"
 
-    monkeypatch.setattr(tools, "_get_automation_config_internal", get_config)
+    monkeypatch.setattr(tools, "_fetch_and_verify_hash", fetch_and_verify_hash)
     monkeypatch.setattr(
         tools_config_automations, "validate_registry_ids", validate_registry_ids
     )
@@ -666,11 +665,15 @@ async def test_python_transform_rejects_injected_enabled_before_write(
     client = _FakeClient()
     tools = tools_config_automations.AutomationConfigTools(client)
 
-    async def get_config(entity_id):
-        target = tools_config_automations._Target("stored-id", None, None)
-        return dict(_MORNING), "old-hash", target
+    async def fetch_and_verify_hash(identifier, config_hash, action):
+        config = {
+            "alias": "Morning",
+            "triggers": [{"trigger": "event", "event_type": "test_event"}],
+            "actions": [{"action": "logbook.log", "data": {"message": "x"}}],
+        }
+        return config, "stored-id", dict(config)
 
-    monkeypatch.setattr(tools, "_get_automation_config_internal", get_config)
+    monkeypatch.setattr(tools, "_fetch_and_verify_hash", fetch_and_verify_hash)
 
     with pytest.raises(ToolError) as exc_info:
         await tools._run_python_transform(
@@ -741,69 +744,6 @@ async def test_standalone_enabled_verification_error_is_warning(monkeypatch) -> 
 
     assert result["enabled_applied"] is True
     assert any("verification failed" in w for w in result["warnings"])
-
-
-class _FakeWsClient:
-    def __init__(self) -> None:
-        self.is_connected = True
-        self.handlers: dict[str, list[Any]] = {}
-        self.unsubscribed: list[int] = []
-
-    def add_event_handler(self, event_type: str, handler: Any) -> None:
-        self.handlers.setdefault(event_type, []).append(handler)
-
-    def remove_event_handler(self, event_type: str, handler: Any) -> None:
-        self.handlers[event_type].remove(handler)
-
-    async def subscribe_events(self, event_type: str) -> int:
-        return 7
-
-    async def unsubscribe_events(self, subscription_id: int) -> None:
-        self.unsubscribed.append(subscription_id)
-
-    async def fire(self, event_type: str) -> None:
-        for handler in list(self.handlers.get(event_type, [])):
-            await handler({"event_type": event_type, "data": {}})
-
-
-@pytest.mark.unit
-@pytest.mark.anyio
-async def test_reload_waiter_returns_true_after_reload_event(monkeypatch) -> None:
-    ws = _FakeWsClient()
-
-    async def get_ws(_client):
-        return ws
-
-    monkeypatch.setattr(config_write_helpers, "_get_waiter_ws_client", get_ws)
-
-    async with config_write_helpers.config_reload_waiter(
-        object(), "automation_reloaded"
-    ) as wait_for_reload:
-        await ws.fire("automation_reloaded")
-        assert await wait_for_reload() is True
-
-    assert ws.unsubscribed == [7]
-    assert ws.handlers["automation_reloaded"] == []
-
-
-@pytest.mark.unit
-@pytest.mark.anyio
-async def test_reload_waiter_times_out_and_skips_without_ws(monkeypatch) -> None:
-    ws = _FakeWsClient()
-
-    async def get_ws(_client):
-        return ws
-
-    monkeypatch.setattr(config_write_helpers, "_get_waiter_ws_client", get_ws)
-    async with config_write_helpers.config_reload_waiter(
-        object(), "automation_reloaded", timeout=0.01
-    ) as wait_for_reload:
-        assert await wait_for_reload() is False
-
-    async with config_write_helpers.config_reload_waiter(
-        object(), "automation_reloaded", enabled=False
-    ) as wait_for_reload:
-        assert await wait_for_reload() is None
 
 
 @pytest.mark.unit
@@ -956,14 +896,13 @@ async def _write_with_run_actions(
     if mode == "config":
         return await _update(tools, "automation.morning", config, run_actions=True)
 
-    async def get_config(entity_id):
-        target = tools_config_automations._Target("morning", entity_id, None)
-        return dict(config), "old-hash", target
+    async def fetch_and_verify_hash(identifier, config_hash, action):
+        return dict(config), "morning", dict(config)
 
     async def validate_registry_ids(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(tools, "_get_automation_config_internal", get_config)
+    monkeypatch.setattr(tools, "_fetch_and_verify_hash", fetch_and_verify_hash)
     monkeypatch.setattr(
         tools_config_automations, "validate_registry_ids", validate_registry_ids
     )

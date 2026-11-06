@@ -19,12 +19,14 @@ HA restore path. Each call must explicitly pick its scope.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Annotated, Any, Literal
-
-from pydantic import Field
+from typing import TYPE_CHECKING, Any
 
 from ha_mcp._vendor.fastmcp import Context
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
+from ha_mcp._vendor.fastmcp.tools import tool
+from ha_mcp.backends.legacy import legacy_errors
+from ha_mcp.runtime.backup_hints import BACKUP_HINTS
+from ha_mcp.runtime.backup_tools import BackupFacade, backup_description
 
 from ..backup_manager import (
     LEGACY_PREFIX,
@@ -52,7 +54,6 @@ from .backup_access import (
 from .backup_on_demand import capture_on_demand
 from .backup_snapshot import create_backup, delete_backup, list_backups
 from .backup_snapshot_restore import restore_backup
-from .coercion import JSON_STRING_COERCION
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -66,281 +67,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def register_backup_tools(
-    mcp: "FastMCP", client: HomeAssistantClient, **kwargs: Any
-) -> None:
-    """Register the polymorphic ``ha_manage_backup`` tool.
+def _get_backup_hint_text() -> str:
+    """Return the fixed guidance after upstream removed BACKUP_HINT."""
+    return BACKUP_HINTS["normal"]
 
-    Replaces the previous ``ha_backup_create`` and ``ha_backup_restore``
-    pair (merged into one tool, separated by ``scope``). All existing
-    snapshot functionality is preserved under ``scope="snapshot"``.
-    """
-    manage_backup_description = """Manage Home Assistant backups — both full HA snapshots AND per-edit auto-backups.
 
-**Pick the scope first**, then the action. Wrong scope routes through the wrong code path:
+class BackupTools(BackupFacade):
+    def __init__(self, client: HomeAssistantClient) -> None:
+        self._client = client
+        super().__init__(self._manage)
 
-| scope | action | What it does |
-|---|---|---|
-| `snapshot` | `create` | Without any `include_*`: a full Home Assistant backup, made as Home Assistant's own automatic backup (its contents and locations, Home Assistant Cloud included) and counted by its retention like a scheduled backup; with no automatic-backup locations configured, a manual backup on the default location with the contents of the automatic-backup settings. Either way it holds the apps those settings select: Home Assistant's backup setup selects every app, but settings that select none give a full backup with no apps (on a Supervisor install the configuration, usually its database, the `ssl` folder and any folders the settings select). The result's `addons` lists the apps it holds, and on a Supervisor install its `note` says when there are none. With any `include_*`: a custom backup of just those parts (e.g. one app; on Supervisor installs Home Assistant's configuration brings the `ssl` folder along) on the default location. Needs the default backup password. Can take a while on a large instance; progress heartbeats are sent while waiting. |
-| `snapshot` | `list` | List full HA tarball snapshots as Home Assistant reports them (id, name, date, per-location size). Read-only — use to discover a `backup_id` or confirm a backup landed; a non-empty `agent_errors` means the list is partial. |
-| `snapshot` | `restore` | Restore from a full HA tarball. Replaces Home Assistant's configuration plus what `restore_database` / `restore_addons` / `restore_folders` select; other apps and folders stay as they are. `safety_backup` first backs up what the restore replaces. **Restarts HA.** Last-resort recovery. |
-| `snapshot` | `delete` | Delete one full HA tarball by `backup_id` (`confirm=True` required). **Disabled by default** (`enable_snapshot_delete` setting) and layered with guards even when enabled — see below. |
-| `edits` | `create` | On-demand snapshot of one entity (`domain` + `entity_id` required). Use before the user manually edits in the HA UI. Same handler path the decorator takes on writes; bypasses the `enable_auto_backup` toggle. |
-| `edits` | `list` | List per-entity auto-backups (lightweight). Filter by `domain` and/or `entity_id`. |
-| `edits` | `view` | Read one auto-backup file by name; returns YAML and parsed `config`. |
-| `edits` | `diff` | Compare one auto-backup against the entity's current config. RFC 6902 JSON-Patch + add/remove/replace counts; bounded output. Read-only — fetches the live config, makes no changes. |
-| `edits` | `restore` | Re-apply one auto-backup. Existing flow helpers (template, group, utility_meter, …) and config subentries require a fresh per-entity backup; other domains follow auto-backup settings and may proceed without one. A deleted flow helper is recreated with a new config-entry ID and its saved entity IDs are restored if unoccupied; a deleted subentry is recreated with a new subentry ID. A deleted integration config entry cannot be recreated: its snapshot holds only metadata and the enabled state. **No HA restart.** |
-| `edits` | `delete` | Delete one auto-backup by `backup_name`, or bulk-delete by filter. |
-
-**When to use which scope:**
-- `scope="edits"`: ha-mcp's own per-entity YAML backups of automations, scripts, scenes, dashboards and helpers. Use them to undo a recent edit by the agent. Lightweight, fast, no restart.
-- `scope="snapshot"`: Home Assistant's own backups — a full backup (`create` without `include_*`), or a custom backup of some parts, such as one or more apps (`include_addons`). Restore one only for system-wide recovery (mass config corruption, a broken app update with that app in `restore_addons`, etc.).
-
-**A snapshot backup is the user's call:** before a change that cannot be undone, you may ask the user whether they want one first; make it only when they say so. A full backup is large, and an unrequested one can push an older backup out of retention.
-
-**`(snapshot, delete)` is off by default and layered even when enabled:** a human must
-set `enable_snapshot_delete=true` (env var, web settings UI, or add-on Supervisor
-options) — an agent cannot turn this on itself. When enabled, a delete call is still
-refused if: the target is a scheduled/automatic backup; it's younger than
-`snapshot_delete_min_age_days` (default 7, 0 disables the floor); or it's the single
-newest snapshot remaining. These guarantee at least one recovery point always
-survives an agent's own mistakes.
-
-**Human-managed backup controls:** `enable_snapshot_actions=false` (ENABLE_SNAPSHOT_ACTIONS) blocks every snapshot action, including listing. `backup_read_only=true` (BACKUP_READ_ONLY) allows edits list/view/diff and snapshot list when snapshots are enabled; it blocks explicit create/restore/delete in both scopes. Automatic pre-edit capture still follows `enable_auto_backup`. A human must change these controls in the Backups tab, app configuration, or environment; developer tools cannot change them. Global and connection Read Only Mode still restrict writes.
-
-**`enable_auto_backup` and `scope="edits"`:** the automatic-on-write capture (every wrapped tool call) is gated by `enable_auto_backup=true` — if the listing is empty, check the toggle (web settings UI or `ENABLE_AUTO_BACKUP=true` env var). The explicit `(edits, create)` action bypasses the toggle since the request is explicit; `list` / `view` / `restore` / `delete` operate on whatever's already on disk regardless of the toggle's current state.
-
-**Flow-helper filters:** `edits.create` accepts a flow helper's entity ID and returns its stable config-entry ID as `entity_id`. Use that returned ID for `edits.list` and bulk `edits.delete`; those filters do not resolve entity aliases. After recreation, the restore result reports the replacement config-entry ID and `entity_id_mapping` separately.
-
-**Examples:**
-- Full backup, when the user asks for one: `ha_manage_backup(scope="snapshot", action="create")`
-- Backup of one app: `ha_manage_backup(scope="snapshot", action="create", include_addons=["core_mosquitto"])`
-- List snapshots (to discover a backup_id or confirm one landed): `ha_manage_backup(scope="snapshot", action="list")`
-- Restore a snapshot's configuration (the database follows the backup): `ha_manage_backup(scope="snapshot", action="restore", backup_id="dd7550ed")`
-- Restore a snapshot with one of its apps: `ha_manage_backup(scope="snapshot", action="restore", backup_id="dd7550ed", restore_addons=["core_mosquitto"])`
-- Restore after a backup of what it replaces, when the user chose one: `ha_manage_backup(scope="snapshot", action="restore", backup_id="dd7550ed", safety_backup=True)`
-- Delete an old snapshot (requires `enable_snapshot_delete=true`): `ha_manage_backup(scope="snapshot", action="delete", backup_id="dd7550ed", confirm=True)`
-- On-demand entity snapshot before a manual UI edit: `ha_manage_backup(scope="edits", action="create", domain="helper_input_boolean", entity_id="welcome_home_active")`
-- List recent auto-backups for one automation: `ha_manage_backup(scope="edits", action="list", domain="automation", entity_id="welcome_home")`
-- View an auto-backup: `ha_manage_backup(scope="edits", action="view", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Diff an auto-backup vs current state: `ha_manage_backup(scope="edits", action="diff", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Restore an auto-backup: `ha_manage_backup(scope="edits", action="restore", backup_name="automation.welcome_home.20260521_153000.yaml")`
-- Delete one auto-backup: `ha_manage_backup(scope="edits", action="delete", backup_name="...")`
-- Bulk-delete old auto-backups: `ha_manage_backup(scope="edits", action="delete", older_than_days=30)`
-"""
-
-    @mcp.tool(
-        description=manage_backup_description,
+    ha_manage_backup = tool(
         tags={"System"},
         annotations=write_hints(
             "Manage Backups", destructive=True, idempotent=False, open_world=False
         ),
-    )
-    @log_tool_usage
-    async def ha_manage_backup(
-        scope: Annotated[
-            Literal["snapshot", "edits"],
-            Field(
-                description="'snapshot' for full HA tarballs; 'edits' for per-entity auto-backups."
-            ),
-        ],
-        action: Annotated[
-            Literal["create", "restore", "list", "view", "diff", "delete"],
-            Field(
-                description="Operation to perform. Valid (scope, action) combinations are listed in the tool description."
-            ),
-        ],
-        # snapshot scope params
-        name: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(snapshot.create) Tarball name. Auto-generated if not provided. "
-                "Home Assistant names a full backup made with its automatic-backup settings itself.",
-            ),
-        ] = None,
-        backup_id: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(snapshot.restore / snapshot.delete) Tarball ID (e.g. 'dd7550ed').",
-            ),
-        ] = None,
-        restore_database: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="(snapshot.restore) Include the database in the restore. Default: "
-                "restore it when the backup contains it. Must be false for a backup "
-                "without one; on Supervisor installs it must match the backup.",
-            ),
-        ] = None,
-        restore_addons: Annotated[
-            list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description="(snapshot.restore) Slugs of apps (add-ons) in the backup to "
-                "restore, from its `addons` in the snapshot list. Default: none. "
-                "Supervisor installs only.",
-            ),
-        ] = None,
-        restore_folders: Annotated[
-            list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description="(snapshot.restore) Folders in the backup to restore, from its "
-                "`folders` in the snapshot list (`share`, `addons/local`, `ssl`, `media`). "
-                "Default: none. Supervisor installs only.",
-            ),
-        ] = None,
-        include_homeassistant: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="(snapshot.create) Custom backup: include Home Assistant's "
-                "configuration.",
-            ),
-        ] = None,
-        include_database: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="(snapshot.create) Custom backup: include the database "
-                "(history); needs include_homeassistant=True.",
-            ),
-        ] = None,
-        include_addons: Annotated[
-            list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description="(snapshot.create) Custom backup: slugs of the installed apps "
-                "(add-ons) to include. Supervisor installs only.",
-            ),
-        ] = None,
-        include_all_addons: Annotated[
-            bool | None,
-            Field(
-                default=None,
-                description="(snapshot.create) Custom backup: include every app (add-on); "
-                "not together with include_addons. Supervisor installs only.",
-            ),
-        ] = None,
-        include_folders: Annotated[
-            list[str] | None,
-            JSON_STRING_COERCION,
-            Field(
-                default=None,
-                description="(snapshot.create) Custom backup: folders to include "
-                "(`share`, `addons/local`, `ssl`, `media`). Supervisor installs only.",
-            ),
-        ] = None,
-        safety_backup: Annotated[
-            bool,
-            Field(
-                default=False,
-                description="(snapshot.restore) Back up what the restore replaces "
-                "(configuration, plus the database, apps and folders it restores) first, "
-                "as a manual backup on the default location. Off by default; offer it "
-                "to the user, who decides. Needs the default backup password.",
-            ),
-        ] = False,
-        confirm: Annotated[
-            bool,
-            Field(
-                default=False,
-                description=("(snapshot.delete) Must be True to confirm deletion."),
-            ),
-        ] = False,
-        # edits scope params
-        domain: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by domain (e.g. 'automation', 'helper_timer'). "
-                "Required for edits.create.",
-            ),
-        ] = None,
-        entity_id: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="(edits.create / edits.list / edits.delete) Filter auto-backups by entity ID. "
-                "Required for edits.create.",
-            ),
-        ] = None,
-        backup_name: Annotated[
-            str | None,
-            Field(
-                default=None,
-                description=(
-                    "(edits.view / edits.restore / edits.delete) Auto-backup filename "
-                    "(format '<domain>.<entity_id>.<timestamp>[_NN].yaml'). Not a tarball ID."
-                ),
-            ),
-        ] = None,
-        older_than_days: Annotated[
-            int | None,
-            Field(
-                default=None,
-                ge=0,
-                description="(edits.delete) Bulk-delete auto-backups older than this many days.",
-            ),
-        ] = None,
-        limit: Annotated[
-            int,
-            Field(
-                default=200,
-                ge=1,
-                le=10_000,
-                description="(edits.list / snapshot.list) Maximum number of entries to return.",
-            ),
-        ] = 200,
-        ctx: Context | None = None,
-    ) -> dict[str, Any]:
-        """Polymorphic backup tool. See the tool description for the routing matrix."""
+    )(log_tool_usage(legacy_errors(BackupFacade.ha_manage_backup)))
+
+    async def _manage(self, **arguments: Any) -> dict[str, Any]:
+        scope, action = arguments.pop("scope"), arguments.pop("action")
         _gate_combo(scope, action)
         settings = get_global_settings()
         require_backup_access(settings, scope, action)
-
         if scope == "snapshot":
             return await _dispatch_snapshot_action(
-                client,
+                self._client,
                 action,
                 scope=scope,
-                name=name,
-                backup_id=backup_id,
-                restore_database=restore_database,
-                restore_addons=restore_addons,
-                restore_folders=restore_folders,
-                safety_backup=safety_backup,
-                parts={
-                    "include_homeassistant": include_homeassistant,
-                    "include_database": include_database,
-                    "include_addons": include_addons,
-                    "include_all_addons": include_all_addons,
-                    "include_folders": include_folders,
+                **{
+                    key: arguments[key]
+                    for key in (
+                        "name",
+                        "backup_id",
+                        "restore_database",
+                        "restore_addons",
+                        "restore_folders",
+                        "safety_backup",
+                        "parts",
+                        "confirm",
+                        "limit",
+                        "ctx",
+                    )
                 },
-                confirm=confirm,
-                limit=limit,
-                ctx=ctx,
             )
-
-        # scope == "edits"
-        mgr = get_backup_manager(client, settings)
         return await _dispatch_edits_action(
-            mgr,
+            get_backup_manager(self._client, settings),
             settings,
             action,
             scope=scope,
-            domain=domain,
-            entity_id=entity_id,
-            backup_name=backup_name,
-            older_than_days=older_than_days,
-            limit=limit,
+            **{
+                key: arguments[key]
+                for key in (
+                    "domain",
+                    "entity_id",
+                    "backup_name",
+                    "older_than_days",
+                    "limit",
+                )
+            },
         )
+
+
+def register_backup_tools(
+    mcp: "FastMCP", client: HomeAssistantClient, **kwargs: Any
+) -> None:
+    registered = mcp.add_tool(BackupTools(client).ha_manage_backup)
+    registered.description = backup_description(_get_backup_hint_text())
 
 
 async def _dispatch_snapshot_action(
