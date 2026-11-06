@@ -1,0 +1,104 @@
+"""Read-only evidence for a component-paired wheel already installed."""
+
+import importlib.metadata
+import json
+import re
+from urllib.parse import unquote, urlsplit, urlunsplit
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import Version
+
+from . import wheel_payload
+
+
+def paired_wheel_matches(
+    spec: str, installed_version: str | None, target_version: str | None
+) -> bool:
+    """Prove URL/version and either archive hash or independent installed bytes.
+
+    uv can omit archive hashes from PEP 610. Only the component's independent
+    payload index can then establish equality; a contradictory receipt never can.
+    The caller must separately exclude overrides, reinstall requests and a
+    conflicting distribution before allowing the ordinary no-install path.
+    """
+    if installed_version is None or target_version is None:
+        return False
+    try:
+        requirement = Requirement(spec)
+        name = canonicalize_name(requirement.name)
+        if (
+            name not in {"ha-mcp", "ha-mcp-dev"}
+            or not requirement.url
+            or requirement.marker
+            or requirement.extras
+        ):
+            return False
+        url = urlsplit(requirement.url)
+        if (
+            url.scheme != "https"
+            or not url.netloc
+            or url.username
+            or url.password
+            or url.query
+        ):
+            return False
+        if re.fullmatch(r"sha256=[a-fA-F0-9]{64}", url.fragment) is None:
+            return False
+        wheel_name, wheel_version, _build, _tags = parse_wheel_filename(
+            unquote(url.path.rsplit("/", 1)[-1])
+        )
+        if wheel_name != name or not (
+            wheel_version == Version(installed_version) == Version(target_version)
+        ):
+            return False
+        distribution = importlib.metadata.distribution(name)
+        if (
+            Version(distribution.version) != wheel_version
+            or canonicalize_name(distribution.metadata["Name"]) != name
+        ):
+            return False
+        receipt = json.loads(distribution.read_text("direct_url.json") or "null")
+        state = _receipt_state(
+            receipt, urlunsplit(url._replace(fragment="")), url.fragment[7:].lower()
+        )
+        if state == "invalid" or not wheel_payload.loaded_origins_match(distribution):
+            return False
+        if state == "match":
+            return True
+        wheel_payload.verify_wheel_payload(
+            distribution, name, str(wheel_version), url.fragment[7:].lower()
+        )
+        return True
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        importlib.metadata.PackageNotFoundError,
+    ):
+        return False
+
+
+def _receipt_state(receipt: object, url: str, digest: str) -> str:
+    if not isinstance(receipt, dict) or receipt.get("url") != url:
+        return "invalid"
+    if any(key in receipt for key in ("dir_info", "vcs_info", "subdirectory")):
+        return "invalid"
+    info = receipt.get("archive_info")
+    if not isinstance(info, dict):
+        return "invalid"
+    if info in ({}, {"hashes": {}}):
+        return "missing"
+    hashes = info.get("hashes")
+    legacy_hash = info.get("hash")
+    if hashes is not None:
+        matches = (
+            isinstance(hashes, dict)
+            and hashes.get("sha256") == digest
+            and (legacy_hash is None or legacy_hash == "sha256=" + digest)
+        )
+    else:
+        matches = legacy_hash == "sha256=" + digest
+    return "match" if matches else "invalid"

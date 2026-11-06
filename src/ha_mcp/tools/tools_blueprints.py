@@ -8,15 +8,16 @@ live in ``blueprint_write``; the YAML-text tier ladder in ``blueprint_sources``.
 """
 
 import logging
-from typing import Annotated, Any, Literal, NamedTuple, NoReturn
-
-from pydantic import Field
+from typing import Any, NamedTuple, NoReturn
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..client.rest_client import HomeAssistantConnectionError
 from ..errors import ErrorCode, create_error_response
+from ..runtime.blueprint_tools import BlueprintTools as BlueprintContractTools
+from ..runtime.blueprint_values import blueprint_get_result, blueprint_list_result
 from .auto_backup import with_auto_backup
 from .blueprint_sources import resolve_blueprint_source
 from .blueprint_substitute import substitute_blueprint
@@ -26,7 +27,6 @@ from .blueprint_write import (
     normalize_blueprint_path,
     write_blueprint,
 )
-from .coercion import JSON_STRING_COERCION
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -75,229 +75,27 @@ _VALID_DOMAINS = ("automation", "script")
 _RELATED_TIMEOUT_S = 5.0
 
 
-class BlueprintTools:
+class LegacyBlueprints:
     """Blueprint management tools for Home Assistant."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    @staticmethod
-    def _format_blueprint_list(
-        blueprints_data: dict[str, Any], domain: str
-    ) -> dict[str, Any]:
-        """Format blueprint data into list response structure.
+    _format_blueprint_list = staticmethod(blueprint_list_result)
 
-        Args:
-            blueprints_data: Raw blueprint data from WebSocket API
-            domain: Blueprint domain (automation or script)
-
-        Returns:
-            The canonical ``{"success": True, "data": {...}}`` envelope
-            carrying the blueprints list, count, and domain.
-        """
-        blueprints = []
-        for bp_path, metadata in blueprints_data.items():
-            blueprint_info = {
-                "path": bp_path,
-                "domain": domain,
-                "name": metadata.get(
-                    "name", bp_path.split("/")[-1].replace(".yaml", "")
-                ),
-            }
-
-            # Add optional metadata if available
-            if "metadata" in metadata:
-                meta = metadata["metadata"]
-                blueprint_info.update(
-                    {
-                        "description": meta.get("description"),
-                        "source_url": meta.get("source_url"),
-                        "author": meta.get("author"),
-                    }
-                )
-
-            blueprints.append(blueprint_info)
-
-        return {
-            "success": True,
-            "data": {
-                "domain": domain,
-                "count": len(blueprints),
-                "blueprints": blueprints,
-            },
-        }
-
-    @tool(
-        name="ha_manage_blueprints",
-        tags={"Blueprints"},
-        # import fetches arbitrary URLs; list/get return externally
-        # authored blueprint content from an otherwise local read.
-        annotations=write_hints(
-            "Manage Blueprints", destructive=True, idempotent=False, open_world=True
-        ),
-    )
-    # ``delete`` and ``save`` are the two actions that can destroy an installed
-    # blueprint's contents, so both capture first. The snapshot is keyed on the
-    # path the write lands on: ``save`` follows core in appending ``.yaml``
-    # (``blueprint_snapshot_target``), so an overwriting save of ``user/motion``
-    # captures the ``user/motion.yaml`` it replaces instead of a path no tier
-    # can read; ``delete`` takes the store key verbatim, as core does. The skip
-    # test reads more than ``action``, because two shapes provably cannot
-    # destroy anything: an unconfirmed delete changes nothing, and a ``save``
-    # without ``overwrite`` either lands on a free path (nothing to snapshot)
-    # or is refused by Home Assistant for already existing. Capturing for
-    # either would still run an installed-file read (the component command, or
-    # the File & YAML Tools service) first, and auto-backup is on by default,
-    # so that would fire on every such call. The snapshot never re-fetches
-    # ``source_url``: ``_fetch_blueprint`` passes ``source_url=None`` precisely
-    # so a restore cannot write different YAML than the write destroyed.
-    @with_auto_backup(
-        domain_fn=lambda kw: f"blueprint_{kw.get('domain') or 'automation'}",
-        id_fn=blueprint_snapshot_target,
-        skip_fn=lambda kw: (
-            kw.get("action") not in ("delete", "save")
-            or (kw.get("action") == "delete" and not kw.get("confirm"))
-            or (kw.get("action") == "save" and not kw.get("overwrite"))
-        ),
-    )
-    @log_tool_usage
-    async def ha_manage_blueprints(
+    async def manage(
         self,
-        action: Annotated[
-            Literal["list", "get", "import", "save", "delete", "substitute"],
-            Field(
-                description=(
-                    "'list' installed blueprints, 'get' one blueprint's "
-                    "metadata/inputs/YAML, 'import' one from a URL, 'save' YAML "
-                    "text to a blueprint path, 'delete' an installed one, or "
-                    "'substitute' to render a standalone config (the UI's "
-                    '"Take control")'
-                )
-            ),
-        ],
-        domain: Annotated[
-            str,
-            Field(
-                description=(
-                    "Blueprint domain: 'automation' or 'script'. Ignored by "
-                    "action='import' — the blueprint file declares its own domain."
-                ),
-                default="automation",
-            ),
-        ] = "automation",
-        path: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Installed blueprint path, e.g. 'homeassistant/motion_light.yaml' "
-                    "(action='get' / 'save' / 'delete' / 'substitute'). 'save' "
-                    "appends '.yaml' when it is missing, as Home Assistant does."
-                ),
-                default=None,
-            ),
-        ] = None,
-        url: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "URL to import from — GitHub, Home Assistant Community, or a "
-                    "direct YAML link (action='import')"
-                ),
-                default=None,
-            ),
-        ] = None,
-        yaml: Annotated[
-            str | None,
-            Field(
-                description="Blueprint YAML text to write (action='save')",
-                default=None,
-            ),
-        ] = None,
-        source_url: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Origin URL to stamp into the saved blueprint's metadata "
-                    "(action='save'); omit for a hand-authored blueprint"
-                ),
-                default=None,
-            ),
-        ] = None,
-        overwrite: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Write over an already-installed blueprint "
-                    "(action='import' / 'save'). Home Assistant reloads every "
-                    "automation/script using it."
-                ),
-                default=False,
-            ),
-        ] = False,
-        input: Annotated[  # noqa: A002 — mirrors core's blueprint/substitute key
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Blueprint input values keyed by input name "
-                    "(action='substitute'); defaults to {}"
-                ),
-                default=None,
-            ),
-        ] = None,
-        confirm: Annotated[
-            bool,
-            Field(
-                description="Required confirmation for action='delete'",
-                default=False,
-            ),
-        ] = False,
+        action: str,
+        domain: str = "automation",
+        path: str | None = None,
+        url: str | None = None,
+        yaml: str | None = None,
+        source_url: str | None = None,
+        overwrite: bool = False,
+        input: dict[str, Any] | None = None,  # noqa: A002 - public Core key
+        confirm: bool = False,
     ) -> dict[str, Any]:
-        """Manage Home Assistant blueprints — list, read, import, save, delete, or render a standalone config.
-
-        One interface for the whole blueprint lifecycle in the ``automation``
-        and ``script`` domains.
-
-        DO NOT use this to create an automation or script FROM a blueprint —
-        that is ``ha_config_set_automation`` / ``ha_config_set_script`` with a
-        ``use_blueprint`` config.
-
-        To duplicate a blueprint, ``get`` it and ``save`` its ``yaml`` under a
-        new ``path``; to edit one in place, ``get`` it, change the text, and
-        ``save`` it back to the same ``path`` with ``overwrite=True``.
-
-        ``get`` also reports ``used_by``: the automations or scripts built on
-        the blueprint, which is the UI's "Show automations using this
-        blueprint". Check it before deleting — Home Assistant refuses to delete a
-        blueprint anything still uses (the error lists the consumers), and it
-        goes on counting a consumer that has since taken control of its own
-        config until that consumer is removed.
-
-        CAVEATS: ``get`` returns the on-disk YAML only when something can read
-        it — an in-process server, the ha_mcp_tools component, the File & YAML
-        Tools entry, or the blueprint's ``source_url``; ``yaml_source`` names
-        which one answered, and ``source_url`` text is a fresh download that can
-        differ from the installed file. Core's blueprint API alone exposes
-        metadata only, so a locally authored blueprint on a bare install has no
-        readable text. Both writes are snapshotted first when a copy can be
-        read, so ``ha_manage_backup(scope="edits")`` can restore the previous
-        file. ``substitute`` only renders — it writes nothing, so pass the
-        returned config to ``ha_config_set_automation`` /
-        ``ha_config_set_script`` to persist it. To convert an automation or
-        script that ALREADY exists, prefer those tools' ``take_control_of_blueprint=True``:
-        it renders with that item's own current inputs and saves the result over
-        itself in one call.
-
-        EXAMPLES:
-        - Get one (with its consumers in ``used_by``): ha_manage_blueprints(action="get", path="homeassistant/motion_light.yaml")
-        - Import: ha_manage_blueprints(action="import", url="https://example.com/bp.yaml")
-        - Edit in place: ha_manage_blueprints(action="save", path="user/motion.yaml", yaml=<edited text>, overwrite=True)
-        - Delete: ha_manage_blueprints(action="delete", path="user/motion.yaml", confirm=True)
-        - Render standalone: ha_manage_blueprints(action="substitute", path="user/motion.yaml", input={"motion_sensor": "binary_sensor.hall"})
-
-        RELATED TOOLS: ``ha_config_remove_automation`` / ``ha_config_remove_script``
-        to clear consumers blocking a delete, ``ha_search`` to find them.
-        """
+        """Retain the old REST/WebSocket implementation for legacy installations."""
         try:
             # import takes its domain from the blueprint file, so a stray
             # value must not refuse an otherwise valid call.
@@ -364,7 +162,7 @@ class BlueprintTools:
         """Return a required parameter, or raise VALIDATION_MISSING_PARAMETER."""
         if value:
             return value
-        raise_tool_error(
+        return raise_tool_error(
             create_error_response(
                 ErrorCode.VALIDATION_MISSING_PARAMETER,
                 f"'{name}' is required for action='{action}'.",
@@ -445,31 +243,8 @@ class BlueprintTools:
         """
         blueprints_data = await self._require_installed(domain, path)
 
-        blueprint_data = blueprints_data[path]
-        data: dict[str, Any] = {
-            "path": path,
-            "domain": domain,
-            "name": blueprint_data.get(
-                "name", path.rsplit("/", maxsplit=1)[-1].replace(".yaml", "")
-            ),
-        }
-        result: dict[str, Any] = {"success": True, "data": data}
-
-        source_url: str | None = None
-        if "metadata" in blueprint_data:
-            meta = blueprint_data["metadata"]
-            data["metadata"] = {
-                "name": meta.get("name"),
-                "description": meta.get("description"),
-                "source_url": meta.get("source_url"),
-                "author": meta.get("author"),
-                "domain": meta.get("domain"),
-                "homeassistant": meta.get("homeassistant"),
-            }
-            if "input" in meta:
-                data["inputs"] = meta["input"]
-            raw_source_url = meta.get("source_url")
-            source_url = raw_source_url if isinstance(raw_source_url, str) else None
+        result, source_url = blueprint_get_result(domain, path, blueprints_data[path])
+        data = result["data"]
 
         # Core's blueprint/list returns metadata only (never a body or the file
         # text), so both come from the tier ladder in ``blueprint_sources``.
@@ -706,6 +481,32 @@ class BlueprintTools:
             )
         if warnings:
             result.setdefault("warnings", []).extend(warnings)
+
+
+class BlueprintTools(BlueprintContractTools, LegacyBlueprints):
+    def __init__(self, client: Any) -> None:
+        LegacyBlueprints.__init__(self, client)
+        BlueprintContractTools.__init__(self, self)
+
+    # Imports learn their target after fetching; their legacy write helper captures
+    # there. Saves/deletes retain their original installed-file capture policy.
+    ha_manage_blueprints = tool(
+        name="ha_manage_blueprints",
+        tags={"Blueprints"},
+        annotations=write_hints(
+            "Manage Blueprints", destructive=True, idempotent=False, open_world=True
+        ),
+    )(
+        with_auto_backup(
+            domain_fn=lambda kw: f"blueprint_{kw.get('domain') or 'automation'}",
+            id_fn=blueprint_snapshot_target,
+            skip_fn=lambda kw: (
+                kw.get("action") not in ("delete", "save")
+                or (kw.get("action") == "delete" and not kw.get("confirm"))
+                or (kw.get("action") == "save" and not kw.get("overwrite"))
+            ),
+        )(log_tool_usage(legacy_errors(BlueprintContractTools.ha_manage_blueprints)))
+    )
 
 
 def register_blueprint_tools(mcp: Any, client: Any, **kwargs: Any) -> None:

@@ -9,7 +9,7 @@ from ha_mcp._vendor.fastmcp.utilities.types import Image
 from ha_mcp._vendor.mcp.types import ImageContent
 
 from ..errors import ErrorCode, create_error_response
-from ..tools.helpers import raise_tool_error
+from ..utils.tool_errors import raise_tool_error
 from .capture import DashboardImageCapture
 
 

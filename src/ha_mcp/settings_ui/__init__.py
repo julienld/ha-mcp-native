@@ -13,6 +13,7 @@ import functools
 import html
 import json
 import logging
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,20 +21,10 @@ from typing import TYPE_CHECKING, Any
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
+from .._lazy_exports import resolve_export
 from .._version import is_embedded, is_running_in_addon
 from ..transforms import DEFAULT_PINNED_TOOLS
 from ..utils.data_paths import get_data_dir
-from ._handlers_advanced import build_advanced_handlers
-from ._handlers_backups import build_backups_handlers
-from ._handlers_fs import build_fs_handlers
-from ._handlers_oauth_callbacks import build_oauth_callback_handlers
-from ._handlers_server import (
-    _PROCESS_INSTANCE_ID,
-    _PROCESS_STARTED_AT,
-    build_server_handlers,
-)
-from ._handlers_theme import build_theme_handlers
-from ._handlers_tools import build_tools_handlers
 from ._i18n import (
     LOCALE_COOKIE,
     build_payload,
@@ -54,13 +45,6 @@ from ._persistence import (
     load_tool_metadata_cache,
     save_tool_config,
 )
-from ._supervisor import (
-    _BACKGROUND_RESTART_TASKS,
-    _schedule_supervisor_self_restart,
-    _supervisor_fetch_current_options,
-    _supervisor_merge_and_post_options,
-    _SupervisorOptionsError,
-)
 from ._theme import _load_theme_prefs, _sanitize_theme_prefs
 from ._tools_meta import (
     BPS_MANDATORY_TOOLS,
@@ -79,6 +63,37 @@ if TYPE_CHECKING:
 
     from ..config import Settings
     from ..server import HomeAssistantSmartMCPServer
+
+
+_LAZY_EXPORTS = {
+    "build_advanced_handlers": ("._handlers_advanced", "build_advanced_handlers"),
+    "build_backups_handlers": ("._handlers_backups", "build_backups_handlers"),
+    "build_fs_handlers": ("._handlers_fs", "build_fs_handlers"),
+    "build_oauth_callback_handlers": (
+        "._handlers_oauth_callbacks",
+        "build_oauth_callback_handlers",
+    ),
+    "_PROCESS_INSTANCE_ID": ("._handlers_server", "_PROCESS_INSTANCE_ID"),
+    "_PROCESS_STARTED_AT": ("._handlers_server", "_PROCESS_STARTED_AT"),
+    "build_server_handlers": ("._handlers_server", "build_server_handlers"),
+    "build_theme_handlers": ("._handlers_theme", "build_theme_handlers"),
+    "build_tools_handlers": ("._handlers_tools", "build_tools_handlers"),
+    "_BACKGROUND_RESTART_TASKS": ("._supervisor", "_BACKGROUND_RESTART_TASKS"),
+    "_schedule_supervisor_self_restart": (
+        "._supervisor",
+        "_schedule_supervisor_self_restart",
+    ),
+    "_supervisor_fetch_current_options": (
+        "._supervisor",
+        "_supervisor_fetch_current_options",
+    ),
+    "_supervisor_merge_and_post_options": (
+        "._supervisor",
+        "_supervisor_merge_and_post_options",
+    ),
+    "_SupervisorOptionsError": ("._supervisor", "_SupervisorOptionsError"),
+}
+__getattr__ = functools.partial(resolve_export, __name__, globals(), _LAZY_EXPORTS)
 
 
 logger = logging.getLogger(__name__)
@@ -373,7 +388,9 @@ def _build_visibility_handlers(*, data_dir: Path) -> dict[str, Any]:
     }
 
 
-def _render_settings_html(request: Request | None = None) -> str:
+def _render_settings_html(
+    request: Request | None = None, *, theme_prefs: dict[str, str] | None = None
+) -> str:
     """Substitute theme preferences and the request-selected locale.
 
     The ``server-prefs`` head script carries a ``data-prefs`` attribute
@@ -388,7 +405,11 @@ def _render_settings_html(request: Request | None = None) -> str:
     then English. Only the selected merged catalog is embedded in the page.
     """
     theme_payload = html.escape(
-        json.dumps(_load_theme_prefs(), separators=(",", ":")), quote=True
+        json.dumps(
+            _load_theme_prefs() if theme_prefs is None else theme_prefs,
+            separators=(",", ":"),
+        ),
+        quote=True,
     )
     locale = select_locale(
         cookie_locale=request.cookies.get(LOCALE_COOKIE) if request else None,
@@ -487,14 +508,15 @@ def build_settings_handlers(
     else:
         handlers.update(_build_stub_policy_handlers(data_dir=get_data_dir()))
 
+    ui_exports = sys.modules[__name__]
     handlers.update(_build_visibility_handlers(data_dir=get_data_dir()))
-    handlers.update(build_theme_handlers())
-    handlers.update(build_fs_handlers(server))
-    handlers.update(build_tools_handlers(server))
-    handlers.update(build_backups_handlers(server))
-    handlers.update(build_server_handlers(server, is_sidecar=is_sidecar))
-    handlers.update(build_advanced_handlers(server))
-    handlers.update(build_oauth_callback_handlers(server))
+    handlers.update(ui_exports.build_theme_handlers())
+    handlers.update(ui_exports.build_fs_handlers(server))
+    handlers.update(ui_exports.build_tools_handlers(server))
+    handlers.update(ui_exports.build_backups_handlers(server))
+    handlers.update(ui_exports.build_server_handlers(server, is_sidecar=is_sidecar))
+    handlers.update(ui_exports.build_advanced_handlers(server))
+    handlers.update(ui_exports.build_oauth_callback_handlers(server))
 
     return handlers
 
