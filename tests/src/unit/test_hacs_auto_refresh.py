@@ -34,6 +34,19 @@ from ha_mcp.update_check import UpdateInfo
 MIRROR, LEGACY = hacs_auto_refresh.CANDIDATE_REPO_FULL_NAMES
 
 
+@pytest.mark.parametrize("marketplace", [False, True])
+async def test_real_refresh_helper_keeps_the_selected_store_protocol(marketplace):
+    from ha_mcp.tools.hacs_backend import StoreApi
+    from ha_mcp.tools.hacs_registration import send_hacs_repository_refresh
+
+    api = StoreApi("marketplace" if marketplace else "hacs")
+    client = SimpleNamespace(send_command=AsyncMock(return_value={"success": True}))
+    result = await send_hacs_repository_refresh(client, "42", api)
+    assert result["success"] is True
+    assert client.send_command.await_args.args == (api.command("refresh"),)
+    assert client.send_command.await_args.kwargs["repository"] == "42"
+
+
 def _info(latest="1.1.0", *, update_available=True, current="1.0.0"):
     return UpdateInfo(current=current, latest=latest, update_available=update_available)
 

@@ -5,7 +5,9 @@ Core 2026.11 removes the ``hacs/*`` WebSocket commands and serves
 the store's own data (categories, repository fields, refusals) intact.
 """
 
+import copy
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +17,8 @@ from ha_mcp.client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
 )
+from ha_mcp.runtime.hacs_remote import MarketplaceRemote, _repository_full_name
+from ha_mcp.tool_api import ToolFailure
 from ha_mcp.tools.hacs_backend import StoreApi, detect_store_api
 from ha_mcp.tools.hacs_registration import wait_for_repo_registration
 from ha_mcp.tools.tools_hacs import HacsTools
@@ -44,11 +48,11 @@ def _ok(result):
 
 
 @contextmanager
-def _on_marketplace(ws):
+def _on_marketplace(ws, domain="marketplace"):
     with (
         patch(
-            "ha_mcp.tools.tools_hacs.detect_store_api",
-            new=AsyncMock(return_value=MARKETPLACE),
+            "ha_mcp.tools.tools_hacs._assert_hacs_available",
+            new=AsyncMock(return_value=domain),
         ),
         patch(
             "ha_mcp.client.websocket_client.get_websocket_client",
@@ -100,109 +104,195 @@ class TestDetectStoreApi:
         assert "2026.11" in str(excinfo.value)
 
 
+def _store(*, row=None, info=None, domain="marketplace"):
+    repository = {
+        "id": "123",
+        "full_name": "o/r",
+        "category": "integration",
+        "installed": False,
+        **(row or {}),
+    }
+    state = {**MARKETPLACE.info, **(info or {})}
+    world = SimpleNamespace(
+        row=repository,
+        info=state,
+        failure=None,
+        releases=AsyncMock(return_value=[]),
+        notes=None,
+    )
+
+    async def send(name, **values):
+        info_replies = {
+            f"{domain}/info": state,
+            f"{domain}/repository/info": repository,
+        }
+        if name in info_replies:
+            result = info_replies[name]
+        elif name == "ha_mcp_tools/hacs_cache":
+            result = {
+                "store": domain,
+                "repository": repository,
+                "cache": {"source": f"{domain}_cache", "refreshed_from_github": False},
+            }
+        elif name == f"{domain}/repositories/list":
+            result = [repository]
+        elif name == "config/entity_registry/list":
+            result = []
+        elif name == f"{domain}/repository/releases":
+            result = await world.releases()
+        elif name == "update/release_notes":
+            result = world.notes
+        elif name in {
+            f"{domain}/repository/install",
+            f"{domain}/repository/download",
+            f"{domain}/repository/uninstall",
+            f"{domain}/repositories/add",
+        }:
+            if world.failure:
+                raise world.failure
+            repository["installed"] = not name.endswith("/uninstall")
+            repository["installed_version"] = values.get("version", "latest")
+            repository["category"] = values.get("category", repository["category"])
+            result = None
+        else:
+            raise AssertionError(f"Unexpected command: {name}")
+        return _ok(copy.deepcopy(result))
+
+    world.ws = SimpleNamespace(send_command=AsyncMock(side_effect=send))
+    return world
+
+
+def _writes(ws):
+    return [
+        call
+        for call in ws.send_command.await_args_list
+        if call.args[0].endswith(("/install", "/download", "/uninstall", "/add"))
+    ]
+
+
 class TestMarketplaceCommands:
     async def test_download_installs_through_the_marketplace(self, tools):
-        ws = _ws(_ok(None))
-        with _on_marketplace(ws):
-            await tools.ha_manage_hacs(
+        world = _store()
+        with _on_marketplace(world.ws):
+            result = await tools.ha_manage_hacs(
                 action="download", repository_id="123", version="v2.0.0"
             )
-        ws.send_command.assert_awaited_once()
-        args, kwargs = ws.send_command.await_args
-        assert args == ("marketplace/repository/install",)
-        assert kwargs["repository"] == "123"
-        assert kwargs["version"] == "v2.0.0"
+        assert result["installed_version"] == "v2.0.0"
+        writes = _writes(world.ws)
+        assert len(writes) == 1
+        assert writes[0].args == ("marketplace/repository/install",)
+        assert writes[0].kwargs == {
+            "repository": "123",
+            "version": "v2.0.0",
+            "_wait_timeout": 120.0,
+        }
 
     async def test_remove_uninstalls_through_the_marketplace(self, tools):
-        ws = _ws(_ok({"installed": True, "full_name": "o/r"}), _ok(None))
-        with _on_marketplace(ws):
+        world = _store(row={"installed": True})
+        with _on_marketplace(world.ws):
             await tools.ha_manage_hacs(action="remove", repository_id="123")
-        assert ws.send_command.await_args_list[1].args == (
-            "marketplace/repository/uninstall",
-        )
+        writes = _writes(world.ws)
+        assert len(writes) == 1
+        assert writes[0].args == ("marketplace/repository/uninstall",)
+        assert world.row["installed"] is False
 
     async def test_unaccepted_warning_tells_the_user_where_to_accept_it(self, tools):
-        ws = _ws(
-            HomeAssistantCommandError(
-                "Command failed: Open the Marketplace and read the warning first",
-                "warning_not_accepted",
-            )
-        )
-        with _on_marketplace(ws), pytest.raises(ToolError) as excinfo:
+        world = _store(info={"warning_accepted": False})
+        with _on_marketplace(world.ws), pytest.raises(ToolError) as excinfo:
             await tools.ha_manage_hacs(action="download", repository_id="123")
         text = str(excinfo.value)
-        assert "read the warning first" in text
+        assert "AUTH_FORBIDDEN" in text
+        assert "warning_not_accepted" in text
         assert "first-run warning" in text
+        assert "Marketplace UI" in text
         assert "cannot accept" in text
+        assert not _writes(world.ws)
 
     async def test_github_gate_is_not_mistaken_for_a_connection_failure(self, tools):
-        ws = _ws(
-            HomeAssistantCommandError(
-                "Command failed: Connect a GitHub account to the Marketplace first",
-                "github_not_connected",
-            )
-        )
-        with _on_marketplace(ws), pytest.raises(ToolError) as excinfo:
+        world = _store(info={"github_connected": False})
+        with _on_marketplace(world.ws), pytest.raises(ToolError) as excinfo:
             await tools.ha_manage_hacs(
                 action="add_repository", repository="o/r", category="integration"
             )
         text = str(excinfo.value)
-        assert "CONNECTION_FAILED" not in text
-        assert "Connect GitHub" in text
+        assert "AUTH_FORBIDDEN" in text and "CONNECTION_FAILED" not in text
+        assert "connect GitHub" in text
+        assert not _writes(world.ws)
 
     async def test_category_is_checked_against_the_store_list(self, tools):
-        ws = _ws()
-        with _on_marketplace(ws), pytest.raises(ToolError) as excinfo:
-            await tools.ha_get_hacs_info(action="search", category="appdaemon")
-        text = str(excinfo.value)
-        assert "VALIDATION_INVALID_PARAMETER" in text
-        assert "template" in text
-        ws.send_command.assert_not_awaited()
+        world = _store(info={"categories": ["template", "theme"]})
+        with _on_marketplace(world.ws), pytest.raises(ToolError) as excinfo:
+            await tools.ha_get_hacs_info(action="search", category="integration")
+        assert "VALIDATION_INVALID_PARAMETER" in str(excinfo.value)
+        assert "template" in str(excinfo.value)
+        assert not any(
+            call.args[0] == "marketplace/repositories/list"
+            for call in world.ws.send_command.await_args_list
+        )
 
     async def test_category_case_is_the_stores_to_fold(self, tools):
-        # Core lower-cases it on add; a capitalised one must not be refused.
-        ws = _ws(_ok([]))
-        with _on_marketplace(ws):
+        world = _store()
+        with _on_marketplace(world.ws):
             await tools.ha_get_hacs_info(action="search", category="Integration")
-        assert ws.send_command.await_args.kwargs["categories"] == ["integration"]
+        world.ws.send_command.assert_any_await(
+            "marketplace/repositories/list", categories=["integration"]
+        )
+
+    async def test_add_folds_category_before_confirming_the_registered_repository(self):
+        world = _store(info={"github_connected": True})
+        result = await MarketplaceRemote(world.ws).write(
+            "add_repository", repository="o/r", category="Integration"
+        )
+        assert result["repository_id"] == "123"
+        writes = _writes(world.ws)
+        assert len(writes) == 1
+        assert writes[0].kwargs["category"] == "integration"
+
+    async def test_add_refuses_an_unoffered_category_before_dispatch(self):
+        world = _store(info={"github_connected": True, "categories": ["theme"]})
+        with pytest.raises(ToolError) as error:
+            await MarketplaceRemote(world.ws).write(
+                "add_repository", repository="o/r", category="integration"
+            )
+        assert "VALIDATION_INVALID_PARAMETER" in str(error.value)
+        assert not _writes(world.ws)
 
     async def test_built_in_replacement_names_the_confirmation(self, tools):
-        ws = _ws(
-            HomeAssistantCommandError(
-                "Command failed: o/youtube replaces the built-in youtube "
-                "integration, confirm that before installing it",
-                "replaces_built_in",
-            )
+        world = _store()
+        world.failure = HomeAssistantCommandError(
+            "Command failed: o/youtube replaces the built-in youtube integration; "
+            "confirm that before installing it",
+            "replaces_built_in",
         )
-        with _on_marketplace(ws), pytest.raises(ToolError) as excinfo:
+        with _on_marketplace(world.ws), pytest.raises(ToolError) as excinfo:
             await tools.ha_manage_hacs(action="download", repository_id="123")
         text = str(excinfo.value)
         assert "confirm_replace_built_in=True" in text
-        assert "Verify the target entity" not in text
+        assert "OUTCOME_UNKNOWN" in text
+        assert len(_writes(world.ws)) == 1
 
-    @pytest.mark.parametrize("store", [MARKETPLACE, StoreApi("hacs")])
+    @pytest.mark.parametrize("domain", ["marketplace", "hacs"])
     async def test_confirmed_replacement_reaches_only_the_marketplace(
-        self, tools, store
+        self, tools, domain
     ):
-        ws = _ws(_ok(None))
-        with (
-            _on_marketplace(ws),
-            patch(
-                "ha_mcp.tools.tools_hacs.detect_store_api",
-                new=AsyncMock(return_value=store),
-            ),
-        ):
+        world = _store(domain=domain)
+        with _on_marketplace(world.ws, domain):
             await tools.ha_manage_hacs(
                 action="download", repository_id="123", confirm_replace_built_in=True
             )
-        kwargs = ws.send_command.await_args.kwargs
-        assert ("confirm_replace_built_in" in kwargs) is store.is_marketplace
+        writes = _writes(world.ws)
+        assert len(writes) == 1
+        assert ("confirm_replace_built_in" in writes[0].kwargs) is (
+            domain == "marketplace"
+        )
 
     async def test_lovelace_alias_reaches_the_store_as_plugin(self, tools):
-        ws = _ws(_ok([]))
-        with _on_marketplace(ws):
+        world = _store()
+        with _on_marketplace(world.ws):
             await tools.ha_get_hacs_info(action="search", category="lovelace")
-        assert ws.send_command.await_args.kwargs["categories"] == ["plugin"]
+        world.ws.send_command.assert_any_await(
+            "marketplace/repositories/list", categories=["plugin"]
+        )
 
 
 class TestNativeFieldsReachTheCaller:
@@ -216,79 +306,75 @@ class TestNativeFieldsReachTheCaller:
             "can_install": True,
             "local_path": "/config/www/community/card",
         }
-        ws = _ws(_ok([row]))
-        with _on_marketplace(ws):
+        world = _store(row=row)
+        with _on_marketplace(world.ws):
             result = await tools.ha_get_hacs_info(action="search", installed_only=True)
-        assert result["results"] == [row]
-        assert result["store"]["api"] == "marketplace"
-        assert result["store"]["github_connected"] is False
+        assert result["results"] == [
+            {
+                **row,
+                "category": "lovelace",
+                "description": None,
+                "stars": 0,
+                "downloads": 0,
+                "authors": [],
+                "installed_version": None,
+                "available_version": None,
+                "pending_update": False,
+                "domain": None,
+            }
+        ]
+        assert result["store"] == {"api": "marketplace", **world.info}
 
     async def test_info_keeps_every_field_and_the_readme(self, tools):
         detail = {"id": "1", "additional_info": "# README", "replaces_built_in": None}
-        ws = _ws(_ok(detail))
-        with _on_marketplace(ws):
+        world = _store(row=detail)
+        with _on_marketplace(world.ws):
             result = await tools.ha_get_hacs_info(action="info", repository_id="1")
-        assert result["additional_info"] == "# README"
-        assert "replaces_built_in" in result
+        assert result["data"]["additional_info"] == "# README"
+        assert "replaces_built_in" in result["data"]
         assert "readme_note" in result
+        assert any(
+            call.args[0] == "marketplace/repository/info"
+            for call in world.ws.send_command.await_args_list
+        )
 
     async def test_a_slow_releases_fetch_leaves_the_info_and_warns(self, tools):
-        # The releases command reaches GitHub; timing out must not cost the
-        # repository info, and the warning sits beside data, not inside it.
-        ws = _ws(
-            _ok({"id": "1", "full_name": "o/r", "pending_upgrade": False}),
-            HomeAssistantCommandTimeout("timed out"),
-        )
-        with (
-            patch(
-                "ha_mcp.tools.tools_hacs.detect_store_api",
-                new=AsyncMock(return_value=MARKETPLACE),
-            ),
-            patch(
-                "ha_mcp.client.websocket_client.get_websocket_client",
-                new=AsyncMock(return_value=ws),
-            ),
-            patch(
-                "ha_mcp.tools.response_helpers.fetch_ha_timezone",
-                new=AsyncMock(return_value=("UTC", False)),
-            ),
-        ):
+        world = _store(row={"id": "1", "pending_upgrade": False})
+        world.releases.side_effect = HomeAssistantCommandTimeout("timed out")
+        with _on_marketplace(world.ws):
             out = await tools.ha_get_hacs_info(
                 action="info", repository_id="1", include_releases=True
             )
         assert out["data"]["full_name"] == "o/r"
         assert "warnings" not in out["data"]
         assert out["warnings"] == ["Releases unavailable: timed out"]
-        assert ws.send_command.await_args_list[1].kwargs["_wait_timeout"] == 60.0
+        world.ws.send_command.assert_any_await(
+            "marketplace/repository/releases", repository_id="1", _wait_timeout=60.0
+        )
 
     async def test_release_notes_come_from_the_update_entity(self, tools):
-        detail = {
-            "id": "1",
-            "pending_upgrade": True,
-            "update_entity_id": "update.card_update",
-        }
-        releases = [{"tag": "v2", "prerelease": False}]
-        ws = _ws(_ok(detail), _ok(releases), _ok("## v2\nFixes"))
-        with _on_marketplace(ws):
+        world = _store(
+            row={
+                "id": "1",
+                "pending_upgrade": True,
+                "update_entity_id": "update.card_update",
+            }
+        )
+        world.releases.return_value = [{"tag": "v2", "prerelease": False}]
+        world.notes = "## v2\nFixes"
+        with _on_marketplace(world.ws):
             result = await tools.ha_get_hacs_info(
                 action="info", repository_id="1", include_releases=True
             )
-        assert result["github_releases"] == releases
-        assert result["release_notes"] == "## v2\nFixes"
-        assert ws.send_command.await_args_list[2].args == ("update/release_notes",)
-        assert (
-            ws.send_command.await_args_list[2].kwargs["entity_id"]
-            == "update.card_update"
+        assert result["github_releases"] == world.releases.return_value
+        assert result["release_notes"] == world.notes
+        world.ws.send_command.assert_any_await(
+            "update/release_notes", entity_id="update.card_update", _wait_timeout=60.0
         )
 
 
 async def test_marketplace_registration_is_one_list_lookup():
-    # The Marketplace registers a repository before its add command answers,
-    # so no subscription or wait is needed to find it.
-    ws = AsyncMock()
-    ws.send_command = AsyncMock(
-        return_value=_ok([{"id": "9", "full_name": "Owner/Repo"}])
-    )
+    ws = _ws(_ok([{"id": "9", "full_name": "Owner/Repo"}]))
     ws.subscribe_command = AsyncMock()
     repo = await wait_for_repo_registration(
         ws, "owner/repo", timeout=10.0, api=MARKETPLACE
@@ -296,3 +382,40 @@ async def test_marketplace_registration_is_one_list_lookup():
     assert repo == {"id": "9", "full_name": "Owner/Repo"}
     ws.subscribe_command.assert_not_awaited()
     ws.send_command.assert_awaited_once_with("marketplace/repositories/list")
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "Owner/Repo",
+        "https://github.com/Owner/Repo.git/",
+        "github.com/Owner/Repo",
+        "//github.com/Owner/Repo",
+        "https://GITHUB.COM/Owner/Repo?tab=readme#section",
+    ],
+)
+def test_repository_identity_accepts_github_urls_and_bare_names(repository):
+    assert _repository_full_name(repository) == "owner/repo"
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "https://github.com.evil.test/owner/repo",
+        "https://evil.test/github.com/owner/repo",
+        "https://github.com@evil.test/owner/repo",
+        "https://evil.test@github.com/owner/repo",
+        "ftp://github.com/owner/repo",
+        "owner",
+        "owner/../repo",
+    ],
+)
+async def test_invalid_repository_url_never_dispatches_add_or_replays(repository):
+    world = _store(info={"github_connected": True})
+    with pytest.raises(ToolFailure) as error:
+        await MarketplaceRemote(world.ws).write(
+            "add_repository", repository=repository, category="integration"
+        )
+    assert error.value.code == "VALIDATION_INVALID_PARAMETER"
+    assert error.value.status == "not_started"
+    assert not _writes(world.ws)

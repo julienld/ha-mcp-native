@@ -11,6 +11,11 @@ import logging
 import time
 from typing import Any
 
+from ha_mcp.runtime.hacs_values import (
+    CATEGORY_MAP,
+    _filter_and_score_repos,
+)
+
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
@@ -20,67 +25,11 @@ from .hacs_backend import HACS_API, StoreApi
 
 logger = logging.getLogger(__name__)
 
-
-def _score_repo_against_query(
-    query_lower: str, name: str, full_name: str, description: str, authors: str
-) -> int:
-    """Compute a relevance score for a repo's text fields against a query."""
-    score = 0
-    if query_lower in name:
-        score += 100
-    if query_lower in full_name:
-        score += 50
-    if query_lower in description:
-        score += 30
-    if query_lower in authors:
-        score += 20
-    return score
-
-
-def _filter_and_score_repos(
-    all_repositories: list[dict[str, Any]],
-    query: str,
-    installed_only: bool | None,
-) -> list[dict[str, Any]]:
-    """Filter repositories and compute relevance scores."""
-    query_lower = query.lower().strip()
-    matches = []
-
-    for repo in all_repositories:
-        if installed_only and not repo.get("installed", False):
-            continue
-
-        # Handle None values safely
-        name = (repo.get("name") or "").lower()
-        description = (repo.get("description") or "").lower()
-        full_name = (repo.get("full_name") or "").lower()
-        authors_list = repo.get("authors") or []
-        authors = " ".join(authors_list).lower()
-
-        # Calculate relevance score (all repos match when query is empty)
-        if query_lower:
-            score = _score_repo_against_query(
-                query_lower, name, full_name, description, authors
-            )
-            if score == 0:
-                continue
-        else:
-            score = 0
-
-        # The store's own row, so fields it adds reach the caller.
-        entry = dict(repo)
-        if query_lower:
-            entry["score"] = score
-        matches.append(entry)
-
-    # Sort by score (descending) when searching, by name when listing
-    if query_lower:
-        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
-    else:
-        matches.sort(key=lambda x: (x.get("name") or "").lower())
-
-    return matches
-
+# HACS' dispatcher signal that fires whenever a repository is
+# registered, installed, or otherwise mutates. Raw string keeps
+# ha-mcp's runtime free of a hard import on HACS internals — the
+# load-bearing contract is this signal name, not where it's defined.
+HACS_REPOSITORY_SIGNAL = "hacs_dispatch_repository"
 
 # Budget for the initial ``hacs/subscribe`` ack, separate from the
 # caller-supplied registration budget so a slow subscribe surfaces as
@@ -131,19 +80,20 @@ HACS_REFRESH_TIMEOUT = 60.0
 async def _find_repo_in_list_by_full_name(
     ws_client: Any, full_name_lower: str, api: StoreApi = HACS_API
 ) -> dict[str, Any] | None:
-    """Return the store's repo entry matching ``full_name_lower``, or None."""
+    """Return the HACS repo entry matching ``full_name_lower``, or None."""
     list_response = await ws_client.send_command(api.command("list"))
     for repo in list_response.get("result", []):
         if (repo.get("full_name") or "").lower() == full_name_lower:
             # ``ws_client`` is ``Any`` so mypy can't narrow the result
-            # entry. Both stores' list commands emit a dict per repo, so a
-            # runtime guard would be defensive only.
+            # entry. The HACS wire shape (``custom_components/hacs/
+            # websocket/repositories.py``) always emits a dict per repo,
+            # so a runtime guard would be defensive only.
             return dict(repo)
     return None
 
 
 async def _last_chance_lookup_after_shutdown(
-    ws_client: Any, full_name_lower: str, api: StoreApi
+    ws_client: Any, full_name_lower: str
 ) -> dict[str, Any] | None:
     """One list lookup after a queue shutdown, swallowing transport errors.
 
@@ -152,7 +102,7 @@ async def _last_chance_lookup_after_shutdown(
     connection error out of what callers see as a wait timeout.
     """
     try:
-        return await _find_repo_in_list_by_full_name(ws_client, full_name_lower, api)
+        return await _find_repo_in_list_by_full_name(ws_client, full_name_lower)
     except (
         HomeAssistantConnectionError,
         HomeAssistantCommandError,
@@ -166,11 +116,7 @@ async def _last_chance_lookup_after_shutdown(
 
 
 async def _repo_from_matching_dispatch(
-    ws_client: Any,
-    event: dict[str, Any],
-    full_name: str,
-    full_name_lower: str,
-    api: StoreApi,
+    ws_client: Any, event: dict[str, Any], full_name: str, full_name_lower: str
 ) -> dict[str, Any] | None:
     """Resolve a dispatch event to the full repo entry if it targets our repo.
 
@@ -191,7 +137,7 @@ async def _repo_from_matching_dispatch(
 
     # Matching repo dispatched — fetch the full entry since the event
     # payload only carries the three fields above and callers need more.
-    repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower, api)
+    repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower)
     if repo is not None:
         logger.info(f"Found {full_name} -> id={repo.get('id')} (HACS dispatch event)")
     return repo
@@ -204,7 +150,6 @@ async def _poll_queue_for_registration(
     full_name_lower: str,
     timeout: float,
     backstop_poll_interval: float,
-    api: StoreApi,
 ) -> dict[str, Any] | None:
     """Wait on the subscription queue for our repo, with a wall-clock backstop.
 
@@ -239,20 +184,15 @@ async def _poll_queue_for_registration(
         except TimeoutError:
             event = None
         except asyncio.QueueShutDown:
-            return await _last_chance_lookup_after_shutdown(
-                ws_client, full_name_lower, api
-            )
+            return await _last_chance_lookup_after_shutdown(ws_client, full_name_lower)
 
         if event is not None:
             try:
                 repo = await _repo_from_matching_dispatch(
-                    ws_client, event, full_name, full_name_lower, api
+                    ws_client, event, full_name, full_name_lower
                 )
-            except HomeAssistantConnectionError as e:
-                # A close keeps the dispatches that arrived before it, and the
-                # lookup they lead to then meets the dead socket: report "not
-                # found", as the queue-shutdown path does.
-                logger.debug("Lookup after a dispatch failed: %s", e)
+            except (HomeAssistantConnectionError, HomeAssistantCommandTimeout, OSError):
+                logger.debug("Registration lookup lost its WebSocket connection")
                 return None
             if repo is not None:
                 return repo
@@ -273,7 +213,7 @@ async def _poll_queue_for_registration(
         # True backstop poll: HACS dispatcher has been quiet for
         # ``backstop_poll_interval``. Belt-and-braces re-check the list
         # in case HACS dropped/lost a dispatch event.
-        repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower, api)
+        repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower)
         if repo is not None:
             logger.info(
                 f"Found {full_name} -> id={repo.get('id')} (backstop poll sample)"
@@ -289,7 +229,10 @@ async def wait_for_repo_registration(
     backstop_poll_interval: float = HACS_REPO_BACKSTOP_POLL_INTERVAL,
     api: StoreApi = HACS_API,
 ) -> dict[str, Any] | None:
-    """Wait for a store repo to register, using HACS' dispatch signal.
+    """Resolve a registered store repository, waiting on HACS' dispatch signal.
+
+    Marketplace registers before its add reply, so it needs one catalog read
+    and never subscribes or repeats a write.
 
     Replaces the previous fixed 10x1s blind poll of
     ``hacs/repositories/list``. HACS dispatches
@@ -306,11 +249,9 @@ async def wait_for_repo_registration(
         timeout: Wall-clock budget before giving up.
         backstop_poll_interval: Between dispatch nudges, re-check the
             list at this cadence to recover from a missed/lossy dispatch.
-        api: The store. The Marketplace registers a repository before its
-            add command answers, so there one list lookup is the whole
-            answer and ``timeout``/``backstop_poll_interval`` go unused.
+        api: Selected store's command contract; defaults to HACS.
 
-    Returns the repo dict if found, or ``None`` on timeout.
+    Returns the HACS repo dict if found, or ``None`` on timeout.
     """
     full_name_lower = full_name.lower()
     if api.is_marketplace:
@@ -323,9 +264,9 @@ async def wait_for_repo_registration(
     # masked as "HACS subscribe blew up" and a quiet degradation.
     try:
         sub_id, queue = await ws_client.subscribe_command(
-            api.command("subscribe"),
+            "hacs/subscribe",
             wait_timeout=HACS_SUBSCRIBE_TIMEOUT,
-            signal=api.repository_signal,
+            signal=HACS_REPOSITORY_SIGNAL,
         )
     except (
         HomeAssistantConnectionError,
@@ -336,7 +277,7 @@ async def wait_for_repo_registration(
         logger.warning(
             "hacs/subscribe failed (%s); falling back to single list lookup", e
         )
-        return await _find_repo_in_list_by_full_name(ws_client, full_name_lower, api)
+        return await _find_repo_in_list_by_full_name(ws_client, full_name_lower)
 
     try:
         # Two races to close around the preceding ``hacs/repositories/add``:
@@ -350,7 +291,7 @@ async def wait_for_repo_registration(
         #     lands in the queue, not nowhere). Do NOT move that
         #     registration after the ack-wait — the sample below only
         #     covers case (A) and would let (B) regress silently.
-        repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower, api)
+        repo = await _find_repo_in_list_by_full_name(ws_client, full_name_lower)
         if repo is not None:
             logger.info(
                 f"Found {full_name} -> id={repo.get('id')} (post-subscribe sample)"
@@ -364,7 +305,6 @@ async def wait_for_repo_registration(
             full_name_lower,
             timeout,
             backstop_poll_interval,
-            api,
         )
     finally:
         # ``asyncio.shield`` so a cancellation of the surrounding task
@@ -401,3 +341,13 @@ async def send_hacs_repository_refresh(
         _wait_timeout=HACS_REFRESH_TIMEOUT,
     )
     return response
+
+
+__all__ = [
+    "CATEGORY_MAP",
+    "HACS_ADD_REGISTRATION_TIMEOUT",
+    "HACS_RESOLVE_REGISTRATION_TIMEOUT",
+    "_filter_and_score_repos",
+    "send_hacs_repository_refresh",
+    "wait_for_repo_registration",
+]

@@ -15,7 +15,6 @@ import pytest
 
 from ha_mcp.__main__ import OAuthProxyClient
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
-from ha_mcp.tools.hacs_backend import HACS_API
 from ha_mcp.tools.tools_hacs import (
     HACS_ADD_REGISTRATION_TIMEOUT,
     HACS_RESOLVE_REGISTRATION_TIMEOUT,
@@ -39,7 +38,18 @@ async def _identity_timezone(_client, data):
 def _ws(result):
     """A WS client whose send_command returns a successful HACS response."""
     ws = AsyncMock()
-    ws.send_command = AsyncMock(return_value={"success": True, "result": result})
+
+    async def send(command, **kwargs):
+        response = result
+        if command == "ha_mcp_tools/hacs_cache":
+            response = {
+                "store": "hacs",
+                "repository": result or {},
+                "cache": {"source": "hacs_cache", "refreshed_from_github": False},
+            }
+        return {"success": True, "result": response}
+
+    ws.send_command = AsyncMock(side_effect=send)
     return ws
 
 
@@ -48,8 +58,8 @@ def _patched_hacs(ws):
     """Patch HACS availability, the WS client factory, and tz metadata."""
     with (
         patch(
-            "ha_mcp.tools.tools_hacs.detect_store_api",
-            new=AsyncMock(return_value=HACS_API),
+            "ha_mcp.tools.tools_hacs._assert_hacs_available",
+            new=AsyncMock(return_value="hacs"),
         ),
         patch(
             "ha_mcp.client.websocket_client.get_websocket_client",
@@ -58,6 +68,9 @@ def _patched_hacs(ws):
         patch(
             "ha_mcp.tools.tools_hacs.add_timezone_metadata",
             new=_identity_timezone,
+        ),
+        patch(
+            "ha_mcp.tools.tools_hacs.try_hacs_update", new=AsyncMock(return_value=None)
         ),
     ):
         yield
@@ -306,7 +319,14 @@ def _remove_ws(*, installed: bool = True, remove_response: dict | None = None):
     ws = AsyncMock()
     ws.send_command = AsyncMock(
         side_effect=[
-            {"success": True, "result": {"installed": installed}},
+            {
+                "success": True,
+                "result": {
+                    "store": "hacs",
+                    "repository": {"installed": installed},
+                    "cache": {},
+                },
+            },
             remove_response or {"success": True, "result": {}},
         ]
     )
@@ -331,7 +351,7 @@ class TestManageHacsRemove:
         # availability probe patched out by the fixture the WS traffic is
         # exactly the installed-state probe followed by the remove.
         commands = [c.args[0] for c in ws.send_command.await_args_list]
-        assert commands == ["hacs/repository/info", "hacs/repository/remove"]
+        assert commands == ["ha_mcp_tools/hacs_cache", "hacs/repository/remove"]
         # HACS's WS API is asymmetric: info takes repository_id, remove takes
         # repository — pin both so neither regresses (e2e caught the mixup).
         assert ws.send_command.await_args_list[0].kwargs["repository_id"] == "401454435"
@@ -380,7 +400,7 @@ class TestManageHacsRemove:
         assert "not downloaded" in str(excinfo.value)
         # The remove command must never be sent for a store-only repo.
         commands = [c.args[0] for c in ws.send_command.await_args_list]
-        assert commands == ["hacs/repository/info"]
+        assert commands == ["ha_mcp_tools/hacs_cache"]
 
     async def test_remove_surfaces_backend_failure(self, tools):
         ws = _remove_ws(remove_response={"success": False, "error": "boom"})
@@ -391,28 +411,18 @@ class TestManageHacsRemove:
         assert "boom" in str(excinfo.value)
         assert "remove" in str(excinfo.value).lower()
 
-    async def test_remove_proceeds_when_installed_probe_fails(self, tools):
-        # The WS client raises on a failed info frame; the probe must swallow
-        # that and fall through — a rate-limited or transient info lookup
-        # must not make a downloaded repository unremovable, nor misattribute
-        # its own error to the remove (Patch76 review, PR #2124).
+    async def test_remove_stops_when_cached_probe_fails(self, tools):
         from ha_mcp.client.rest_client import HomeAssistantCommandError
 
         ws = AsyncMock()
-        ws.send_command = AsyncMock(
-            side_effect=[
-                HomeAssistantCommandError("Command failed: rate limited", "unknown"),
-                {"success": True, "result": {}},
-            ]
+        ws.send_command.side_effect = HomeAssistantCommandError(
+            "Permission changed", "unauthorized"
         )
-        with _patched_hacs(ws):
-            result = await tools.ha_manage_hacs(
-                action="remove", repository_id="401454435"
-            )
-
-        assert result["success"] is True
-        commands = [c.args[0] for c in ws.send_command.await_args_list]
-        assert commands == ["hacs/repository/info", "hacs/repository/remove"]
+        with _patched_hacs(ws), pytest.raises(ToolError, match="Permission changed"):
+            await tools.ha_manage_hacs(action="remove", repository_id="401454435")
+        ws.send_command.assert_awaited_once_with(
+            "ha_mcp_tools/hacs_cache", repository_id="401454435"
+        )
 
     async def test_remove_command_error_keeps_command_context(self, tools):
         # The WS client RAISES HomeAssistantCommandError on a failed result
@@ -423,7 +433,14 @@ class TestManageHacsRemove:
         ws = AsyncMock()
         ws.send_command = AsyncMock(
             side_effect=[
-                {"success": True, "result": {"installed": True}},
+                {
+                    "success": True,
+                    "result": {
+                        "store": "hacs",
+                        "repository": {"installed": True},
+                        "cache": {},
+                    },
+                },
                 HomeAssistantCommandError("Command failed: kaboom", "unknown_error"),
             ]
         )
@@ -438,7 +455,14 @@ class TestManageHacsRemove:
         ws = AsyncMock()
         ws.send_command = AsyncMock(
             side_effect=[
-                {"success": True, "result": {"installed": True}},
+                {
+                    "success": True,
+                    "result": {
+                        "store": "hacs",
+                        "repository": {"installed": True},
+                        "cache": {},
+                    },
+                },
                 HomeAssistantCommandError(
                     "Command failed: backend timeout", "unknown_error"
                 ),
@@ -460,7 +484,14 @@ class TestManageHacsRemove:
         ws = AsyncMock()
         ws.send_command = AsyncMock(
             side_effect=[
-                {"success": True, "result": {"installed": True}},
+                {
+                    "success": True,
+                    "result": {
+                        "store": "hacs",
+                        "repository": {"installed": True},
+                        "cache": {},
+                    },
+                },
                 HomeAssistantCommandTimeout("Command timeout"),
             ]
         )
@@ -478,7 +509,14 @@ class TestManageHacsRemove:
             side_effect=[
                 {
                     "success": True,
-                    "result": {"installed": True, "full_name": "hif2k1/battery_sim"},
+                    "result": {
+                        "store": "hacs",
+                        "repository": {
+                            "installed": True,
+                            "full_name": "hif2k1/battery_sim",
+                        },
+                        "cache": {},
+                    },
                 },
                 {"success": True, "result": {}},
             ]

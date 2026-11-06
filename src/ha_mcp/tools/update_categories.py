@@ -3,12 +3,11 @@
 import logging
 from typing import Any
 
+from ha_mcp.runtime.update_values import categorize_update as categorize_update
+
 logger = logging.getLogger(__name__)
 
-# Integrations whose update entities are store repositories; Home Assistant
-# 2026.11 moved them from the HACS integration to the built-in Marketplace,
-# whose entities carry no "hacs" in their entity_id.
-_STORE_PLATFORMS = frozenset({"hacs", "marketplace"})
+__all__ = ["categorize_update", "update_platforms"]
 
 
 async def update_platforms(client: Any) -> dict[str, str]:
@@ -24,38 +23,3 @@ async def update_platforms(client: Any) -> dict[str, str]:
         for row in (reply.get("result") or {}).get("entities", [])
         if row.get("ei", "").startswith("update.")
     }
-
-
-def categorize_update(
-    entity_id: str, attributes: dict[str, Any], platform: str = ""
-) -> str:
-    """Categorize an update entity by its integration, entity_id and attributes."""
-    if platform in _STORE_PLATFORMS:
-        return "hacs"
-
-    entity_lower = entity_id.lower()
-    # Use 'or ""' to handle both missing keys AND explicit None values
-    title_lower = (attributes.get("title") or "").lower()
-
-    if "home_assistant_core" in entity_lower or (
-        "core" in entity_lower and "home_assistant" in title_lower
-    ):
-        return "core"
-
-    if "operating_system" in entity_lower or "haos" in entity_lower:
-        return "os"
-
-    if "supervisor" in entity_lower:
-        return "supervisor"
-
-    # Add-ons (typically named update.xxx_update where xxx is addon name)
-    if "add-on" in title_lower or "addon" in title_lower:
-        return "addons"
-
-    device_patterns = ["esphome", "zwave", "zigbee", "zha", "matter", "firmware"]
-    if any(
-        pattern in entity_lower or pattern in title_lower for pattern in device_patterns
-    ):
-        return "devices"
-
-    return "other"
