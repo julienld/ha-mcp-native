@@ -15,6 +15,15 @@ from .. import (
     todo_items,
 )
 from ..const import MAX_OAUTH_CALLBACK_LENGTH, MAX_OAUTH_CALLBACKS
+from ..core_operation_schemas import (
+    CALL_SERVICE_DEFAULT_TIMEOUT as CALL_SERVICE_DEFAULT_TIMEOUT,
+)
+from ..core_operation_schemas import (
+    CALL_SERVICE_MAX_TIMEOUT as CALL_SERVICE_MAX_TIMEOUT,
+)
+from ..core_operation_schemas import (
+    REGISTRY_KINDS as REGISTRY_KINDS,
+)
 from . import logbook as _logbook
 
 __all__ = [
@@ -118,6 +127,7 @@ SCHEMA_VERSION = 1
 # without a major bump. (``info`` is always present in 1.1.0+, so it carries no
 # capability key of its own.)
 CAPABILITIES: list[str] = [
+    "hacs_cache",
     "search",
     # Location/state filters precede pagination; search accepts any result window.
     "search_unified",
@@ -217,7 +227,6 @@ CAPABILITIES: list[str] = [
 # The registry kinds ``ha_mcp_tools/registries`` can serve. The WS schema gates
 # on this so an out-of-range kind never reaches the reader; ``category`` also
 # requires ``category_scopes`` (categories are scoped).
-REGISTRY_KINDS = ("area", "floor", "label", "category")
 
 # Blueprint domains this component will read a body for. Mirrors core's blueprint
 # domains; the WS schema gates on it so an out-of-range domain never reaches the
@@ -238,8 +247,6 @@ DEFAULT_LIMIT = 10
 # never park the WS connection for longer than this. ``blocking=True`` only means
 # HA finished DISPATCHING — a mesh device (Zigbee/Z-Wave) may still be settling —
 # so the wait is bounded and its expiry is ``partial``, never a failure (D4).
-CALL_SERVICE_DEFAULT_TIMEOUT = 10.0
-CALL_SERVICE_MAX_TIMEOUT = 60.0
 
 # Delay before ``server_entry_update``'s deferred ``async_update_entry`` fires, so
 # the WS ``{scheduled: True}`` response flushes to the calling (embedded) server

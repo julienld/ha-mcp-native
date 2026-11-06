@@ -10,8 +10,9 @@ defined here; the notices come from ``server_tool_text``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from .server_tool_text import (
     ISSUE_FILING_INSTRUCTIONS,
@@ -28,6 +29,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 OWNER_HEADING = "## Instructions from this installation's owner"
+
+
+class InstructionSettings(Protocol):
+    """Only the explicit configuration used by the shared text composer."""
+
+    @property
+    def enable_tool_search(self) -> bool: ...
+
+    @property
+    def read_only_mode(self) -> bool: ...
+
+    @property
+    def custom_instructions(self) -> str: ...
+
 
 _SKILLS_HEADER = (
     "IMPORTANT: This server provides best-practice skills that MUST "
@@ -139,7 +154,11 @@ def build_skills_instructions(skills_dir: Path | None, tool_hidden: bool) -> str
 
 
 def compose_instructions(
-    skills: str | None, settings: Settings, *, tool_search: bool
+    skills: str | None,
+    settings: InstructionSettings,
+    *,
+    tool_search: bool | None = None,
+    pinned: Iterable[str] | None = None,
 ) -> str:
     """Join the skills section with the startup notices and the owner's text.
 
@@ -147,8 +166,10 @@ def compose_instructions(
     the discovery note only to the connections that get the search tools.
     """
     discovery = (
-        TOOL_DISCOVERY_INSTRUCTIONS.format(pinned=", ".join(DEFAULT_PINNED_TOOLS))
-        if tool_search
+        TOOL_DISCOVERY_INSTRUCTIONS.format(
+            pinned=", ".join(DEFAULT_PINNED_TOOLS if pinned is None else pinned)
+        )
+        if (settings.enable_tool_search if tool_search is None else tool_search)
         else ""
     )
     lead = (skills or "") + discovery

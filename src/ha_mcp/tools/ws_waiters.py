@@ -533,28 +533,12 @@ async def wait_for_entity_removed(
 async def verify_entity_removed(
     client: Any, entity_id: str, response: dict[str, Any]
 ) -> None:
-    """After a delete that succeeded, warn when ``entity_id`` lingers or its removal
-    cannot be checked; the delete itself is never reported as failed."""
-    try:
-        removed = await wait_for_entity_removed(client, entity_id)
-    except (HomeAssistantConnectionError, HomeAssistantAuthError) as e:
-        response.setdefault("warnings", []).append(
-            f"Deletion confirmed but removal verification failed: {e}"
-        )
-        return
-    except Exception as e:  # cancellation is a BaseException and propagates
-        logger.warning(
-            f"Unexpected error verifying removal of {entity_id}: {e}", exc_info=True
-        )
-        response.setdefault("warnings", []).append(
-            f"Deletion confirmed but removal verification failed: {e}"
-        )
-        return
-    if not removed:
-        response.setdefault("warnings", []).append(
-            f"Deletion confirmed but {entity_id} is still present after the "
-            "wait window."
-        )
+    """Preserve the remote waiter boundary around the shared result policy."""
+    from ha_mcp.runtime.removal_wait import verify_removed
+
+    await verify_removed(
+        lambda entity: wait_for_entity_removed(client, entity), entity_id, response
+    )
 
 
 async def _sample_state_change(
