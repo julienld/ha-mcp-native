@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 
 import pytest
 
 from ...utilities.assertions import MCPAssertions, safe_call_tool
-from ...utilities.topology import component_surface_available
 from ...utilities.wait_helpers import wait_for_tool_result
 from .test_capture_and_restore import (
     _delete_leftover_backup,
     _enable_auto_backup,
     _wait_for_backup,
 )
+
+
+async def _registry_id(ha_client, entity_id: str) -> str:
+    # ha_get_entity projects user-facing fields; the backup key is Core's UUID.
+    response = await ha_client.send_websocket_message(
+        {"type": "config/entity_registry/get", "entity_id": entity_id}
+    )
+    assert response["success"], response
+    identity = response["result"]["id"]
+    assert isinstance(identity, str) and identity, response
+    return identity
 
 
 @pytest.mark.convenience
@@ -30,7 +39,7 @@ class TestEntityCaptureRestore:
     for a restart."""
 
     async def test_restore_renames_back_and_unhides(
-        self, mcp_client, monkeypatch: pytest.MonkeyPatch
+        self, mcp_client, ha_client, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _enable_auto_backup(monkeypatch)
         helper_id = f"e2e_bk_ent_{uuid.uuid4().hex[:8]}"
@@ -50,6 +59,7 @@ class TestEntityCaptureRestore:
                     predicate=lambda d: d["entity_entry"]["hidden"] is False,
                     description=f"{entity_id} in the entity registry",
                 )
+                registry_id = await _registry_id(ha_client, entity_id)
                 exposure = await mcp.call_tool_success(
                     "ha_get_entity_exposure", {"entity_id": entity_id}
                 )
@@ -94,6 +104,7 @@ class TestEntityCaptureRestore:
                     "ha_get_entity", {"entity_id": entity_id}
                 )
                 assert restored["entity_entry"]["hidden"] is False
+                assert await _registry_id(ha_client, entity_id) == registry_id
                 exposure = await mcp.call_tool_success(
                     "ha_get_entity_exposure", {"entity_id": entity_id}
                 )
@@ -107,12 +118,10 @@ class TestEntityCaptureRestore:
                     )
                 await _delete_leftover_backup(mcp_client, backup_name)
 
-    async def test_a_removed_entity_says_what_core_keeps(
-        self, mcp_client, monkeypatch: pytest.MonkeyPatch
+    async def test_deleted_registry_restore_refuses_without_recreating_the_entity(
+        self, mcp_client, ha_client, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Core keeps a removed helper entity's registry settings for 30 days.
-        The component reads that from Core's deleted entries; without it the
-        restore can only point to a restart."""
+        """History preserves the saved UUID but cannot recreate its registration."""
         _enable_auto_backup(monkeypatch)
         helper_id = f"e2e_bk_gone_{uuid.uuid4().hex[:8]}"
         entity_id = f"input_boolean.{helper_id}"
@@ -130,6 +139,7 @@ class TestEntityCaptureRestore:
                     predicate=lambda d: d["entity_entry"]["hidden"] is False,
                     description=f"{entity_id} in the entity registry",
                 )
+                registry_id = await _registry_id(ha_client, entity_id)
                 await mcp.call_tool_success(
                     "ha_set_entity", {"entity_id": entity_id, "icon": "mdi:test-tube"}
                 )
@@ -146,14 +156,25 @@ class TestEntityCaptureRestore:
                     {"scope": "edits", "action": "restore", "backup_name": backup_name},
                 )
 
-                text = json.dumps(result)
-                assert "entry_deleted" in text
-                if component_surface_available():
-                    assert (
-                        f"keeps the registry settings of {entity_id} until " in text
-                    ), text
-                else:
-                    assert "Restart Home Assistant: if what provides" in text, text
+                assert result["error"]["code"] == "RESOURCE_NOT_FOUND", result
+                outcome = result["data"]
+                assert outcome["reason"] == "entry_deleted", result
+                assert outcome["apply_status"] == "not_applied", result
+                assert outcome["verification_status"] == "not_run", result
+                assert outcome["safety_backup"] is None, result
+                saved = await mcp.call_tool_success(
+                    "ha_manage_backup",
+                    {"scope": "edits", "action": "view", "backup_name": backup_name},
+                )
+                assert saved["data"]["config"]["id"] == registry_id, saved
+                current = await ha_client.send_websocket_message(
+                    {"type": "config/entity_registry/list"}
+                )
+                assert current["success"], current
+                assert not any(
+                    row["id"] == registry_id or row["entity_id"] == entity_id
+                    for row in current["result"]
+                ), current
             finally:
                 await safe_call_tool(
                     mcp_client,

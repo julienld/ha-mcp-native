@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 
-from ..client.rest_client import HomeAssistantAdminRequiredError
 from .approval_queue import PendingApproval
 from .model import Rule
 
@@ -166,6 +165,8 @@ async def emit_approval_result(
     failure is logged rather than raised. The caller is a bus handler with
     nowhere to return an error to.
     """
+    from ..client.rest_client import HomeAssistantAdminRequiredError
+
     try:
         with anyio.move_on_after(EMIT_TIMEOUT_SECONDS) as scope:
             await client.fire_event(
@@ -221,6 +222,8 @@ async def emit_approval_requested(
     method — the embedded component hands the server a loopback URL and an
     administrator's token, so there is no component-only path here.
     """
+    from ..client.rest_client import HomeAssistantAdminRequiredError
+
     try:
         with anyio.move_on_after(EMIT_TIMEOUT_SECONDS) as scope:
             await client.fire_event(

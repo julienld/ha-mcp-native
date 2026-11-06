@@ -19,22 +19,18 @@ from ..backup_manager import _CAPTURE_TRANSIENT_ERRORS, get_backup_manager
 from ..client.rest_client import HomeAssistantError
 from ..config import get_global_settings
 from ..errors import ErrorCode, create_error_response
+from ..runtime.blueprint_substitute import error_text as error_text
+from ..runtime.blueprint_values import (
+    blueprint_imported_result,
+    blueprint_saved_result,
+)
+from ..runtime.blueprint_values import (
+    normalize_blueprint_path as normalize_blueprint_path,
+)
 from .blueprint_sources import parse_blueprint_body
 from .helpers import raise_tool_error
 
 logger = logging.getLogger(__name__)
-
-
-def error_text(response: dict[str, Any], fallback: str) -> str:
-    """Render Home Assistant's WebSocket error payload as a message string.
-
-    ``send_websocket_message`` surfaces the error either as a plain string or
-    as core's ``{"code": ..., "message": ...}`` envelope.
-    """
-    error = response.get("error", fallback)
-    if isinstance(error, dict):
-        return str(error.get("message", error) or fallback)
-    return str(error or fallback)
 
 
 def error_code(response: dict[str, Any]) -> str:
@@ -92,19 +88,6 @@ async def _save_blueprint(
 # --- save ---------------------------------------------------------------------
 
 
-def normalize_blueprint_path(path: str) -> str:
-    """Return the path ``blueprint/save`` will actually write.
-
-    Core's ``ws_save_blueprint`` appends ``.yaml`` when the path does not end
-    with it — ``.yaml`` exactly, so ``foo.yml`` becomes ``foo.yml.yaml``. Every
-    write derives its snapshot key and its reported path from this, so a save
-    to ``user/motion`` captures and reports ``user/motion.yaml``: the file it
-    replaces and the key the store will list, rather than a path no tier can
-    read and the store never had.
-    """
-    return path if path.endswith(".yaml") else f"{path}.yaml"
-
-
 async def write_blueprint(
     client: Any,
     domain: str,
@@ -125,20 +108,7 @@ async def write_blueprint(
     overrides_existing = bool(
         (response.get("result") or {}).get("overrides_existing", False)
     )
-    return {
-        "success": True,
-        "data": {
-            "domain": domain,
-            "path": path,
-            "overrides_existing": overrides_existing,
-            "message": (
-                "Blueprint saved over the existing file. Automations and "
-                "scripts using it were reloaded."
-                if overrides_existing
-                else "Blueprint saved."
-            ),
-        },
-    }
+    return blueprint_saved_result(domain, path, overrides_existing)
 
 
 async def _assert_save_compatible(
@@ -354,27 +324,9 @@ async def import_blueprint(client: Any, url: str, overwrite: bool) -> dict[str, 
         "overrides_existing", False
     )
 
-    return {
-        "success": True,
-        "data": {
-            "url": url,
-            "imported_blueprint": {
-                "path": suggested_filename,
-                "domain": domain,
-                "name": blueprint_meta.get("name"),
-                "description": blueprint_meta.get("description"),
-            },
-            "overrides_existing": overrides_existing,
-            "message": (
-                "Blueprint re-imported successfully. Automations/scripts using "
-                "it were reloaded."
-                if overrides_existing
-                else "Blueprint imported successfully. Use "
-                'ha_manage_blueprints(action="list") to see all installed '
-                "blueprints."
-            ),
-        },
-    }
+    return blueprint_imported_result(
+        url, suggested_filename, blueprint_meta, overrides_existing
+    )
 
 
 def _raise_import_failure(url: str, response: dict[str, Any]) -> NoReturn:

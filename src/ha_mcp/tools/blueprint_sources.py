@@ -36,14 +36,13 @@ from pathlib import Path, PurePath
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-import yaml  # type: ignore[import-untyped]
-
 from ..client.rest_client import (
     HomeAssistantCommandError,
     HomeAssistantCommandTimeout,
 )
 from ..client.websocket_client import get_websocket_client
 from ..config import get_embedded_config_dir
+from ..runtime.blueprint_values import parse_blueprint_body as parse_blueprint_body
 from .component_api import (
     component_supports,
     get_component_caps,
@@ -78,47 +77,6 @@ class BlueprintSource:
     config: dict[str, Any] | None
     source: BlueprintSourceName | None
     warning: str | None
-
-
-class _BlueprintLoader(yaml.SafeLoader):
-    """SafeLoader for blueprint text: keep ``!input``, neutralize all other tags."""
-
-
-def _construct_input(loader: Any, node: Any) -> dict[str, str]:
-    """Represent ``!input <name>`` as ``{"__input__": <name>}``."""
-    return {"__input__": str(getattr(node, "value", ""))}
-
-
-def _drop_tag(loader: Any, tag_suffix: Any, node: Any) -> None:
-    """Neutralize every non-``!input`` custom tag to ``None``, never resolving it."""
-    return None
-
-
-_BlueprintLoader.add_constructor("!input", _construct_input)
-_BlueprintLoader.add_multi_constructor("!", _drop_tag)
-
-
-def parse_blueprint_body(text: str) -> dict[str, Any] | None:
-    """Parse blueprint YAML into a display body, or ``None`` when it will not parse.
-
-    Mirrors the component's ``_BlueprintLoader`` exactly so the same file yields
-    the same body whichever rung of the ladder produced the text: ``!input`` is
-    preserved as a JSON-safe marker and every other custom tag (``!secret`` /
-    ``!include`` / …) resolves to ``None``, so no secret plaintext can enter the
-    parsed body.
-    """
-    # Instance form (not yaml.load) mirrors the component's own loader usage;
-    # _BlueprintLoader is a SafeLoader subclass, so no !!python/object tag can
-    # construct an arbitrary type.
-    loader = _BlueprintLoader(text)
-    try:
-        parsed = loader.get_single_data()
-    except yaml.YAMLError as exc:
-        logger.debug("Blueprint body did not parse: %r", exc)
-        return None
-    finally:
-        loader.dispose()
-    return parsed if isinstance(parsed, dict) else None
 
 
 # --- tier 1: direct read (embedded server only) -------------------------------

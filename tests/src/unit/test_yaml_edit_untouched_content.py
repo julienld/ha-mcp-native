@@ -103,7 +103,7 @@ daily_bill_ac:
 def _stub_config_check(monkeypatch):
     """The post-write config check passes (valid config)."""
     monkeypatch.setattr(
-        "custom_components.ha_mcp_tools.async_check_ha_config_file",
+        "custom_components.ha_mcp_tools.yaml_editing.async_check_ha_config_file",
         AsyncMock(return_value=None),
         raising=False,
     )
@@ -208,7 +208,9 @@ class TestRoundTripGuard:
             narrow.preserve_quotes = True
             return real_yaml_dumps(narrow, data)
 
-        monkeypatch.setattr("custom_components.ha_mcp_tools.yaml_dumps", _narrow_dumps)
+        monkeypatch.setattr(
+            "custom_components.ha_mcp_tools.yaml_editing.yaml_dumps", _narrow_dumps
+        )
 
         handler = _build_edit_yaml_config_handler(hass)
         result = self._run(handler(_add_utility_meter_call(call_factory)))

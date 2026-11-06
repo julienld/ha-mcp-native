@@ -258,9 +258,7 @@ async def test_no_modified_at_bump_within_the_commit_timeout_gives_up_early(
     The internal commit-visibility budget must cut the wait short instead of
     stalling for the whole (much larger) caller-supplied timeout.
     """
-    monkeypatch.setattr(
-        "ha_mcp.tools.config_entry_reload_watch._COMMIT_VISIBLE_TIMEOUT", 0.25
-    )
+    monkeypatch.setattr("ha_mcp.runtime.entry_reload._COMMIT_VISIBLE_TIMEOUT", 0.25)
     entry_id = "entry-1"
     queue = _queue_of(
         _frame({"entry_id": entry_id, "state": "loaded", "modified_at": _BEFORE})

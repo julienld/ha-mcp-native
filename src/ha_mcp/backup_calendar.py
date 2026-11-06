@@ -12,6 +12,7 @@ from typing import Any
 
 from .backup_entity_ids import _manager
 from .client.rest_client import HomeAssistantCommandError, HomeAssistantError
+from .runtime.calendar_values import _calendar_bound
 
 logger = logging.getLogger(__name__)
 
@@ -128,19 +129,6 @@ async def _fetch_calendar_event(client: Any, entity_id: str) -> Any:
         )
         return None
     return {"calendar_entity_id": cal, **found}
-
-
-def _calendar_bound(value: Any) -> tuple[str, bool] | None:
-    """``(iso_value, is_date_only)``; older snapshots hold a flat ISO string."""
-    if isinstance(value, dict):
-        if value.get("dateTime"):
-            return str(value["dateTime"]), False
-        if value.get("date"):
-            return str(value["date"]), True
-        return None
-    if isinstance(value, str) and value:
-        return value, len(value) == 10
-    return None
 
 
 def _same_bound(found: tuple[str, bool] | None, wanted: tuple[str, bool]) -> bool:

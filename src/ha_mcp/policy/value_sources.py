@@ -106,8 +106,7 @@ async def fetch_value_source(
     return values
 
 
-async def _fetch_ha_domains(client: Any, _params: dict[str, str]) -> list[str]:
-    services = await client.get_services()
+def _domain_values(services: Any, _params: dict[str, str]) -> list[str]:
     # /services returns either {domain: {service: ...}} or
     # [{domain, services}, ...] depending on HA version; handle both.
     if isinstance(services, dict):
@@ -122,8 +121,7 @@ async def _fetch_ha_domains(client: Any, _params: dict[str, str]) -> list[str]:
     return []
 
 
-async def _fetch_ha_services(client: Any, params: dict[str, str]) -> list[str]:
-    services = await client.get_services()
+def _service_values(services: Any, params: dict[str, str]) -> list[str]:
     domain_filter = params.get("domain")
     out: set[str] = set()
     if isinstance(services, dict):
@@ -151,8 +149,7 @@ async def _fetch_ha_services(client: Any, params: dict[str, str]) -> list[str]:
     return []
 
 
-async def _fetch_ha_entities(client: Any, params: dict[str, str]) -> list[str]:
-    states = await client.get_states()
+def _entity_values(states: Any, params: dict[str, str]) -> list[str]:
     domain_filter = params.get("domain")
     out: list[str] = []
     for s in states:
@@ -167,8 +164,7 @@ async def _fetch_ha_entities(client: Any, params: dict[str, str]) -> list[str]:
     return out
 
 
-async def _fetch_ha_config_entries(client: Any, _params: dict[str, str]) -> list[str]:
-    entries = await client._request("GET", "/config/config_entries/entry")
+def _config_entry_values(entries: Any, _params: dict[str, str]) -> list[str]:
     if not isinstance(entries, list):
         logger.warning(
             "ha_config_entries: config entry list returned unexpected shape %s",
@@ -180,6 +176,41 @@ async def _fetch_ha_config_entries(client: Any, _params: dict[str, str]) -> list
         for e in entries
         if isinstance(e, dict) and isinstance(e.get("entry_id"), str)
     ]
+
+
+def project_value_source(
+    source: str, data: Any, params: dict[str, str] | None = None
+) -> list[str]:
+    """Project native or remote owner data with the same choice semantics."""
+    projector = {
+        "ha_domains": _domain_values,
+        "ha_services": _service_values,
+        "ha_entities": _entity_values,
+        "ha_config_entries": _config_entry_values,
+    }.get(source)
+    if projector is None:
+        raise ValueError(f"Unknown value source: {source!r}")
+    return sorted(projector(data, params or {}))
+
+
+async def _fetch_ha_domains(client: Any, params: dict[str, str]) -> list[str]:
+    return project_value_source("ha_domains", await client.get_services(), params)
+
+
+async def _fetch_ha_services(client: Any, params: dict[str, str]) -> list[str]:
+    return project_value_source("ha_services", await client.get_services(), params)
+
+
+async def _fetch_ha_entities(client: Any, params: dict[str, str]) -> list[str]:
+    return project_value_source("ha_entities", await client.get_states(), params)
+
+
+async def _fetch_ha_config_entries(client: Any, params: dict[str, str]) -> list[str]:
+    return project_value_source(
+        "ha_config_entries",
+        await client._request("GET", "/config/config_entries/entry"),
+        params,
+    )
 
 
 _FETCHERS: dict[str, Callable[[Any, dict[str, str]], Awaitable[list[str]]]] = {
