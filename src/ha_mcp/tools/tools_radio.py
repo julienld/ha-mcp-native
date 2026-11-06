@@ -13,15 +13,14 @@ Per-radio logic lives in ``radio/<name>.py``; this module is the dispatcher.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal
-
-from pydantic import Field
+from typing import Any
 
 from ha_mcp._vendor.fastmcp.exceptions import ToolError
 from ha_mcp._vendor.fastmcp.tools import tool
 
+from ..backends.legacy import legacy_errors
 from ..errors import ErrorCode, create_error_response
-from .coercion import JSON_STRING_COERCION
+from ..runtime.radio_tools import RadioFacade
 from .helpers import (
     exception_to_structured_error,
     log_tool_usage,
@@ -32,7 +31,6 @@ from .radio import matter as matter_handler
 from .radio import thread as thread_handler
 from .radio import zigbee as zigbee_handler
 from .radio import zwave as zwave_handler
-from .radio.base import confirm_required, require
 from .tool_hints import write_hints
 from .util_helpers import is_connection_error_message
 
@@ -51,8 +49,9 @@ class RadioTools:
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        self.radios = self
 
-    async def _resolve_entity_device(self, entity_id: str) -> str:
+    async def resolve_entity_device(self, entity_id: str) -> str:
         """Resolve an entity_id to its device_id via the entity registry.
 
         Uses HA's targeted ``config/entity_registry/get`` (single-entity
@@ -89,7 +88,24 @@ class RadioTools:
         )
         raise AssertionError  # py/mixed-returns terminal: raise_tool_error is NoReturn
 
-    @tool(
+    async def handle(
+        self, radio: str, action: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            result: dict[str, Any] = await HANDLERS[radio].handle(
+                self._client, action, args
+            )
+            return result
+        except ToolError:
+            raise
+        except Exception as error:
+            exception_to_structured_error(
+                error, context={"radio": radio, "action": action}
+            )
+            raise
+
+    _resolve_entity_device = resolve_entity_device
+    ha_manage_radio = tool(
         name="ha_manage_radio",
         tags={"Radio Management", "Z-Wave", "Zigbee", "Matter", "Thread"},
         annotations=write_hints(
@@ -98,129 +114,7 @@ class RadioTools:
             idempotent=False,
             open_world=False,
         ),
-    )
-    @log_tool_usage
-    async def ha_manage_radio(
-        self,
-        radio: Annotated[
-            Literal["zwave", "zigbee", "matter", "thread"],
-            Field(description="Which radio to manage."),
-        ],
-        action: Annotated[
-            str,
-            Field(
-                description=(
-                    "Operation to perform. Actions vary per radio; an unknown "
-                    "action returns the supported list for that radio. Common: "
-                    "'diagnostics', 'network_status', 'ping', 'add'/'commission', "
-                    "'remove_device', 'reinterview'/'reconfigure', 'firmware_update'."
-                )
-            ),
-        ],
-        device_id: Annotated[
-            str | None,
-            Field(
-                description="Target device (node) for node-scoped actions.",
-                default=None,
-            ),
-        ] = None,
-        entity_id: Annotated[
-            str | None,
-            Field(
-                description="Resolve the device from this entity for node-scoped actions.",
-                default=None,
-            ),
-        ] = None,
-        params: Annotated[
-            dict[str, Any] | None,
-            JSON_STRING_COERCION,
-            Field(
-                description=(
-                    "Action-specific parameters (e.g. code, pin, channel, property, value). "
-                    "Z-Wave get_config_param: property (parameter number), endpoint "
-                    "(default 0), property_key (partial-parameter bit mask), refresh "
-                    "(default False; full root parameters only)."
-                ),
-                default=None,
-            ),
-        ] = None,
-        confirm: Annotated[
-            bool,
-            Field(
-                description=(
-                    "Required (True) to run destructive actions (e.g. "
-                    "remove_device, network restore, change_channel, "
-                    "hard_reset, remove_fabric)."
-                ),
-                default=False,
-            ),
-        ] = False,
-    ) -> dict[str, Any]:
-        """Manage Home Assistant radios — Z-Wave, Zigbee, Matter, and Thread.
-
-        For node diagnostics and network summaries prefer ha_get_device /
-        ha_get_system_health, which mirror 'diagnostics' and 'network_status'.
-        This tool also exposes active 'ping' probes and parameter reads.
-        Z-Wave 'get_config_params' lists cached configuration values/metadata;
-        'get_config_param' reads one from the cache or explicitly from the device.
-        Neither enables or creates entities. Write actions perform
-        inclusion/commissioning, removal, healing,
-        reconfiguration, firmware updates and credential provisioning.
-
-        Caveats: long-running actions (inclusion, rebuild routes, firmware) start the
-        operation and return immediately with long_running=true; completion
-        happens out-of-band. Interactive Z-Wave S2 secure inclusion (read-the-
-        PIN pairing) is not scriptable — use SmartStart/QR provisioning here or
-        the HA UI. HA administrator access is required for parameter reads.
-        """
-        try:
-            handler = HANDLERS[radio]
-            spec = handler.SUPPORTED.get(action)
-            if spec is None:
-                supported = sorted(handler.SUPPORTED)
-                raise_tool_error(
-                    create_error_response(
-                        ErrorCode.VALIDATION_INVALID_PARAMETER,
-                        f"Unknown action '{action}' for radio '{radio}'",
-                        context={
-                            "radio": radio,
-                            "action": action,
-                            "supported": supported,
-                        },
-                        # Surface each action's one-line summary so the caller
-                        # can pick the right one without another round-trip.
-                        suggestions=[
-                            f"{name}: {handler.SUPPORTED[name].summary}"
-                            for name in supported
-                        ],
-                    )
-                )
-
-            args: dict[str, Any] = dict(params or {})
-            if device_id:
-                args.setdefault("device_id", device_id)
-            if entity_id and not args.get("device_id"):
-                args["device_id"] = await self._resolve_entity_device(entity_id)
-
-            require(args, spec, radio, action)
-            if spec.destructive and not confirm:
-                confirm_required(radio, action)
-
-            result: dict[str, Any] = await handler.handle(self._client, action, args)
-            # ActionSpec is the single source of truth for long-running; fill it
-            # in even on branches that did not set it (e.g. force-remove paths).
-            if spec.long_running:
-                result.setdefault("long_running", True)
-            return result
-
-        except ToolError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            # exception_to_structured_error owns logging (it stays quiet for
-            # classified errors and logs unclassified ones with a traceback);
-            # a manual log here would double-log. Let the helper own it.
-            exception_to_structured_error(e, context={"radio": radio, "action": action})
-            return None  # unreachable: exception_to_structured_error always raises
+    )(log_tool_usage(legacy_errors(RadioFacade.ha_manage_radio)))
 
 
 def register_radio_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
